@@ -1,0 +1,4 @@
+# CRET: 1
+# CERR: {self}:4:10:List{int,} x = 1
+# CERR: {ssss}               ^ error: expected type, found '}'
+List{int,} x = 1

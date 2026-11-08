@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:4:11:def T max{mod.T}(T a):
+# CERR: {ssss}                ^ error: expected type parameter name, found 'mod'
+def T max{mod.T}(T a):
+    pass

@@ -1,0 +1,9 @@
+#def stuff():
+    #pass
+
+def int main():
+    int x = 5
+    return x*0
+
+# This was erroring becase the second line was being treated as an indent.
+# RET: 0

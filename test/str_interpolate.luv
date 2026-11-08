@@ -1,0 +1,10 @@
+# OUT: wee
+# OUT: waa 52
+# OUT: true woo 111
+# OUT: true zippy 222 -- hi!
+def int main():
+    print "wee"
+    print "waa \(52)"
+    print "\(true) woo \(111)"
+    print "\(true) \("zippy") \(222) -- hi!"
+    return 0

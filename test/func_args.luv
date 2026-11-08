@@ -1,0 +1,7 @@
+# RET: 28
+def int func(int a):
+    return a * 2
+
+def int main():
+    return func(14)
+

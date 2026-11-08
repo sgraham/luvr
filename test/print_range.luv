@@ -1,0 +1,8 @@
+# OUT: range(0, 5)
+# OUT: range(5, 10)
+# OUT: range(5, 10, 2)
+def int main():
+    print range(5)
+    print range(5, 10)
+    print range(5, 10, 2)
+    return 0

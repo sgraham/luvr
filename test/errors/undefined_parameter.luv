@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:5:12:    return a + 1
+# CERR: {ssss}                 ^ error: Undefined reference to 'a'.
+def int func(int x):
+    return a + 1
+
+def int main():
+    return func(3)

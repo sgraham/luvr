@@ -1,0 +1,12 @@
+# CRET: 1
+# CERR: {self}:8:19:        something = 99
+# CERR: {ssss}                        ^ error: Upvalues are immutable.
+def int main():
+    something = 1
+
+    def func_b():
+        something = 99
+
+    func_b()
+    return 0
+

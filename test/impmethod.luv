@@ -1,0 +1,7 @@
+# IMPORTED
+struct Thing:
+    int x
+    bool b
+
+on Thing def str get_my_stuff(self, int a, str b):
+    return "my_stuff is \(self.x), and \(self.b), with modifications \(a) and \(b)"

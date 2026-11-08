@@ -1,0 +1,11 @@
+# OUT: Stuff(a=2)
+struct Stuff:
+    int a
+
+on Stuff def str __str__(self):
+    return "Stuff(a=2)"
+
+def int main():
+    s = Stuff(.a=2)
+    print s
+    return 0

@@ -1,0 +1,14 @@
+# OUT: ta.x: 1, ta.y: 2
+# OUT: tb.b: true
+# OUT: both helpers: '440' and 'hello, world from other_imp'
+import "impsub"
+import "other_imp"
+
+def int main():
+    ta = impsub.Thing(1, 2)
+    tb = other_imp.Thing(true)
+
+    print "ta.x: \(ta.x), ta.y: \(ta.y)"
+    print "tb.b: \(tb.b)"
+    print "both helpers: '\(impsub.helper_func(44))' and '\(other_imp.helper_func())'"
+    return 0

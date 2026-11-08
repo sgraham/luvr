@@ -1,0 +1,4 @@
+# CRET: 1
+# CERR: {self}:4:10:List{int}{str} x = 1
+# CERR: {ssss}               ^ error: type arguments given twice
+List{int}{str} x = 1

@@ -1,0 +1,4 @@
+# OUT: hi
+def int main():
+    print "hi"
+    return 0

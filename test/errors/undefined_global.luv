@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:11:    print wee()
+# CERR: {ssss}                ^ error: Undefined reference to 'wee'.
+def int main():
+    print wee()

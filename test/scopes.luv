@@ -1,0 +1,20 @@
+# OUT: 2
+# OUT: 1
+# OUT: 2
+something = 1
+
+def int main():
+    something = 2
+
+    def func_a():
+        print something
+
+    def func_b():
+        global something
+        print something
+
+    func_a()
+    func_b()
+    print something
+
+    return 0

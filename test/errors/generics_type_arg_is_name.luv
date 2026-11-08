@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:15:    x = List{x}(1)
+# CERR: {ssss}                    ^ error: expected '.', found '}'
+def f():
+    x = List{x}(1)

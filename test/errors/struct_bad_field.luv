@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:9:7:    s.q = 123
+# CERR: {ssss}           ^ error: 'q' is not a field of type Stuff.
+struct Stuff:
+    int x
+
+def int main():
+    Stuff s
+    s.q = 123
+    return 0

@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:7:20:    return someimp.non_existing()
+# CERR: {ssss}                         ^ error: Variable 'non_existing' not found in imported package 'someimp'.
+import "someimp"
+
+def int main():
+    return someimp.non_existing()

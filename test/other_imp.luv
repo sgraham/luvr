@@ -1,0 +1,7 @@
+# IMPORTED
+
+struct Thing:
+    bool b
+
+def str helper_func():
+    return "hello, world from other_imp"

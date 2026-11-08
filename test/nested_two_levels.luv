@@ -1,0 +1,19 @@
+# OUT: 12
+def int main():
+    x = 3
+
+    def int middle():
+        y = 4
+
+        def int inner():
+            return x + y + 5
+        #inner.ref2 == ALLOCA(sizeof(x)+sizeof(y))
+        #inner.ref2.x = $middleup->x
+        #inner.ref2.y = y
+
+        return inner()
+    #middle.ref2 == ALLOCA(sizeof(x))
+    #middle.ref2.x = x
+
+    print middle()
+    return 0

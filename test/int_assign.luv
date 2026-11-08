@@ -1,0 +1,56 @@
+# OUT: 1
+# OUT: 2
+# OUT: 3
+# OUT: 4
+# OUT: 5
+# OUT: 6
+# OUT: 7
+# OUT: 8
+# OUT: 10
+# OUT: 11
+# OUT: 12
+# OUT: 13
+# OUT: 14
+# OUT: 15
+# OUT: 16
+# OUT: 17
+# OUT: ok
+def int main():
+    i64 a = 1
+    i32 b = 2
+    i16 c = 3
+    i8 d = 4
+    u64 e = 5
+    u32 f = 6
+    u16 g = 7
+    u8 h = 8
+
+    print a
+    print b
+    print c
+    print d
+    print e
+    print f
+    print g
+    print h
+
+    a = 10
+    b = 11
+    c = 12
+    d = 13
+    e = 14
+    f = 15
+    g = 16
+    h = 17
+
+    print a
+    print b
+    print c
+    print d
+    print e
+    print f
+    print g
+    print h
+
+    print "ok"
+    return 0

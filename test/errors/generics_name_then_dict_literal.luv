@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:13:    x = [a {1: 2}]
+# CERR: {ssss}                  ^ error: expected type, found number
+def f():
+    x = [a {1: 2}]

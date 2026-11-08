@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:5:    max{int}
+# CERR: {ssss}         ^ error: expression is not a statement
+def f():
+    max{int}

@@ -1,0 +1,11 @@
+# OUT: my_stuff is 44, and false, with modifications 100 and zippy
+# OUT: my_stuff is 44, and false, with modifications 500 and pony
+import "impmethod"
+
+def int main():
+    thing = impmethod.Thing(44, false)
+
+    print thing.get_my_stuff(100, "zippy")
+    print thing.get_my_stuff(500, "pony")
+
+    return 0
