@@ -1,4 +1,4 @@
-// parsecheck: syntax-checks files with parser.c.
+// Syntax-checks files with parser.c.
 //   parsecheck [-q] file...
 // Prints the first error in each failing file; -q suppresses the summary.
 // Exit status is 1 if any file failed.
@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
   double secs = 0;
   for (int i = first; i < argc; ++i) {
     size_t len;
-    // Kept alive until exit: interned names point into it.
+    // Not freed because interned names point into it.
     u8* buf = load_file(argv[i], &len);
     if (!buf) {
       fprintf(stderr, "%s: cannot read\n", argv[i]);

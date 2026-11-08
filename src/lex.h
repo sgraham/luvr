@@ -1,7 +1,5 @@
-// Lexer modelled after Lua's llex.
-//
-// Pull-style: the parser calls lex_next() to get a token into ls->t. There is
-// no token buffer and no "peek". The grammar was finessed (and occasionally
+// Pull-style lexer. The parser calls lex_next() to get a token into ls->t.
+// There is no token buffer and no "peek". The grammar was finessed (and occasionally
 // slightly hacked) so that the parser never needs to see more than a single
 // token.
 
@@ -22,7 +20,7 @@
 // - TY(name, spelling) for builtin type keywords
 //
 // Note: builtin types are [TK_FIRST_TYPE..TK_LAST_TYPE] (so have to be
-// contiguous) for comparisions in the parser.
+// contiguous) for comparisons in the parser.
 #define LEX_TOKENS(X, KW, TY)       \
   X(EOS, "<eof>")                   \
   X(NEWLINE, "<newline>")           \
@@ -128,6 +126,7 @@
   TY(U64, "u64")                    \
   TY(UINT, "uint")
 
+// clang-format off
 typedef enum TokenKind {
 #define LEX_ENUM_(name, str) TK_##name,
   LEX_TOKENS(LEX_ENUM_, LEX_ENUM_, LEX_ENUM_)
@@ -136,8 +135,9 @@ typedef enum TokenKind {
   TK_FIRST_TYPE = TK_BOOL,
   TK_LAST_TYPE = TK_UINT,
 } TokenKind;
+// clang-format on
 
-// Literal suffixes (e.g. 123i32, 1.5f64). Stored in bottom nibble of
+// Literal suffixes (e.g. 123i32, 1.5f64). Stored in the bottom nibble of
 // Token.flags (TF_SUFFIX_MASK).
 typedef enum NumSuffix {
   SUF_NONE,
@@ -156,11 +156,10 @@ typedef enum NumSuffix {
 enum {
   TF_SUFFIX_MASK = 0x0f,
 
-  // Used for strings. If it had escapes then this bit is set and Token.v.str is
-  // used to get the de-escaped string data from the string pool. Otherwise, the
-  // string's length is a view into the original buffer from offset+1 to
-  // Token.v.len.
-  TF_ESCAPED = 0x10,  // STRING*: had escapes; v.str indexes Ctx.strs
+  // Set on STRING* tokens that contained escapes. The de-escaped data is in
+  // Ctx.strs at Token.v.str. Otherwise, the content is a view of Token.v.len
+  // bytes of the source buffer, starting at offset+1.
+  TF_ESCAPED = 0x10,
 };
 
 typedef struct Token {
@@ -203,24 +202,26 @@ typedef struct StrRef {
   u32 len;
 } StrRef;
 
-// Compiler context. Owns everything; one per compilation (and thread).
+// Compiler context, which owns all allocations. There's one per compilation,
+// and it can't be shared between threads.
 typedef struct Ctx {
   jmp_buf* on_error;  // must be set (via setjmp) before lexing
 
-  // error state, filled before longjmp
+  // Filled in before the longjmp to on_error.
   char err_msg[256];
   const char* err_file;
   const u8* err_buf;
   u32 err_offset;
 
-  // intern table: open addressing, linear probing. slot =
-  // (hash >> 32) << 32 | (name index + 1); 0 = empty
+  // Intern table, using open addressing and linear probing. Each slot is the
+  // upper 32 bits of the hash, and the name index + 1 in the lower 32 bits, so
+  // that 0 is empty.
   u64* slots;
   u32 slot_mask;
   Name* names;
   u32 num_names, cap_names;
 
-  // decoded (escaped) string literals
+  // Decoded copies of string literals that contained escapes.
   StrRef* strs;
   u32 num_strs, cap_strs;
   u8* strbytes;
@@ -230,7 +231,7 @@ typedef struct Ctx {
 typedef struct LexState {
   Ctx* ctx;
   const char* filename;
-  const u8* buf;  // start of source; buf[len..len+LEX_PADDING) are zero
+  const u8* buf;  // start of source, followed by LEX_PADDING zero bytes
   const u8* end;  // buf + len
   const u8* p;    // cursor
   u16 indent;     // current block level, in units of 4 spaces
@@ -238,25 +239,30 @@ typedef struct LexState {
   u16 bracket_depth;  // > 0: newlines are whitespace
   u8 interp_sp;
   u16 interp_stack[LEX_MAX_INTERP];  // bracket_depth at each open \(
-  Token t;                           // current token
+  Token t;
 } LexState;
 
 bool ctx_init(Ctx* ctx);
 void ctx_free(Ctx* ctx);
 
-// Raise an error through ctx->on_error.
-NORETURN void ctx_error(Ctx* ctx, const char* file, const u8* buf, u32 offset, const char* fmt, ...);
+// Records the error in ctx and longjmps to ctx->on_error.
+NORETURN void ctx_error(Ctx* ctx,
+                        const char* file,
+                        const u8* buf,
+                        u32 offset,
+                        const char* fmt,
+                        ...);
 
-// Computes 1-based line and column of the stored error (slow; error path).
+// Line and column are 1-based. They're found by scanning from the start of the
+// buffer, so this is only suitable for the error path.
 void ctx_error_location(const Ctx* ctx, u32* line, u32* col);
 void src_location(const u8* buf, u32 offset, u32* line, u32* col);
 
-// buf must have LEX_PADDING zero bytes after len and outlive ctx, since
-// names point into it. Skips leading blank/comment lines; errors if the first
-// line is indented. Does not read the first token: call lex_next().
+// buf must have LEX_PADDING zero bytes after len, and must outlive ctx because
+// interned names point into it. It's an error for the first line with content
+// to be indented. The first token isn't read until lex_next() is called.
 void lex_init(LexState* ls, Ctx* ctx, const char* filename, const u8* buf, size_t len);
 
-// Reads the next token into ls->t.
 void lex_next(LexState* ls);
 
 const char* tok_kind_name(int kind);

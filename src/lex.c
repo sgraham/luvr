@@ -11,8 +11,8 @@ enum {
   C_HEX = 32,     // [0-9A-Fa-f]
 };
 
-// Bytes >= 0x80 are 0: identifiers are ASCII; UTF-8 is allowed in strings
-// and comments only.
+// Bytes >= 0x80 are 0 because identifiers are ASCII-only. UTF-8 is only
+// allowed in strings and comments.
 static const u8 cclass[256] = {
     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,   // 00-0f
     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,   // 10-1f
@@ -83,8 +83,8 @@ static void* ctx_grow(Ctx* ctx, void* p, size_t bytes) {
   return q;
 }
 
-// Interning. A simple baseline to benchmark alternatives against: open
-// addressing, linear probing, upper hash bits stored in the slot.
+// Interning. The table is intentionally simple so that it's a baseline to
+// benchmark alternatives against.
 
 static u64 mix64(u64 h) {
   h ^= h >> 32;
@@ -93,9 +93,9 @@ static u64 mix64(u64 h) {
   return h;
 }
 
-// Reads up to 7 bytes past s+len; safe for source names thanks to
-// LEX_PADDING. Bytes past len are masked off, so the result only depends on
-// s[0..len).
+// Reads up to 7 bytes past s+len, which is safe for names in the source
+// because of LEX_PADDING. The extra bytes are masked off, so the result only
+// depends on s[0..len).
 static u64 hash_ident(const u8* s, u32 len) {
   u64 h = 0x9e3779b97f4a7c15ull ^ len;
   while (len >= 8) {
@@ -114,7 +114,7 @@ static u64 hash_ident(const u8* s, u32 len) {
   return mix64(h);
 }
 
-// For strings without padding (keyword table).
+// Keyword spellings aren't padded, so they're copied into a padded buffer.
 static u64 hash_ident_safe(const char* s, u32 len) {
   u8 tmp[64 + 8] = {0};
   memcpy(tmp, s, len);
@@ -122,10 +122,11 @@ static u64 hash_ident_safe(const char* s, u32 len) {
 }
 
 // Types are recognized lexically, so the parser never needs a symbol table
-// to tell `Stuff s` from `stuff(s)`. _*[A-Z] or _*[A-Z]...[a-z]... is a type;
-// everything else (lowercase first letter, ALL_CAPS constants, plain
-// underscores) is a name. Computed once per distinct identifier, at intern
-// time.
+// to tell `Stuff s` from `stuff(s)`. After any leading underscores, an
+// identifier is a type if it's a single capital letter, or starts with a
+// capital and contains a lowercase letter. Everything else (lowercase first
+// letter, ALL_CAPS constants, only underscores) is a name. The kind is stored
+// in the Name, so this is only done once per distinct identifier.
 static u8 classify_ident(const u8* s, u32 len) {
   u32 i = 0;
   while (i < len && s[i] == '_') {
@@ -183,7 +184,6 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, u8 kind_if_new) {
     }
     pos = (pos + 1) & mask;
   }
-  // new name
   if (ctx->num_names == ctx->cap_names) {
     ctx->cap_names *= 2;
     ctx->names = (Name*)ctx_grow(ctx, ctx->names, ctx->cap_names * sizeof(Name));
@@ -214,10 +214,9 @@ bool ctx_init(Ctx* ctx) {
     ctx_free(ctx);
     return false;
   }
-  // Keywords and builtin types go in the same table, like Lua 4's
-  // luaX_init, so one lookup gives both "is it reserved" and the Name. The
-  // table starts large enough that this can't rehash or grow (and so can't
-  // hit ctx_error before on_error is set).
+  // Keywords and builtin types are in the same table, so one lookup is
+  // enough to get both whether it's reserved and the Name. The table
+  // is initialized with enough capacity that this can't rehash or grow.
   static const struct {
     const char* s;
     u8 kind;
@@ -281,13 +280,15 @@ const u8* lex_str(const LexState* ls, const Token* t, u32* len) {
   return ls->buf + t->offset + 1;
 }
 
-// Layout: one token per logical line boundary: NEWLINE (same indent), INDENT
-// (one level deeper), or DEDENT per level shallower. Indent is fixed at 4
-// spaces; newlines inside brackets are whitespace.
+// Layout. Each logical line boundary is a NEWLINE if the indent is unchanged,
+// an INDENT if it's one level deeper, or one DEDENT per level if it's
+// shallower. Indentation is fixed at 4 spaces. Newlines inside brackets are
+// whitespace.
 
-// p is at the start of a line. Skips lines that are blank or contain only a
-// comment (their indentation is irrelevant). Returns the first non-space
-// byte of the next content line (or end), and its line start in *bol.
+// p is at the start of a line. Lines that are blank or only a comment are
+// skipped, regardless of their indentation. Returns the first non-space byte
+// of the next line with content (or end), with the start of that line in
+// *bol.
 static const u8* next_content_line(LexState* ls, const u8* p, const u8** bol) {
   for (;;) {
     const u8* q = p;
@@ -399,8 +400,9 @@ static int digit_value(u8 c) {
   return (c | 0x20) - 'a' + 10;
 }
 
-// Integer range checks for suffixes are left to the parser, which can fold
-// unary minus (-128i8). The lexer only rejects values that don't fit u64.
+// Range checks for integer suffixes are done in the parser, so that unary
+// minus can be folded first (-128i8). The lexer only rejects values that don't
+// fit in a u64.
 static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
   const u8* start = p;
   u64 v = 0;
@@ -448,8 +450,8 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
       }
       v = v * 10 + d;
     }
-    // A float needs a digit after '.', so `1.foo()` is a method call on an
-    // int, and `1.` / `.5` are not floats.
+    // A float requires digits on both sides of the '.', so `1.foo()` is a
+    // method call on an int, and `1.` and `.5` aren't floats.
     if (*p == '.' && IS(p[1], C_DIGIT)) {
       is_float = 1;
       ++p;
@@ -467,7 +469,6 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
     }
   }
 
-  // suffix
   const u8* num_end = p;
   u8 suf = SUF_NONE;
   if (IS(*p, C_IDCHAR)) {
@@ -487,8 +488,9 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
 
   t->flags = suf;
   if (is_float) {
-    // Copy without '_' and suffix for strtod. Note: strtod honours the C
-    // locale's decimal point; the host must not setlocale(LC_NUMERIC).
+    // strtod doesn't accept '_' or the suffix, so they're dropped in a copy.
+    // strtod uses the C locale's decimal point, so the host must not call
+    // setlocale(LC_NUMERIC).
     char tmp[128];
     size_t n = 0;
     for (const u8* q = start; q < num_end; ++q) {
@@ -604,7 +606,7 @@ static const u8* decode_escape(LexState* ls, const u8* q) {
 
 // delim is the opening '"' (cont == 0) or the ')' that closed a \( (cont ==
 // 1). Reads up to the closing '"' or the next \(. Content without escapes
-// stays a zero-copy slice of the source.
+// isn't copied, and is referenced as a slice of the source.
 static const u8* lex_string(LexState* ls, Token* t, const u8* delim, int cont) {
   Ctx* ctx = ls->ctx;
   const u8* s = delim + 1;
@@ -645,7 +647,7 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, int cont) {
     t->kind = cont ? TK_STRING_END : TK_STRING;
     return q + 1;
   }
-  // \( : open an interpolation; the matching ')' resumes this string
+  // At a \(, so the string continues after the matching ')'.
   if (ls->interp_sp == LEX_MAX_INTERP) {
     lex_error(ls, q, "string interpolation nested too deeply");
   }
@@ -715,7 +717,8 @@ void lex_next(LexState* ls) {
       case '\t':
         lex_error(ls, p, "tab character (use spaces)");
 
-      case '#': {  // to end of line; the '\n' is handled normally
+      case '#': {
+        // The '\n' isn't skipped so that it's still seen as a line boundary.
         const u8* nl = (const u8*)memchr(p, '\n', (size_t)(ls->end - p));
         p = nl ? nl : ls->end;
         continue;

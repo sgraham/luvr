@@ -18,7 +18,9 @@ static volatile u64 g_sink;
 // Sum all bytes, supposed to represent close to the bandwidth floor.
 static u64 pass_sum(void) {
   u64 s = 0;
-  for (size_t i = 0; i < g_len; ++i) s += g_buf[i];
+  for (size_t i = 0; i < g_len; ++i) {
+    s += g_buf[i];
+  }
   return s;
 }
 
@@ -55,7 +57,9 @@ static u64 pass_mini_tokenize(void) {
   for (;;) {
     u8 c = *p;
     if (g_cls[c] == 1) {
-      do ++p; while (g_cls[*p] == 1);
+      do {
+        ++p;
+      } while (g_cls[*p] == 1);
       ++n;
     } else if (c == ' ' || c == '\n') {
       ++p;
@@ -71,7 +75,9 @@ static u64 pass_mini_tokenize(void) {
 
 static u64 pass_lex(void) {
   Ctx ctx;
-  if (!ctx_init(&ctx)) exit(1);
+  if (!ctx_init(&ctx)) {
+    exit(1);
+  }
   jmp_buf jb;
   ctx.on_error = &jb;
   if (setjmp(jb)) {
@@ -96,7 +102,9 @@ static void run(const char* name, u64 (*fn)(void)) {
     double t0 = now_sec();
     result = fn();
     double t = now_sec() - t0;
-    if (t < best) best = t;
+    if (t < best) {
+      best = t;
+    }
   }
   g_sink = result;
   printf("%-16s %8.1f ms  %7.2f GB/s  %6.2f ns/byte  (result %llu)\n", name, best * 1e3,
@@ -110,22 +118,27 @@ int main(int argc, char** argv) {
   }
   double t0 = now_sec();
   FILE* f = fopen(argv[1], "rb");
-  if (!f) return 1;
+  if (!f) {
+    return 1;
+  }
   fseek(f, 0, SEEK_END);
   long n = ftell(f);
   fseek(f, 0, SEEK_SET);
   u8* buf = (u8*)malloc((size_t)n + LEX_PADDING);
-  if (!buf || fread(buf, 1, (size_t)n, f) != (size_t)n) return 1;
+  if (!buf || fread(buf, 1, (size_t)n, f) != (size_t)n) {
+    return 1;
+  }
   fclose(f);
   memset(buf + n, 0, LEX_PADDING);
-  printf("%-16s %8.1f ms  (%.1f MB, includes page faults on fresh memory)\n", "fread", (now_sec() - t0) * 1e3,
-         (double)n / 1e6);
+  printf("%-16s %8.1f ms  (%.1f MB, includes page faults on fresh memory)\n", "fread",
+         (now_sec() - t0) * 1e3, (double)n / 1e6);
   g_buf = buf;
   g_len = (size_t)n;
   g_out = (u8*)malloc((size_t)n);
   memset(g_out, 0, (size_t)n);  // pre-fault so the pass measures copying only
   for (int c = 0; c < 256; ++c) {
-    g_cls[c] = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    g_cls[c] =
+        (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
   }
 
   run("sum (vector)", pass_sum);

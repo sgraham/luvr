@@ -1,4 +1,4 @@
-// lexdump: driver for lex.c.
+// Driver for lex.c.
 //   lexdump -d file...   dump tokens (line:col kind payload)
 //   lexdump file...      count tokens and time lexing (no dump)
 
@@ -119,14 +119,14 @@ static int run_file(Ctx* ctx,
     ctx_error_location(ctx, &line, &col);
     fprintf(stderr, "%s:%u:%u: error: %s\n", ctx->err_file ? ctx->err_file : path, line, col,
             ctx->err_msg);
-    // names may point into buf, so a real driver would keep buf alive as
-    // long as ctx; here we just leak it on error
+    // Interned names may point into buf, so it's leaked rather than freed.
     return 1;
   }
   double t0 = now_sec();
   lex_init(&ls, ctx, path, buf, len);
   if (dump) {
-    // incremental line/col (offsets are monotonic)
+    // Token offsets only increase, so line and column are tracked
+    // incrementally.
     u32 line = 1, last = 0;
     const u8* bol = buf;
     do {
@@ -150,7 +150,7 @@ static int run_file(Ctx* ctx,
   *total_tokens += ntok;
   *total_bytes += len;
   *total_time += t1 - t0;
-  // buf intentionally kept alive: interned names point into it
+  // buf isn't freed because interned names point into it.
   return 0;
 }
 

@@ -1,10 +1,8 @@
-// parser.c: recursive-descent parser for luv, structured after Lua 4.0.1's
-// lparser.
+// Recursive-descent parser for luv.
 //
-// Every decision is made from the current token alone. The places that look
-// like they need more are handled by parsing a common prefix first and then
-// deciding, the way Lua's namestat() parses a variable or call and then looks
-// at what it got:
+// Every decision is made from the current token alone. Where more seems to be
+// needed, a common prefix is parsed first, and the decision is based on what
+// it turned out to be:
 //
 //   - `Stuff s` (declaration) vs. `Stuff(1).f()` (expression), and
 //     `mod.Type x` vs. `mod.func()`: parse the postfix chain, then look at its
@@ -25,8 +23,7 @@ typedef struct Parser {
   LexState ls;
 } Parser;
 
-// What a parsed expression turned out to be, as far as syntax can tell. This
-// is the acceptance-only stand-in for Lua's expdesc: enough to decide whether
+// The syntactical shape of parsing an expression. Used to decide whether
 // an expression can be assigned to, used as a statement, or was a type.
 typedef enum Shape {
   SH_VALUE,   // anything else: literals, operators, struct literals, ...
@@ -108,7 +105,7 @@ static int optional(Parser* p, int kind) {
 }
 
 // Like check(), but if the closer is missing and the opener was on another
-// line, says where the opener was (from Lua's check_match).
+// line, the error includes the opener's line.
 static void check_match(Parser* p, int what, int who, u32 who_offset) {
   if (T(p) == what) {
     next(p);
@@ -217,8 +214,8 @@ static void type(Parser* p) {
 
 // Expressions
 //
-// Precedence climbing as in Lua's subexpr(), with Python's precedence for
-// `not` (below comparisons), and comparisons that don't chain.
+// Precedence climbing. `not` has lower precedence than comparisons, and
+// comparisons don't chain.
 
 typedef enum BinOpr {
   OPR_OR,
@@ -244,8 +241,8 @@ typedef enum BinOpr {
   OPR_NONE,
 } BinOpr;
 
-// Left priority of each binary operator. All are left-associative, so the
-// right operand is parsed with the same priority as the limit.
+// Priority of each binary operator. All are left-associative, so the right
+// operand is parsed with the operator's priority as the limit.
 static const u8 priority[] = {
     1,                          // or
     2,                          // and
@@ -340,8 +337,9 @@ static void subexpr(Parser* p, int limit, Shape* sh) {
   binop_rest(p, limit, sh);
 }
 
-// The { binop subexpr } loop of subexpr(), split out so that callers that
-// have already parsed a primary (sizeof's type-or-expression) can continue.
+// The { binop subexpr } loop of subexpr(). It's separate so that
+// sizeof_operand() can continue an expression after already parsing a
+// primary.
 static void binop_rest(Parser* p, int limit, Shape* sh) {
   BinOpr op = getbinopr(T(p));
   while (op != OPR_NONE && priority[op] > limit) {
@@ -391,9 +389,9 @@ static void for_targets(Parser* p) {
 
 // '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
 //
-// Syntactically this is LL(1): after the first element, `for` means a
-// comprehension. (Generating code in a single pass will need the element
-// re-parsed after the clauses bind the loop variables.)
+// This is LL(1) because a `for` after the first element means it's a
+// comprehension. Single pass code generation will need the element to be
+// re-parsed after the loop variables are bound.
 static void list_literal(Parser* p) {
   u32 at = p->ls.t.offset;
   next(p);
@@ -446,11 +444,12 @@ static void dict_literal(Parser* p) {
   check_match(p, TK_RBRACE, TK_LBRACE, at);
 }
 
-// sizeof/alignof '(' type-or-expr ')'. The first token decides:
-// builtin types, '*', 'typeof', and '[' or '{' always start a type (so
-// sizeof([2]int) is a type, and sizeof(([1, 2])) forces an expression). A
-// name is parsed as a postfix chain, which is a type if it turns out to be
-// TypeName or module.TypeName, and continues as an expression otherwise.
+// The operand of sizeof or alignof is either a type or an expression.
+// Builtin types, '*', 'typeof', '[' and '{' always start a type, so
+// sizeof([2]int) is a type, and an expression needs extra parentheses, as in
+// sizeof(([1, 2])). A name or TypeName is parsed as a postfix chain, which is
+// a type if it's TypeName or module.TypeName, and is otherwise continued as an
+// expression.
 static void sizeof_operand(Parser* p) {
   int k = T(p);
   if (is_builtin_type(k) || k == TK_STAR || k == TK_LSQUARE || k == TK_LBRACE || k == TK_TYPEOF) {
@@ -466,9 +465,8 @@ static void sizeof_operand(Parser* p) {
   }
 }
 
-// Call arguments. `.field=` designators are only for struct literals
-// (`Stuff(.a=1, true)`): ordinary functions don't have named parameters.
-// No trailing comma.
+// `.field=` designators are only allowed in struct literals
+// (`Stuff(.a=1, true)`) because functions don't have named parameters.
 static void call_args(Parser* p, int is_struct_literal) {
   u32 at = p->ls.t.offset;
   next(p);  // '('
@@ -509,7 +507,6 @@ static void index_or_slice(Parser* p, Shape* sh) {
 }
 
 // postfix -> { '.' name | '.' TypeName | '[' index_or_slice ']' | '(' args ')' }
-// (Lua's var_or_func_tail)
 static void postfix(Parser* p, Shape* sh) {
   for (;;) {
     switch (T(p)) {
@@ -627,8 +624,8 @@ static int is_augassign(int kind) {
   return kind >= TK_PLUSEQ && kind <= TK_SHREQ;
 }
 
-// A declaration, assignment, or call. Lua's namestat(): parse the postfix
-// chain, then decide from its shape and the next token.
+// A declaration, assignment, or call. The postfix chain is parsed first, and
+// then its Shape and the next token decide which it is.
 //
 //   decl   -> type name ['=' expr]
 //   assign -> name_or_lvalue ('=' | augop) expr
@@ -739,8 +736,9 @@ static void suite(Parser* p) {
 // param   -> type name | name    (bare name: a method's first parameter)
 //
 // The return type is optional, so after `def` a NAME is either the function
-// name or the start of a module.Type return type; a following '.' decides.
-// The same trick separates a method's `self` from a module.Type parameter.
+// name or the start of a module.Type return type. A following '.' means it's
+// a type. A method's `self` and a module.Type parameter are distinguished the
+// same way.
 static void funcsig(Parser* p, int is_method) {
   if (T(p) == TK_NAME) {
     next(p);
