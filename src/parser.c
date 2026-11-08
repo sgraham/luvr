@@ -161,8 +161,43 @@ static void end_of_stat(Parser* p) {
 //   type -> '*' type
 //         | '[' [expr] ']' type        ([]T list, [N]T array)
 //         | '{' type '}' type          ({K}V dict)
-//         | builtin | TypeName | name '.' TypeName
+//         | builtin
+//         | TypeName [type_args] | name '.' TypeName [type_args]
 //         | 'typeof' '(' expr ')'
+
+// type_args -> '{' type {',' type} '}'
+static void type_args(Parser* p) {
+  u32 at = p->ls.t.offset;
+  next(p);  // '{'
+  do {
+    type(p);
+  } while (optional(p, TK_COMMA));
+  check_match(p, TK_RBRACE, TK_LBRACE, at);
+}
+
+// type_params -> '{' TypeName {',' TypeName} '}'
+static void type_params(Parser* p) {
+  u32 at = p->ls.t.offset;
+  next(p);  // '{'
+  do {
+    if (T(p) != TK_TYPENAME) {
+      error_expected(p, "type parameter name");
+    }
+    next(p);
+  } while (optional(p, TK_COMMA));
+  check_match(p, TK_RBRACE, TK_LBRACE, at);
+}
+
+// The rest of a module.TypeName type, after the '.'.
+static void qualified_type_rest(Parser* p) {
+  if (T(p) != TK_TYPENAME) {
+    error_expected(p, "type name after module name");
+  }
+  next(p);
+  if (T(p) == TK_LBRACE) {
+    type_args(p);
+  }
+}
 
 static void type(Parser* p) {
   u32 at = p->ls.t.offset;
@@ -187,14 +222,14 @@ static void type(Parser* p) {
       return;
     case TK_TYPENAME:
       next(p);
+      if (T(p) == TK_LBRACE) {
+        type_args(p);
+      }
       return;
     case TK_NAME:
       next(p);
       check(p, TK_DOT);
-      if (T(p) != TK_TYPENAME) {
-        error_expected(p, "type name after module name");
-      }
-      next(p);
+      qualified_type_rest(p);
       return;
     case TK_TYPEOF:
       next(p);
@@ -506,7 +541,13 @@ static void index_or_slice(Parser* p, Shape* sh) {
   check_match(p, TK_RSQUARE, TK_LSQUARE, at);
 }
 
-// postfix -> { '.' name | '.' TypeName | '[' index_or_slice ']' | '(' args ')' }
+// postfix -> { '.' name | '.' TypeName | '[' index_or_slice ']' | '(' args ')'
+//            | type_args }
+//
+// A '{' can't otherwise follow a name or type, because a dict literal can only
+// be at the start of an expression. So it always opens type arguments, both
+// for a generic type (Pair{int, str}) and for explicitly instantiating a
+// generic function (max{u64}).
 static void postfix(Parser* p, Shape* sh) {
   for (;;) {
     switch (T(p)) {
@@ -536,6 +577,17 @@ static void postfix(Parser* p, Shape* sh) {
         *sh = is_struct_literal ? SH_VALUE : SH_CALL;
         break;
       }
+      case TK_LBRACE:
+        if (*sh != SH_TYPE && *sh != SH_NAME && *sh != SH_LVALUE) {
+          return;
+        }
+        type_args(p);
+        if (*sh != SH_TYPE) {
+          *sh = SH_VALUE;
+        } else if (T(p) == TK_LBRACE) {
+          error_at(p, p->ls.t.offset, "type arguments given twice");
+        }
+        break;
       default:
         return;
     }
@@ -732,21 +784,18 @@ static void suite(Parser* p) {
   }
 }
 
-// funcsig -> [type] name '(' [param {',' param}] ')'
+// funcsig -> [type] name [type_params] '(' [param {',' param}] ')'
 // param   -> type name | name    (bare name: a method's first parameter)
 //
 // The return type is optional, so after `def` a NAME is either the function
 // name or the start of a module.Type return type. A following '.' means it's
 // a type. A method's `self` and a module.Type parameter are distinguished the
 // same way.
-static void funcsig(Parser* p, int is_method) {
+static void funcsig(Parser* p, int is_method, int is_foreign) {
   if (T(p) == TK_NAME) {
     next(p);
     if (optional(p, TK_DOT)) {  // module.Type return type
-      if (T(p) != TK_TYPENAME) {
-        error_expected(p, "type name after module name");
-      }
-      next(p);
+      qualified_type_rest(p);
       check_name(p, "function name");
     }
   } else {
@@ -754,6 +803,12 @@ static void funcsig(Parser* p, int is_method) {
       type(p);
     }
     check_name(p, "function name");
+  }
+  if (T(p) == TK_LBRACE) {
+    if (is_foreign) {
+      error_at(p, p->ls.t.offset, "foreign functions can't be generic");
+    }
+    type_params(p);
   }
 
   u32 at = p->ls.t.offset;
@@ -764,10 +819,7 @@ static void funcsig(Parser* p, int is_method) {
       if (T(p) == TK_NAME) {
         next(p);
         if (optional(p, TK_DOT)) {  // module.Type param
-          if (T(p) != TK_TYPENAME) {
-            error_expected(p, "type name after module name");
-          }
-          next(p);
+          qualified_type_rest(p);
           check_name(p, "parameter name");
         } else if (!(is_method && first)) {
           error_at(p, p->ls.t.offset, "parameter needs a type");
@@ -784,7 +836,7 @@ static void funcsig(Parser* p, int is_method) {
 
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, int is_method) {
-  funcsig(p, is_method);
+  funcsig(p, is_method, 0);
   check(p, TK_COLON);
   suite(p);
 }
@@ -863,7 +915,7 @@ static void struct_body(Parser* p) {
 
 // toplevel_stat -> 'def' funcdef
 //                | 'on' type ('def' funcdef | 'foreign' funcsig end)
-//                | 'struct' TypeName ':' struct_body
+//                | 'struct' TypeName [type_params] ':' struct_body
 //                | 'foreign' funcsig end
 //                | decl_or_expr_stat end    (declarations and assignments)
 static void toplevel_stat(Parser* p) {
@@ -876,7 +928,7 @@ static void toplevel_stat(Parser* p) {
       next(p);
       type(p);
       if (optional(p, TK_FOREIGN)) {
-        funcsig(p, 1);
+        funcsig(p, 1, 1);
         end_of_stat(p);
       } else {
         check(p, TK_DEF);
@@ -889,12 +941,15 @@ static void toplevel_stat(Parser* p) {
         error_expected(p, "struct name (a TypeName)");
       }
       next(p);
+      if (T(p) == TK_LBRACE) {
+        type_params(p);
+      }
       check(p, TK_COLON);
       struct_body(p);
       return;
     case TK_FOREIGN:
       next(p);
-      funcsig(p, 0);
+      funcsig(p, 0, 1);
       end_of_stat(p);
       return;
     case TK_IMPORT:
