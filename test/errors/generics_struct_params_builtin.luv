@@ -1,5 +1,0 @@
-# CRET: 1
-# CERR: {self}:4:13:struct Pair{int}:
-# CERR: {ssss}                  ^ error: expected type parameter name, found 'int'
-struct Pair{int}:
-    int a

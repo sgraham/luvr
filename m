@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import argparse
+import glob
 import os
+import re
 import subprocess
 import sys
 
@@ -39,10 +41,50 @@ def commands(args):
             yield ["clang"] + flags + srcs + ["-o", f"out/{name}"], None
 
 
+def expected_error(path):
+    text = open(path, encoding="utf-8").read()
+    loc = re.search(r"^# CERR: \{self\}:(\d+):(\d+):", text, re.M)
+    msg = re.search(r"^# CERR: \{ssss\} *\^ (error: .*)$", text, re.M)
+    if not loc or not msg:
+        return None
+    return f"{path}:{loc.group(1)}:{loc.group(2)}: {msg.group(1)}"
+
+
+# test/*.luv and test/errors/*.luv must parse. The errors/ tests are
+# semantic errors, which the parser doesn't detect. test/syntax/*.luv must
+# fail with the error given in their CERR header.
+def run_tests():
+    exe = os.path.join("out", "parsecheck.exe" if sys.platform == "win32" else "parsecheck")
+    failures = []
+    paths = sorted(glob.glob("test/*.luv") + glob.glob("test/errors/*.luv"))
+    for path in paths:
+        r = subprocess.run([exe, "-q", path], capture_output=True, text=True)
+        if r.returncode != 0:
+            failures.append(f"{path}: expected to parse\n  got: {r.stderr.strip()}")
+    syntax = sorted(glob.glob("test/syntax/*.luv"))
+    for path in syntax:
+        want = expected_error(path)
+        if want is None:
+            failures.append(f"{path}: missing CERR header")
+            continue
+        r = subprocess.run([exe, "-q", path], capture_output=True, text=True)
+        got = r.stderr.strip()
+        if r.returncode == 0:
+            failures.append(f"{path}: expected a syntax error, but it parsed\n  want: {want}")
+        elif got != want:
+            failures.append(f"{path}: wrong error\n  want: {want}\n   got: {got}")
+    for f in failures:
+        print(f)
+    total = len(paths) + len(syntax)
+    print(f"{total - len(failures)}/{total} tests passed")
+    return not failures
+
+
 def main():
     ap = argparse.ArgumentParser(description="Build everything into out/.")
     ap.add_argument("-d", "--debug", action="store_true", help="debug build (default is release)")
     ap.add_argument("--msvc", action="store_true", help="on Windows, use cl instead of clang-cl")
+    ap.add_argument("action", nargs="?", choices=["test"], help="run the parser tests after building")
     args = ap.parse_args()
 
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -51,6 +93,8 @@ def main():
         rc = subprocess.call(cmd, cwd=cwd)
         if rc:
             sys.exit(rc)
+    if args.action == "test" and not run_tests():
+        sys.exit(1)
 
 
 if __name__ == "__main__":

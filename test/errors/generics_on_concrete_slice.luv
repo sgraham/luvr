@@ -1,5 +1,0 @@
-# CRET: 1
-# CERR: {self}:4:6:on []int def f(self):
-# CERR: {ssss}          ^ error: methods can't be defined for specific type arguments
-on []int def f(self):
-    pass

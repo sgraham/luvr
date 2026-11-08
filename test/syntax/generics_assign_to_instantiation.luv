@@ -1,5 +1,5 @@
 # CRET: 1
 # CERR: {self}:5:5:    max{int} = 3
-# CERR: {ssss}         ^ error: can't assign to this expression
+# CERR: {ssss}         ^ error: Can't assign to this expression.
 def f():
     max{int} = 3

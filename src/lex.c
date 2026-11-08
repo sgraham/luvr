@@ -78,7 +78,7 @@ void ctx_error_location(const Ctx* ctx, u32* line, u32* col) {
 static void* ctx_grow(Ctx* ctx, void* p, size_t bytes) {
   void* q = realloc(p, bytes);
   if (!q) {
-    ctx_error(ctx, NULL, NULL, 0, "out of memory");
+    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
   }
   return q;
 }
@@ -150,7 +150,7 @@ static void intern_rehash(Ctx* ctx) {
   u32 new_size = (ctx->slot_mask + 1) * 2;
   u64* slots = (u64*)calloc(new_size, sizeof(u64));
   if (!slots) {
-    ctx_error(ctx, NULL, NULL, 0, "out of memory");
+    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
   }
   u32 mask = new_size - 1;
   for (u32 i = 0; i < ctx->num_names; ++i) {
@@ -251,7 +251,7 @@ static void strbytes_append(Ctx* ctx, const u8* s, size_t n) {
       cap *= 2;
     }
     if (cap > 0xffffffffu) {
-      ctx_error(ctx, NULL, NULL, 0, "too much string literal data");
+      ctx_error(ctx, NULL, NULL, 0, "Too much string literal data.");
     }
     ctx->strbytes = (u8*)ctx_grow(ctx, ctx->strbytes, cap);
     ctx->cap_strbytes = (u32)cap;
@@ -338,11 +338,11 @@ static void lex_layout(LexState* ls, Token* t, const u8* nl) {
     return;
   }
   if (*q == '\t') {
-    lex_error(ls, q, "tab in indentation (use 4 spaces)");
+    lex_error(ls, q, "Indentation must use spaces, not tabs.");
   }
   u32 n = (u32)(q - bol);
   if (n & 3) {
-    lex_error(ls, q, "indentation must be a multiple of 4 spaces");
+    lex_error(ls, q, "Indentation must be a multiple of 4 spaces.");
   }
   u32 level = n >> 2;
   ls->p = q;
@@ -354,7 +354,7 @@ static void lex_layout(LexState* ls, Token* t, const u8* nl) {
     t->kind = TK_INDENT;
     t->offset = (u32)(q - ls->buf);
   } else if (level > ls->indent) {
-    lex_error(ls, q, "unexpected indent (more than one level)");
+    lex_error(ls, q, "Unexpected indent of more than one level.");
   } else {
     ls->pending_dedents = (u16)(ls->indent - level - 1);
     ls->indent = (u16)level;
@@ -433,7 +433,7 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
       ++ndigits;
     }
     if (!ndigits) {
-      lex_error(ls, start, "missing digits after '0%c'", start[1]);
+      lex_error(ls, start, "Missing digits after '0%c'.", start[1]);
     }
   } else {
     for (;; ++p) {
@@ -479,7 +479,7 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
     suf = parse_suffix(s, (u32)(p - s));
     int hex_like = start[0] == '0' && (start[1] == 'x' || start[1] == 'o' || start[1] == 'b');
     if (suf == SUF_NONE || (is_float && suf < SUF_F32) || (hex_like && suf >= SUF_F32)) {
-      lex_error(ls, s, "invalid suffix '%.*s' on number", (int)(p - s), (const char*)s);
+      lex_error(ls, s, "Invalid suffix '%.*s' on number.", (int)(p - s), (const char*)s);
     }
     if (suf >= SUF_F32) {
       is_float = 1;  // 1f32 is a float
@@ -498,7 +498,7 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
         continue;
       }
       if (n >= sizeof(tmp) - 1) {
-        lex_error(ls, start, "float literal too long");
+        lex_error(ls, start, "Float literal is too long.");
       }
       tmp[n++] = (char)*q;
     }
@@ -507,7 +507,7 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
     t->v.f = strtod(tmp, NULL);
   } else {
     if (overflow) {
-      lex_error(ls, start, "integer literal too large for 64 bits");
+      lex_error(ls, start, "Integer literal is too large for 64 bits.");
     }
     t->kind = TK_INTLIT;
     t->v.i = v;
@@ -569,7 +569,7 @@ static const u8* decode_escape(LexState* ls, const u8* q) {
       break;
     case 'x': {
       if (!IS(q[2], C_HEX) || !IS(q[3], C_HEX)) {
-        lex_error(ls, q, "\\x needs two hex digits");
+        lex_error(ls, q, "Escape \\x needs two hex digits.");
       }
       out = (u8)(digit_value(q[2]) * 16 + digit_value(q[3]));
       strbytes_append(ctx, &out, 1);
@@ -577,7 +577,7 @@ static const u8* decode_escape(LexState* ls, const u8* q) {
     }
     case 'u': {
       if (q[2] != '{') {
-        lex_error(ls, q, "expected '{' after \\u");
+        lex_error(ls, q, "Expected '{' after \\u.");
       }
       const u8* r = q + 3;
       u32 cp = 0;
@@ -585,20 +585,20 @@ static const u8* decode_escape(LexState* ls, const u8* q) {
       while (IS(*r, C_HEX)) {
         cp = cp * 16 + (u32)digit_value(*r++);
         if (++n > 6) {
-          lex_error(ls, q, "\\u{...} has too many digits");
+          lex_error(ls, q, "Escape \\u{...} has too many digits.");
         }
       }
       if (*r != '}' || n == 0) {
-        lex_error(ls, q, "malformed \\u{...} escape");
+        lex_error(ls, q, "Malformed \\u{...} escape.");
       }
       if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
-        lex_error(ls, q, "\\u{%x} is not a valid code point", cp);
+        lex_error(ls, q, "Escape \\u{%x} is not a valid code point.", cp);
       }
       utf8_append(ctx, cp);
       return r + 1;
     }
     default:
-      lex_error(ls, q, "invalid escape sequence '\\%c'", c >= 0x20 && c < 0x7f ? c : '?');
+      lex_error(ls, q, "Invalid escape sequence '\\%c'.", c >= 0x20 && c < 0x7f ? c : '?');
   }
   strbytes_append(ctx, &out, 1);
   return q + 2;
@@ -632,7 +632,7 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, int cont) {
     }
     if (c == '\n' || (c == 0 && q >= ls->end)) {
       lex_error(ls, delim,
-                cont ? "unterminated string (after interpolation)" : "unterminated string");
+                cont ? "Unterminated string after interpolation." : "Unterminated string.");
     }
     ++q;
   }
@@ -649,7 +649,7 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, int cont) {
   }
   // At a \(, so the string continues after the matching ')'.
   if (ls->interp_sp == LEX_MAX_INTERP) {
-    lex_error(ls, q, "string interpolation nested too deeply");
+    lex_error(ls, q, "String interpolation is nested too deeply.");
   }
   ls->interp_stack[ls->interp_sp++] = ls->bracket_depth;
   ++ls->bracket_depth;
@@ -666,12 +666,12 @@ void lex_init(LexState* ls, Ctx* ctx, const char* filename, const u8* buf, size_
   ls->buf = buf;
   ls->end = buf + len;
   if (len >= 0xfffffff0u) {
-    ctx_error(ctx, filename, NULL, 0, "file too large (4 GB limit)");
+    ctx_error(ctx, filename, NULL, 0, "File is larger than the 4 GB limit.");
   }
   const u8* bol;
   const u8* q = next_content_line(ls, buf, &bol);
   if (q < ls->end && q != bol) {
-    lex_error(ls, q, "unexpected indent on first line");
+    lex_error(ls, q, "Unexpected indent on the first line.");
   }
   ls->p = q;
 }
@@ -684,11 +684,11 @@ void lex_init(LexState* ls, Ctx* ctx, const char* filename, const u8* buf, size_
     return;                         \
   } while (0)
 
-#define OPEN(k)                                       \
-  do {                                                \
-    if (++ls->bracket_depth == 0)                     \
-      lex_error(ls, p, "brackets nested too deeply"); \
-    TOK(k, 1);                                        \
+#define OPEN(k)                                            \
+  do {                                                     \
+    if (++ls->bracket_depth == 0)                          \
+      lex_error(ls, p, "Brackets are nested too deeply."); \
+    TOK(k, 1);                                             \
   } while (0)
 
 #define CLOSE(k)           \
@@ -715,7 +715,7 @@ void lex_next(LexState* ls) {
         continue;
 
       case '\t':
-        lex_error(ls, p, "tab character (use spaces)");
+        lex_error(ls, p, "Tab characters are only allowed in strings and comments.");
 
       case '#': {
         // The '\n' isn't skipped so that it's still seen as a line boundary.
@@ -726,7 +726,7 @@ void lex_next(LexState* ls) {
 
       case '\n':
         if (ls->interp_sp) {
-          lex_error(ls, p, "newline inside string interpolation");
+          lex_error(ls, p, "Newlines aren't allowed inside string interpolation.");
         }
         if (ls->bracket_depth) {
           ++p;
@@ -740,7 +740,7 @@ void lex_next(LexState* ls) {
           lex_eof(ls, t);
           return;
         }
-        lex_error(ls, p, "NUL byte in source");
+        lex_error(ls, p, "Source contains a NUL byte.");
 
       case '(':
         OPEN(TK_LPAREN);
@@ -769,7 +769,7 @@ void lex_next(LexState* ls) {
         TOK(TK_TILDE, 1);
       case '.':
         if (IS(p[1], C_DIGIT)) {
-          lex_error(ls, p, "float literal needs a digit before '.'");
+          lex_error(ls, p, "Float literal needs a digit before '.'.");
         }
         TOK(TK_DOT, 1);
 
@@ -822,7 +822,7 @@ void lex_next(LexState* ls) {
         if (p[1] == '=') {
           TOK(TK_NE, 2);
         }
-        lex_error(ls, p, "unexpected '!' (use 'not')");
+        lex_error(ls, p, "Unexpected '!'. Use 'not' for logical negation.");
       case '<':
         if (p[1] == '<') {
           if (p[2] == '=') {
@@ -878,9 +878,9 @@ void lex_next(LexState* ls) {
           return;
         }
         if (*p >= 0x20 && *p < 0x7f) {
-          lex_error(ls, p, "unexpected character '%c'", *p);
+          lex_error(ls, p, "Unexpected character '%c'.", *p);
         }
-        lex_error(ls, p, "unexpected byte 0x%02x", *p);
+        lex_error(ls, p, "Unexpected byte 0x%02x.", *p);
     }
   }
 }

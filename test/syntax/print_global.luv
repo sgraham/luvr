@@ -1,0 +1,4 @@
+# CRET: 1
+# CERR: {self}:4:1:print
+# CERR: {ssss}     ^ error: Expected statement, found 'print'.
+print

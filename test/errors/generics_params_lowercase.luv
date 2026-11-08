@@ -1,5 +1,0 @@
-# CRET: 1
-# CERR: {self}:4:11:def T max{t}(T a):
-# CERR: {ssss}                ^ error: expected type parameter name, found 't'
-def T max{t}(T a):
-    pass

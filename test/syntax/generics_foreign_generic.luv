@@ -1,0 +1,4 @@
+# CRET: 1
+# CERR: {self}:4:14:foreign int f{T}(T a)
+# CERR: {ssss}                   ^ error: Foreign functions can't be generic.
+foreign int f{T}(T a)

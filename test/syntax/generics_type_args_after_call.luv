@@ -1,5 +1,5 @@
 # CRET: 1
 # CERR: {self}:5:12:    x = f(){int}
-# CERR: {ssss}                 ^ error: expected end of line, found '{'
+# CERR: {ssss}                 ^ error: Expected end of line, found '{'.
 def f():
     x = f(){int}

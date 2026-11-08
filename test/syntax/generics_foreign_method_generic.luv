@@ -1,4 +1,4 @@
 # CRET: 1
 # CERR: {self}:4:25:on List{T} foreign int g{U}(self)
-# CERR: {ssss}                              ^ error: foreign functions can't be generic
+# CERR: {ssss}                              ^ error: Foreign functions can't be generic.
 on List{T} foreign int g{U}(self)

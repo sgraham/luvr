@@ -1,5 +1,5 @@
 # CRET: 1
 # CERR: {self}:4:4:on [4]T def f(self):
-# CERR: {ssss}        ^ error: methods can't be defined on fixed-size arrays
+# CERR: {ssss}        ^ error: Methods can't be defined on fixed-size arrays.
 on [4]T def f(self):
     pass

@@ -84,7 +84,7 @@ static const char* describe(Parser* p, char* buf, size_t size) {
 
 NORETURN static void error_expected(Parser* p, const char* what) {
   char buf[64];
-  error_at(p, p->ls.t.offset, "expected %s, found %s", what, describe(p, buf, sizeof(buf)));
+  error_at(p, p->ls.t.offset, "Expected %s, found %s.", what, describe(p, buf, sizeof(buf)));
 }
 
 static void check(Parser* p, int kind) {
@@ -116,10 +116,10 @@ static void check_match(Parser* p, int what, int who, u32 who_offset) {
   src_location(p->ls.buf, p->ls.t.offset, &cur_line, &col);
   char buf[64];
   if (who_line == cur_line) {
-    error_at(p, p->ls.t.offset, "expected '%s', found %s", tok_kind_name(what),
+    error_at(p, p->ls.t.offset, "Expected '%s', found %s.", tok_kind_name(what),
              describe(p, buf, sizeof(buf)));
   }
-  error_at(p, p->ls.t.offset, "expected '%s' (to close '%s' at line %u), found %s",
+  error_at(p, p->ls.t.offset, "Expected '%s' (to close '%s' at line %u), found %s.",
            tok_kind_name(what), tok_kind_name(who), who_line, describe(p, buf, sizeof(buf)));
 }
 
@@ -356,7 +356,7 @@ static void subexpr(Parser* p, int limit, Shape* sh) {
   switch (T(p)) {
     case TK_NOT:
       if (limit >= PRIORITY_NOT) {
-        error_at(p, p->ls.t.offset, "'not' needs parentheses here");
+        error_at(p, p->ls.t.offset, "'not' needs parentheses here.");
       }
       next(p);
       subexpr(p, PRIORITY_NOT, sh);
@@ -391,7 +391,7 @@ static void binop_rest(Parser* p, int limit, Shape* sh) {
     subexpr(p, priority[op], &rhs);
     BinOpr nextop = getbinopr(T(p));
     if (is_comparison(op) && is_comparison(nextop)) {
-      error_at(p, at, "comparisons can't be chained (use 'and')");
+      error_at(p, at, "Comparisons can't be chained. Use 'and' to combine them.");
     }
     *sh = SH_VALUE;
     op = nextop;
@@ -469,7 +469,7 @@ static void dict_literal(Parser* p) {
     check(p, TK_COLON);
     expr(p);
     if (T(p) == TK_FOR) {
-      error_at(p, p->ls.t.offset, "dict comprehensions aren't supported yet");
+      error_at(p, p->ls.t.offset, "Dict comprehensions aren't supported yet.");
     }
     while (optional(p, TK_COMMA)) {
       if (T(p) == TK_RBRACE) {
@@ -512,11 +512,11 @@ static void call_args(Parser* p, int is_struct_literal) {
   if (T(p) != TK_RPAREN) {
     do {
       if (T(p) == TK_RPAREN) {
-        error_at(p, p->ls.t.offset, "trailing comma not allowed in calls");
+        error_at(p, p->ls.t.offset, "Trailing commas aren't allowed in calls.");
       }
       if (T(p) == TK_DOT) {
         if (!is_struct_literal) {
-          error_at(p, p->ls.t.offset, "'.name=' arguments are only for struct literals");
+          error_at(p, p->ls.t.offset, "'.name=' arguments are only allowed in struct literals.");
         }
         next(p);
         check_name(p, "field name");
@@ -561,7 +561,7 @@ static void postfix(Parser* p, Shape* sh) {
           *sh = SH_LVALUE;
         } else if (T(p) == TK_TYPENAME) {
           if (*sh != SH_NAME) {
-            error_at(p, p->ls.t.offset, "unexpected type name after '.'");
+            error_at(p, p->ls.t.offset, "Unexpected type name after '.'.");
           }
           *sh = SH_TYPE;  // module.TypeName
         } else {
@@ -571,7 +571,7 @@ static void postfix(Parser* p, Shape* sh) {
         break;
       case TK_LSQUARE:
         if (*sh == SH_TYPE) {
-          error_at(p, p->ls.t.offset, "a type can't be indexed");
+          error_at(p, p->ls.t.offset, "A type can't be indexed.");
         }
         index_or_slice(p, sh);
         break;
@@ -589,7 +589,7 @@ static void postfix(Parser* p, Shape* sh) {
         if (*sh != SH_TYPE) {
           *sh = SH_VALUE;
         } else if (T(p) == TK_LBRACE) {
-          error_at(p, p->ls.t.offset, "type arguments given twice");
+          error_at(p, p->ls.t.offset, "Type arguments were given twice.");
         }
         break;
       default:
@@ -698,10 +698,10 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
     }
     if (T(p) == TK_EQ || is_augassign(T(p))) {
       if (sh != SH_NAME && sh != SH_LVALUE) {
-        error_at(p, at, "can't assign to this expression");
+        error_at(p, at, "Can't assign to this expression.");
       }
       if (toplevel && T(p) != TK_EQ) {
-        error_at(p, p->ls.t.offset, "augmented assignment isn't allowed at top level");
+        error_at(p, p->ls.t.offset, "Augmented assignment isn't allowed at top level.");
       }
       next(p);
       expr(p);
@@ -709,11 +709,11 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
     }
     if (sh == SH_CALL) {
       if (toplevel) {
-        error_at(p, at, "calls aren't allowed at top level");
+        error_at(p, at, "Calls aren't allowed at top level.");
       }
       return;
     }
-    error_at(p, at, "expression is not a statement");
+    error_at(p, at, "Expression can't be used as a statement.");
   }
   if (is_type_start(k)) {
     type(p);
@@ -721,7 +721,7 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
     return;
   }
   if (k == TK_INDENT) {
-    error_at(p, at, "unexpected indent");
+    error_at(p, at, "Unexpected indent.");
   }
   error_expected(p, "statement");
 }
@@ -759,7 +759,7 @@ static void simple_stat(Parser* p) {
     case TK_FOR:
     case TK_WITH:
     case TK_DEF:
-      error_at(p, p->ls.t.offset, "'%s' can't follow ':' on the same line", tok_kind_name(T(p)));
+      error_at(p, p->ls.t.offset, "'%s' can't follow ':' on the same line.", tok_kind_name(T(p)));
     default:
       decl_or_expr_stat(p, 0);
       return;
@@ -810,7 +810,7 @@ static void funcsig(Parser* p, int is_method, int is_foreign) {
   }
   if (T(p) == TK_LBRACE) {
     if (is_foreign) {
-      error_at(p, p->ls.t.offset, "foreign functions can't be generic");
+      error_at(p, p->ls.t.offset, "Foreign functions can't be generic.");
     }
     type_params(p);
   }
@@ -826,7 +826,7 @@ static void funcsig(Parser* p, int is_method, int is_foreign) {
           qualified_type_rest(p);
           check_name(p, "parameter name");
         } else if (!(is_method && first)) {
-          error_at(p, p->ls.t.offset, "parameter needs a type");
+          error_at(p, p->ls.t.offset, "Parameter needs a type.");
         }
       } else {
         type(p);
@@ -927,7 +927,7 @@ static void struct_body(Parser* p) {
 // ambiguous.
 static void receiver_param(Parser* p) {
   if (is_type_start(T(p)) && T(p) != TK_TYPENAME) {
-    error_at(p, p->ls.t.offset, "methods can't be defined for specific type arguments");
+    error_at(p, p->ls.t.offset, "Methods can't be defined for specific type arguments.");
   }
   type_param(p);
 }
@@ -949,7 +949,7 @@ static void receiver(Parser* p) {
     case TK_LSQUARE:
       next(p);
       if (T(p) != TK_RSQUARE) {
-        error_at(p, at, "methods can't be defined on fixed-size arrays");
+        error_at(p, at, "Methods can't be defined on fixed-size arrays.");
       }
       next(p);
       receiver_param(p);
@@ -961,9 +961,9 @@ static void receiver(Parser* p) {
       receiver_param(p);
       return;
     case TK_STAR:
-      error_at(p, at, "methods can't be defined on pointer types");
+      error_at(p, at, "Methods can't be defined on pointer types.");
     case TK_NAME:
-      error_at(p, at, "methods can only be defined in the type's own module");
+      error_at(p, at, "Methods can only be defined in the type's own module.");
     default:
       if (!is_builtin_type(T(p))) {
         error_expected(p, "type to define methods on");
@@ -1013,7 +1013,7 @@ static void toplevel_stat(Parser* p) {
       end_of_stat(p);
       return;
     case TK_IMPORT:
-      error_at(p, p->ls.t.offset, "imports must come before other declarations");
+      error_at(p, p->ls.t.offset, "Imports must come before other declarations.");
     default:
       decl_or_expr_stat(p, 1);
       end_of_stat(p);

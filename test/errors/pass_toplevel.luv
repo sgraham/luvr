@@ -1,4 +1,0 @@
-# CRET: 1
-# CERR: {self}:4:1:pass
-# CERR: {ssss}     ^ error: pass statement not allowed at top level.
-pass

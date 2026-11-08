@@ -1,5 +1,5 @@
 # CRET: 1
 # CERR: {self}:4:9:on List{int} def int f(self):
-# CERR: {ssss}             ^ error: methods can't be defined for specific type arguments
+# CERR: {ssss}             ^ error: Methods can't be defined for specific type arguments.
 on List{int} def int f(self):
     return 0
