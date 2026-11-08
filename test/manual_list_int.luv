@@ -9,9 +9,6 @@ struct ListData_int:
     u64 length
     u64 capacity
 
-on int def str __repr__(self):
-    return "1234"
-
 on ListData_int def ensure_capacity(self, u64 cap):
     if self.capacity >= cap:
         return

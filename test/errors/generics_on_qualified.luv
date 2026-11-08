@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:4:4:on mod.Thing def f(self):
+# CERR: {ssss}        ^ error: methods can only be defined in the type's own module
+on mod.Thing def f(self):
+    pass

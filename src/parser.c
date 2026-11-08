@@ -175,15 +175,19 @@ static void type_args(Parser* p) {
   check_match(p, TK_RBRACE, TK_LBRACE, at);
 }
 
+static void type_param(Parser* p) {
+  if (T(p) != TK_TYPENAME) {
+    error_expected(p, "type parameter name");
+  }
+  next(p);
+}
+
 // type_params -> '{' TypeName {',' TypeName} '}'
 static void type_params(Parser* p) {
   u32 at = p->ls.t.offset;
   next(p);  // '{'
   do {
-    if (T(p) != TK_TYPENAME) {
-      error_expected(p, "type parameter name");
-    }
-    next(p);
+    type_param(p);
   } while (optional(p, TK_COMMA));
   check_match(p, TK_RBRACE, TK_LBRACE, at);
 }
@@ -913,8 +917,64 @@ static void struct_body(Parser* p) {
   check(p, TK_DEDENT);
 }
 
+// receiver -> TypeName [type_params] | builtin
+//           | '[' ']' TypeName | '{' TypeName '}' TypeName
+//
+// Methods can only be defined in the receiver type's own module, so the
+// receiver is never module.Type. There's no specialization, so the type
+// arguments of a generic receiver are always new type parameters. There are
+// no methods on pointers, because '.' auto-dereferences, and so p.f() would be
+// ambiguous.
+static void receiver_param(Parser* p) {
+  if (is_type_start(T(p)) && T(p) != TK_TYPENAME) {
+    error_at(p, p->ls.t.offset, "methods can't be defined for specific type arguments");
+  }
+  type_param(p);
+}
+
+static void receiver(Parser* p) {
+  u32 at = p->ls.t.offset;
+  switch (T(p)) {
+    case TK_TYPENAME:
+      next(p);
+      if (T(p) == TK_LBRACE) {
+        u32 brace = p->ls.t.offset;
+        next(p);
+        do {
+          receiver_param(p);
+        } while (optional(p, TK_COMMA));
+        check_match(p, TK_RBRACE, TK_LBRACE, brace);
+      }
+      return;
+    case TK_LSQUARE:
+      next(p);
+      if (T(p) != TK_RSQUARE) {
+        error_at(p, at, "methods can't be defined on fixed-size arrays");
+      }
+      next(p);
+      receiver_param(p);
+      return;
+    case TK_LBRACE:
+      next(p);
+      receiver_param(p);
+      check_match(p, TK_RBRACE, TK_LBRACE, at);
+      receiver_param(p);
+      return;
+    case TK_STAR:
+      error_at(p, at, "methods can't be defined on pointer types");
+    case TK_NAME:
+      error_at(p, at, "methods can only be defined in the type's own module");
+    default:
+      if (!is_builtin_type(T(p))) {
+        error_expected(p, "type to define methods on");
+      }
+      next(p);
+      return;
+  }
+}
+
 // toplevel_stat -> 'def' funcdef
-//                | 'on' type ('def' funcdef | 'foreign' funcsig end)
+//                | 'on' receiver ('def' funcdef | 'foreign' funcsig end)
 //                | 'struct' TypeName [type_params] ':' struct_body
 //                | 'foreign' funcsig end
 //                | decl_or_expr_stat end    (declarations and assignments)
@@ -926,7 +986,7 @@ static void toplevel_stat(Parser* p) {
       return;
     case TK_ON:
       next(p);
-      type(p);
+      receiver(p);
       if (optional(p, TK_FOREIGN)) {
         funcsig(p, 1, 1);
         end_of_stat(p);

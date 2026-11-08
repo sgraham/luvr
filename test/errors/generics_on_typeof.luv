@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:4:4:on typeof(x) def f(self):
+# CERR: {ssss}        ^ error: expected type to define methods on, found 'typeof'
+on typeof(x) def f(self):
+    pass
