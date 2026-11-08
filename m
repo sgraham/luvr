@@ -24,8 +24,11 @@ def commands(args):
             if args.msvc:
                 flags += ["/GL"]
                 link += ["/LTCG"]
+        # Run from out/ so that .obj and .pdb files are written there. Sources
+        # are absolute so that diagnostics have paths that work from anywhere.
         for name, srcs in TARGETS:
-            yield [cc] + flags + srcs + ["/link"] + link + [f"/out:out\\{name}.exe"]
+            srcs = [os.path.abspath(s) for s in srcs]
+            yield [cc] + flags + srcs + ["/link"] + link + [f"/out:{name}.exe"], "out"
     else:
         flags = ["-g", "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Wimplicit-fallthrough"]
         if args.debug:
@@ -33,7 +36,7 @@ def commands(args):
         else:
             flags += ["-O2", "-DBUILD_DEBUG=0"]
         for name, srcs in TARGETS:
-            yield ["clang"] + flags + srcs + ["-o", f"out/{name}"]
+            yield ["clang"] + flags + srcs + ["-o", f"out/{name}"], None
 
 
 def main():
@@ -44,8 +47,8 @@ def main():
 
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     os.makedirs("out", exist_ok=True)
-    for cmd in commands(args):
-        rc = subprocess.call(cmd)
+    for cmd, cwd in commands(args):
+        rc = subprocess.call(cmd, cwd=cwd)
         if rc:
             sys.exit(rc)
 
