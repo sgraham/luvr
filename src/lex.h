@@ -186,7 +186,7 @@ typedef struct Token {
 
 // Token is written in place into LexState.t. There is only ever a single token,
 // so the size only currently matters to keep it in L1 as much as possible.
-_Static_assert(sizeof(Token) == 16, "unexpected Token size");
+static_assert(sizeof(Token) == 16, "unexpected Token size");
 
 // Interned identifier or keyword.
 typedef struct Name {
