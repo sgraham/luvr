@@ -651,6 +651,36 @@ supports (`nested_two_levels.luv`). Use Lua's `FuncState` chain directly.
     error to match, and lookup that's linear in the local count.
   - Measure both. Dumbbench has three locals per function, which flatters
     the scan, so also bench something with many locals per function.
+  - **Result (2026-11-08): chose `Name.binding`.** Both were implemented
+    for locals only (binding step 1, with no globals, captures or errors
+    yet), and they resolved the same names on every test file (3.75M
+    local lookups on dumbbench). `scratch/gen_locals.py` generates the
+    many-locals inputs (N locals per function, names drawn from a shared
+    pool). Hyperfine means, measured on the laptop:
+
+    | input      | HEAD (no lookup) | `Name.binding` | scan     |
+    |------------|------------------|----------------|----------|
+    | dumbbench  | 476 ms           | 484 ms         | 494 ms   |
+    | locals4    | 82.3 ms          | 83.0 ms        | 90.8 ms  |
+    | locals16   | 69.4 ms          | 69.5 ms        | 85.4 ms  |
+    | locals64   | 66.1 ms          | 66.2 ms        | 97.4 ms  |
+    | locals256  | 66.1 ms          | 66.1 ms        | 170.2 ms |
+
+    The scan loses even at 4 locals, and its cost grows linearly as
+    expected. `Name.binding` costs nothing measurable on the many-locals
+    files, and about 2–3% on dumbbench (+8–15 ms over several runs).
+    That's about the same size as the laptop's run-to-run noise (±10–17
+    ms, possibly battery or thermal throttling), so it should be
+    re-measured on the desktop. For reference, Lua 4.0.1 on dumbbench:
+    1.584 s full `luac`, 1.182 s with code generation stubbed out, 0.821 s
+    lex only (builds in `scratch/lua-4.0.1-nocode`).
+  - As implemented: a single `Local locals[1024]` array in the `Parser`,
+    shared by enclosing functions, with `func_base` marking the current
+    function's first entry. Each `Local` saves the shadowed binding, so
+    the array doubles as the undo stack. Name indices are a `NameId`
+    struct so they can't be mixed up with offsets. Bindings are undone at
+    the end of `parse_file()`, including after an error, because `Name`s
+    are shared by every file parsed with the same `Ctx`.
 - Hash: something cheap over the bytes already being scanned (FNV-1a,
   or wyhash on ≤16-byte loads given the padding).
 
