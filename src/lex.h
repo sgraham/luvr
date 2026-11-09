@@ -162,6 +162,12 @@ enum {
   TF_ESCAPED = 0x10,
 };
 
+// Index of an interned Name in Ctx.names. It's a struct so that it can't be
+// mixed up with offsets or other indices.
+typedef struct NameId {
+  u32 idx;
+} NameId;
+
 typedef struct Token {
   u8 kind;   // TokenKind
   u8 flags;  // TF_*
@@ -175,11 +181,11 @@ typedef struct Token {
   u32 offset;
 
   union {
-    u64 i;     // kind=INTLIT (always unsigned, sign comes from unary minus)
-    double f;  // kind=FLOATLIT
-    u32 name;  // kind=NAME/TYPENAME/keywords: index into Ctx.names
-    u32 len;   // kind=STRING* and flags !TF_ESCAPED: byte length of content slice
-    u32 str;   // kind=STRING* and flags TF_ESCAPED: index into Ctx.strs
+    u64 i;        // kind=INTLIT (always unsigned, sign comes from unary minus)
+    double f;     // kind=FLOATLIT
+    NameId name;  // kind=NAME/TYPENAME/keywords
+    u32 len;      // kind=STRING* and flags !TF_ESCAPED: byte length of content slice
+    u32 str;      // kind=STRING* and flags TF_ESCAPED: index into Ctx.strs
   } v;
 } Token;
 
@@ -267,8 +273,8 @@ void lex_next(LexState* ls);
 
 const char* tok_kind_name(int kind);
 
-static inline const Name* lex_name(const Ctx* ctx, u32 idx) {
-  return &ctx->names[idx];
+static inline const Name* lex_name(const Ctx* ctx, NameId id) {
+  return &ctx->names[id.idx];
 }
 
 // Content of a STRING* token (not NUL-terminated).

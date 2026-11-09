@@ -4,8 +4,9 @@
 // and no token buffer. It only accepts or rejects. There's no code generation
 // or symbol resolution yet.
 
-#ifndef PARSER_H
-#define PARSER_H
+#pragma once
+
+#include "luvr.h"
 
 #include "lex.h"
 
@@ -16,5 +17,3 @@
 // As with lex_init(), buf must have LEX_PADDING zero bytes after len and
 // must outlive ctx.
 void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len);
-
-#endif  // PARSER_H

@@ -873,7 +873,7 @@ void lex_next(LexState* ls) {
           u32 idx = intern(ls->ctx, s, len, hash_ident(s, len), 0);
           t->kind = ls->ctx->names[idx].kind;
           t->offset = (u32)(s - ls->buf);
-          t->v.name = idx;
+          t->v.name = (NameId){idx};
           ls->p = p;
           return;
         }

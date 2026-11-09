@@ -17,10 +17,28 @@
 
 #include "parser.h"
 
-#include <stdio.h>
+// Locals that can be in scope at once, including those of enclosing functions.
+#define MAX_LOCALS 1024
+
+// A parameter or local variable of the function being parsed, or of one that
+// encloses it.
+typedef struct Local Local;
+struct Local {
+  NameId name;
+  // The Name's binding before this was declared. It's restored when the
+  // function ends.
+  Local* shadowed;
+};
 
 typedef struct Parser {
   LexState ls;
+  Local locals[MAX_LOCALS];
+  u32 num_locals;
+  u32 func_base;   // first of the current function's entries in locals
+  u32 func_depth;  // 0 at top level
+  // Counts names that were found as locals. Until there's code generation,
+  // this is the only use of a lookup's result.
+  u32 num_resolved;
 } Parser;
 
 // The syntactical shape of parsing an expression. Used to decide whether
@@ -128,6 +146,76 @@ static void check_name(Parser* p, const char* what) {
     error_expected(p, what);
   }
   next(p);
+}
+
+// Like check_name(), but returns the name, and its offset in *at.
+static NameId expect_name(Parser* p, const char* what, u32* at) {
+  if (T(p) != TK_NAME) {
+    error_expected(p, what);
+  }
+  NameId name = p->ls.t.v.name;
+  *at = p->ls.t.offset;
+  next(p);
+  return name;
+}
+
+// Locals
+//
+// Scope is the whole function: a local is declared by its first assignment
+// and is visible from there to the end of the function. Only locals are
+// resolved so far. Other names aren't looked up anywhere yet.
+
+static Name* name_of(Parser* p, NameId name) {
+  return &p->ls.ctx->names[name.idx];
+}
+
+static Local* lookup(Parser* p, NameId name) {
+  return (Local*)name_of(p, name)->binding;
+}
+
+static void declare_local(Parser* p, NameId name, u32 at) {
+  if (p->num_locals == MAX_LOCALS) {
+    error_at(p, at, "Too many local variables.");
+  }
+  Local* l = &p->locals[p->num_locals++];
+  l->name = name;
+  Name* n = name_of(p, name);
+  l->shadowed = (Local*)n->binding;
+  n->binding = l;
+}
+
+// Declares name in the current function, unless it's already one of the
+// function's locals.
+static void declare_if_new(Parser* p, NameId name, u32 at) {
+  if (p->func_depth == 0) {
+    return;
+  }
+  Local* l = lookup(p, name);
+  if (!l || l < &p->locals[p->func_base]) {
+    declare_local(p, name, at);
+  }
+}
+
+static void pop_locals(Parser* p, u32 base) {
+  for (u32 i = p->num_locals; i-- > base;) {
+    const Local* l = &p->locals[i];
+    name_of(p, l->name)->binding = l->shadowed;
+  }
+  p->num_locals = base;
+}
+
+// Returns the enclosing function's base, to pass to func_close().
+static u32 func_open(Parser* p) {
+  u32 outer = p->func_base;
+  p->func_base = p->num_locals;
+  ++p->func_depth;
+  return outer;
+}
+
+static void func_close(Parser* p, u32 outer) {
+  pop_locals(p, p->func_base);
+  p->func_base = outer;
+  --p->func_depth;
 }
 
 static int is_builtin_type(int kind) {
@@ -419,10 +507,29 @@ static void interpolated_string(Parser* p) {
   }
 }
 
+#define MAX_TARGETS 8
+
+// Loop variables, which are bound after the expression that's iterated.
+typedef struct Targets {
+  u32 n;
+  NameId name[MAX_TARGETS];
+  u32 at[MAX_TARGETS];
+} Targets;
+
 // for_targets -> name {',' name}
-static void for_targets(Parser* p) {
+static void for_targets(Parser* p, Targets* t) {
+  t->n = 0;
   do {
-    check_name(p, "loop variable name");
+    if (T(p) != TK_NAME) {
+      error_expected(p, "loop variable name");
+    }
+    if (t->n == MAX_TARGETS) {
+      error_at(p, p->ls.t.offset, "Too many loop variables.");
+    }
+    t->name[t->n] = p->ls.t.v.name;
+    t->at[t->n] = p->ls.t.offset;
+    ++t->n;
+    next(p);
   } while (optional(p, TK_COMMA));
 }
 
@@ -440,7 +547,10 @@ static void list_literal(Parser* p) {
       // comprehension -> 'for' targets 'in' expr { 'for' ... | 'if' expr }
       while (T(p) == TK_FOR || T(p) == TK_IF) {
         if (optional(p, TK_FOR)) {
-          for_targets(p);
+          // The element is parsed before the loop variables, so they aren't
+          // bound yet.
+          Targets t;
+          for_targets(p, &t);
           check(p, TK_IN);
           expr(p);
         } else {
@@ -617,6 +727,7 @@ static void primary(Parser* p, Shape* sh) {
       interpolated_string(p);
       break;
     case TK_NAME:
+      p->num_resolved += lookup(p, p->ls.t.v.name) != NULL;
       next(p);
       *sh = SH_NAME;
       break;
@@ -670,10 +781,12 @@ static void primary(Parser* p, Shape* sh) {
 
 // The rest of a declaration once its type is parsed: name ['=' expr].
 static void decl_rest(Parser* p) {
-  check_name(p, "variable name");
+  u32 at;
+  NameId name = expect_name(p, "variable name", &at);
   if (optional(p, TK_EQ)) {
     expr(p);
   }
+  declare_if_new(p, name, at);
 }
 
 static int is_augassign(int kind) {
@@ -690,6 +803,7 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
   int k = T(p);
   u32 at = p->ls.t.offset;
   if (k == TK_NAME || k == TK_TYPENAME) {
+    NameId name = p->ls.t.v.name;
     Shape sh;
     primary(p, &sh);
     if (sh == SH_TYPE) {
@@ -703,8 +817,13 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
       if (toplevel && T(p) != TK_EQ) {
         error_at(p, p->ls.t.offset, "Augmented assignment isn't allowed at top level.");
       }
+      int declares = sh == SH_NAME && T(p) == TK_EQ;
       next(p);
       expr(p);
+      // After the expression, so that it can't see the new local.
+      if (declares) {
+        declare_if_new(p, name, at);
+      }
       return;
     }
     if (sh == SH_CALL) {
@@ -795,19 +914,29 @@ static void suite(Parser* p) {
 // name or the start of a module.Type return type. A following '.' means it's
 // a type. A method's `self` and a module.Type parameter are distinguished the
 // same way.
-static void funcsig(Parser* p, int is_method, int is_foreign) {
+//
+// A nested function's name is a local of the enclosing function. The new
+// function's scope is opened after the name, and the return value is for
+// func_close().
+static u32 funcsig(Parser* p, int is_method, int is_foreign) {
+  NameId name = p->ls.t.v.name;
+  u32 at = p->ls.t.offset;
   if (T(p) == TK_NAME) {
     next(p);
     if (optional(p, TK_DOT)) {  // module.Type return type
       qualified_type_rest(p);
-      check_name(p, "function name");
+      name = expect_name(p, "function name", &at);
     }
   } else {
     if (is_type_start(T(p))) {
       type(p);
     }
-    check_name(p, "function name");
+    name = expect_name(p, "function name", &at);
   }
+  if (!is_method) {
+    declare_if_new(p, name, at);
+  }
+  u32 outer = func_open(p);
   if (T(p) == TK_LBRACE) {
     if (is_foreign) {
       error_at(p, p->ls.t.offset, "Foreign functions can't be generic.");
@@ -815,34 +944,39 @@ static void funcsig(Parser* p, int is_method, int is_foreign) {
     type_params(p);
   }
 
-  u32 at = p->ls.t.offset;
+  u32 lparen = p->ls.t.offset;
   check(p, TK_LPAREN);
   if (T(p) != TK_RPAREN) {
     int first = 1;
     do {
+      name = p->ls.t.v.name;
+      at = p->ls.t.offset;
       if (T(p) == TK_NAME) {
         next(p);
         if (optional(p, TK_DOT)) {  // module.Type param
           qualified_type_rest(p);
-          check_name(p, "parameter name");
+          name = expect_name(p, "parameter name", &at);
         } else if (!(is_method && first)) {
           error_at(p, p->ls.t.offset, "Parameter needs a type.");
         }
       } else {
         type(p);
-        check_name(p, "parameter name");
+        name = expect_name(p, "parameter name", &at);
       }
+      declare_local(p, name, at);
       first = 0;
     } while (optional(p, TK_COMMA));
   }
-  check_match(p, TK_RPAREN, TK_LPAREN, at);
+  check_match(p, TK_RPAREN, TK_LPAREN, lparen);
+  return outer;
 }
 
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, int is_method) {
-  funcsig(p, is_method, 0);
+  u32 outer = funcsig(p, is_method, 0);
   check(p, TK_COLON);
   suite(p);
+  func_close(p, outer);
 }
 
 // stat -> 'if' expr ':' suite {'elif' expr ':' suite} ['else' ':' suite]
@@ -867,19 +1001,26 @@ static void stat(Parser* p) {
         suite(p);
       }
       return;
-    case TK_FOR:
+    case TK_FOR: {
+      Targets t;
       next(p);
-      for_targets(p);
+      for_targets(p, &t);
       check(p, TK_IN);
       expr(p);
+      for (u32 i = 0; i < t.n; ++i) {
+        declare_if_new(p, t.name[i], t.at[i]);
+      }
       check(p, TK_COLON);
       suite(p);
       return;
+    }
     case TK_WITH:
       next(p);
       expr(p);
       if (optional(p, TK_AS)) {
-        check_name(p, "variable name");
+        u32 at;
+        NameId name = expect_name(p, "variable name", &at);
+        declare_if_new(p, name, at);
       }
       check(p, TK_COLON);
       suite(p);
@@ -988,7 +1129,7 @@ static void toplevel_stat(Parser* p) {
       next(p);
       receiver(p);
       if (optional(p, TK_FOREIGN)) {
-        funcsig(p, 1, 1);
+        func_close(p, funcsig(p, 1, 1));
         end_of_stat(p);
       } else {
         check(p, TK_DEF);
@@ -1009,7 +1150,7 @@ static void toplevel_stat(Parser* p) {
       return;
     case TK_FOREIGN:
       next(p);
-      funcsig(p, 0, 1);
+      func_close(p, funcsig(p, 0, 1));
       end_of_stat(p);
       return;
     case TK_IMPORT:
@@ -1023,10 +1164,7 @@ static void toplevel_stat(Parser* p) {
 
 // module -> {import} {toplevel_stat} EOS
 // import -> 'import' STRING ['as' name] end
-void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len) {
-  Parser parser;
-  Parser* p = &parser;
-  lex_init(&p->ls, ctx, filename, buf, len);
+static void parse_module(Parser* p) {
   next(p);
   while (optional(p, TK_IMPORT)) {
     if (T(p) != TK_STRING) {
@@ -1041,4 +1179,35 @@ void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len) {
   while (T(p) != TK_EOS) {
     toplevel_stat(p);
   }
+}
+
+void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len) {
+  // The Parser isn't a local, so that it's still valid after a longjmp.
+  // TODO: Freeing on error needs its own setjmp here. Ctx already grows its
+  // tables with ctx_grow(), so it'd be better to settle on one owner for
+  // allocations that error paths can clean up.
+  Parser* p = (Parser*)malloc(sizeof(Parser));
+  if (!p) {
+    ctx_error(ctx, filename, NULL, 0, "Out of memory.");
+  }
+  p->num_locals = 0;
+  p->func_base = 0;
+  p->func_depth = 0;
+  p->num_resolved = 0;
+  // Names are shared by all files parsed with ctx, so this file's bindings
+  // are undone at the end, including after an error.
+  jmp_buf* outer = ctx->on_error;
+  jmp_buf jb;
+  ctx->on_error = &jb;
+  if (setjmp(jb)) {
+    pop_locals(p, 0);
+    free(p);
+    ctx->on_error = outer;
+    longjmp(*outer, 1);
+  }
+  lex_init(&p->ls, ctx, filename, buf, len);
+  parse_module(p);
+  pop_locals(p, 0);
+  free(p);
+  ctx->on_error = outer;
 }
