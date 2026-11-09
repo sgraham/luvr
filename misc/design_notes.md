@@ -674,6 +674,25 @@ supports (`nested_two_levels.luv`). Use Lua's `FuncState` chain directly.
     re-measured on the desktop. For reference, Lua 4.0.1 on dumbbench:
     1.584 s full `luac`, 1.182 s with code generation stubbed out, 0.821 s
     lex only (builds in `scratch/lua-4.0.1-nocode`).
+
+    Re-measured on the desktop (Ryzen 9 5900XT, Linux, clang 18 `-O2`,
+    pinned with `taskset -c 6`), comparing 8b968df with e61a77e. The scan
+    wasn't rebuilt there.
+
+    | input      | HEAD (no lookup) | `Name.binding` |
+    |------------|------------------|----------------|
+    | dumbbench  | 640–651 ms       | 649–653 ms     |
+    | locals4    | 104.2 ms         | 106.1 ms       |
+    | locals16   | 85.7 ms          | 87.9 ms        |
+    | locals64   | 81.3 ms          | 82.9 ms        |
+    | locals256  | 80.5 ms          | 82.4 ms        |
+
+    σ is 4–14 ms on dumbbench and under 1 ms on most of the locals files.
+    On dumbbench, binding costs 1–8 ms (0.2–1.3%) across four runs. On the
+    locals files it costs a steady 1.5–2.4 ms (about 2%), which the
+    laptop's noise was hiding. System time is about 30% of the total on
+    Linux (about 195 ms on dumbbench, versus 37 ms on the Mac), so the user
+    time comparison is the closer one.
   - As implemented: a single `Local locals[1024]` array in the `Parser`,
     shared by enclosing functions, with `func_base` marking the current
     function's first entry. Each `Local` saves the shadowed binding, so
