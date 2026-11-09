@@ -25,6 +25,7 @@
 typedef struct Local Local;
 struct Local {
   NameId name;
+  u8 is_param;
   // The Name's binding before this was declared. It's restored when the
   // function ends.
   Local* shadowed;
@@ -173,15 +174,23 @@ static Local* lookup(Parser* p, NameId name) {
   return (Local*)name_of(p, name)->binding;
 }
 
-static void declare_local(Parser* p, NameId name, u32 at) {
+static void declare_local(Parser* p, NameId name, u32 at, int is_param) {
   if (p->num_locals == MAX_LOCALS) {
     error_at(p, at, "Too many local variables.");
   }
   Local* l = &p->locals[p->num_locals++];
   l->name = name;
+  l->is_param = (u8)is_param;
   Name* n = name_of(p, name);
   l->shadowed = (Local*)n->binding;
   n->binding = l;
+}
+
+// Returns the current function's local for name, ignoring those of enclosing
+// functions.
+static Local* own_local(Parser* p, NameId name) {
+  Local* l = lookup(p, name);
+  return l && l >= &p->locals[p->func_base] ? l : NULL;
 }
 
 // Declares name in the current function, unless it's already one of the
@@ -190,9 +199,8 @@ static void declare_if_new(Parser* p, NameId name, u32 at) {
   if (p->func_depth == 0) {
     return;
   }
-  Local* l = lookup(p, name);
-  if (!l || l < &p->locals[p->func_base]) {
-    declare_local(p, name, at);
+  if (!own_local(p, name)) {
+    declare_local(p, name, at, 0);
   }
 }
 
@@ -817,6 +825,12 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
       if (toplevel && T(p) != TK_EQ) {
         error_at(p, p->ls.t.offset, "Augmented assignment isn't allowed at top level.");
       }
+      if (sh == SH_NAME) {
+        Local* l = own_local(p, name);
+        if (l && l->is_param) {
+          error_at(p, p->ls.t.offset, "Function parameters are immutable.");
+        }
+      }
       int declares = sh == SH_NAME && T(p) == TK_EQ;
       next(p);
       expr(p);
@@ -963,7 +977,7 @@ static u32 funcsig(Parser* p, int is_method, int is_foreign) {
         type(p);
         name = expect_name(p, "parameter name", &at);
       }
-      declare_local(p, name, at);
+      declare_local(p, name, at, 1);
       first = 0;
     } while (optional(p, TK_COMMA));
   }

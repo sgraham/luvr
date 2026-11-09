@@ -50,18 +50,18 @@ def expected_error(path):
     return f"{path}:{loc.group(1)}:{loc.group(2)}: {msg.group(1)}"
 
 
-# test/*.luv and test/errors/*.luv must parse. The errors/ tests are
-# semantic errors, which the parser doesn't detect. test/syntax/*.luv must
-# fail with the error given in their CERR header.
+# test/*.luv and test/errors/todo/*.luv must parse. The todo/ tests are semantic
+# errors that the parser doesn't detect yet. test/syntax/*.luv and
+# test/errors/*.luv must fail with the error given in their CERR header.
 def run_tests():
     exe = os.path.join("out", "parsecheck.exe" if sys.platform == "win32" else "parsecheck")
     failures = []
-    paths = sorted(glob.glob("test/*.luv") + glob.glob("test/errors/*.luv"))
+    paths = sorted(glob.glob("test/*.luv") + glob.glob("test/errors/todo/*.luv"))
     for path in paths:
         r = subprocess.run([exe, "-q", path], capture_output=True, text=True)
         if r.returncode != 0:
             failures.append(f"{path}: expected to parse\n  got: {r.stderr.strip()}")
-    syntax = sorted(glob.glob("test/syntax/*.luv"))
+    syntax = sorted(glob.glob("test/syntax/*.luv") + glob.glob("test/errors/*.luv"))
     for path in syntax:
         want = expected_error(path)
         if want is None:
@@ -70,7 +70,7 @@ def run_tests():
         r = subprocess.run([exe, "-q", path], capture_output=True, text=True)
         got = r.stderr.strip()
         if r.returncode == 0:
-            failures.append(f"{path}: expected a syntax error, but it parsed\n  want: {want}")
+            failures.append(f"{path}: expected an error, but it parsed\n  want: {want}")
         elif got != want:
             failures.append(f"{path}: wrong error\n  want: {want}\n   got: {got}")
     for f in failures:
