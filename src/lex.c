@@ -75,7 +75,7 @@ void ctx_error_location(const Ctx* ctx, u32* line, u32* col) {
 #define lex_error(ls, at, ...) \
   ctx_error((ls)->ctx, (ls)->filename, (ls)->buf, (u32)((at) - (ls)->buf), __VA_ARGS__)
 
-static void* ctx_grow(Ctx* ctx, void* p, size_t bytes) {
+void* ctx_grow(Ctx* ctx, void* p, size_t bytes) {
   void* q = realloc(p, bytes);
   if (!q) {
     ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
@@ -195,6 +195,7 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, u8 kind_if_new) {
   n->str = s;
   n->len = len;
   n->is_const = 0;
+  n->global = 0;
   n->kind = kind_if_new ? kind_if_new : classify_ident(s, len, &n->is_const);
   n->hash = h;
   n->binding = NULL;

@@ -199,6 +199,7 @@ typedef struct Name {
   u32 len;
   u8 kind;      // TK_NAME, TK_TYPENAME, or a keyword kind
   u8 is_const;  // kind=TK_NAME: an ALL_CAPS constant
+  u8 global;    // parser: kind of global in the file being parsed, or 0
   u64 hash;
   void* binding;  // parser: current symbol for this name, or NULL
 } Name;
@@ -251,6 +252,9 @@ typedef struct LexState {
 
 bool ctx_init(Ctx* ctx);
 void ctx_free(Ctx* ctx);
+
+// realloc() that reports running out of memory as an error.
+void* ctx_grow(Ctx* ctx, void* p, size_t bytes);
 
 // Records the error in ctx and longjmps to ctx->on_error.
 NORETURN void ctx_error(Ctx* ctx,

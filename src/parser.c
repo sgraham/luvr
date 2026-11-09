@@ -37,12 +37,21 @@ struct Local {
   Local* shadowed;
 };
 
+typedef enum GlobalKind {
+  GK_NONE,
+  GK_VAR,
+} GlobalKind;
+
 typedef struct Parser {
   LexState ls;
   Local locals[MAX_LOCALS];
   u32 num_locals;
   u32 func_base;   // first of the current function's entries in locals
   u32 func_depth;  // 0 at top level
+  // Names declared as globals by this file, so that Name.global can be
+  // cleared at the end.
+  NameId* globals;
+  u32 num_globals, cap_globals;
   // Counts names that were found as locals. Until there's code generation,
   // this is the only use of a lookup's result.
   u32 num_resolved;
@@ -521,6 +530,28 @@ static void interpolated_string(Parser* p) {
   }
 }
 
+// Globals
+//
+// A global is marked on its Name rather than having a binding, because the
+// number of globals isn't bounded. Locals are looked up first, so they shadow
+// globals.
+
+static void declare_global(Parser* p, NameId name, GlobalKind kind) {
+  if (p->num_globals == p->cap_globals) {
+    p->cap_globals = p->cap_globals ? p->cap_globals * 2 : 64;
+    p->globals = (NameId*)ctx_grow(p->ls.ctx, p->globals, p->cap_globals * sizeof(NameId));
+  }
+  p->globals[p->num_globals++] = name;
+  name_of(p, name)->global = (u8)kind;
+}
+
+static void pop_globals(Parser* p) {
+  for (u32 i = 0; i < p->num_globals; ++i) {
+    name_of(p, p->globals[i])->global = GK_NONE;
+  }
+  p->num_globals = 0;
+}
+
 #define MAX_TARGETS 8
 
 // Loop variables, which are bound after the expression that's iterated.
@@ -832,6 +863,12 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
         error_at(p, p->ls.t.offset, "Augmented assignment isn't allowed at top level.");
       }
       if (sh == SH_NAME) {
+        const Name* n = name_of(p, name);
+        if (toplevel && n->global) {
+          error_at(p, p->ls.t.offset,
+                   n->is_const ? "Cannot assign a new value to a constant."
+                               : "Cannot re-initialize an existing global.");
+        }
         Local* l = lookup(p, name);
         if (l && l < &p->locals[p->func_base]) {
           error_at(p, p->ls.t.offset, "Upvalues are immutable.");
@@ -847,7 +884,9 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
       next(p);
       expr(p);
       // After the expression, so that it can't see the new local.
-      if (declares) {
+      if (declares && toplevel) {
+        declare_global(p, name, GK_VAR);
+      } else if (declares) {
         declare_if_new(p, name, at);
       }
       return;
@@ -1207,6 +1246,14 @@ static void parse_module(Parser* p) {
   }
 }
 
+// Undoes the file's bindings and frees the Parser.
+static void parse_end(Parser* p) {
+  pop_locals(p, 0);
+  pop_globals(p);
+  free(p->globals);
+  free(p);
+}
+
 void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len) {
   // The Parser isn't a local, so that it's still valid after a longjmp.
   // TODO: Freeing on error needs its own setjmp here. Ctx already grows its
@@ -1220,20 +1267,20 @@ void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len) {
   p->func_base = 0;
   p->func_depth = 0;
   p->num_resolved = 0;
+  p->globals = NULL;
+  p->num_globals = p->cap_globals = 0;
   // Names are shared by all files parsed with ctx, so this file's bindings
   // are undone at the end, including after an error.
   jmp_buf* outer = ctx->on_error;
   jmp_buf jb;
   ctx->on_error = &jb;
   if (setjmp(jb)) {
-    pop_locals(p, 0);
-    free(p);
+    parse_end(p);
     ctx->on_error = outer;
     longjmp(*outer, 1);
   }
   lex_init(&p->ls, ctx, filename, buf, len);
   parse_module(p);
-  pop_locals(p, 0);
-  free(p);
+  parse_end(p);
   ctx->on_error = outer;
 }
