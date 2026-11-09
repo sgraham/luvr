@@ -826,7 +826,10 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
         error_at(p, p->ls.t.offset, "Augmented assignment isn't allowed at top level.");
       }
       if (sh == SH_NAME) {
-        Local* l = own_local(p, name);
+        Local* l = lookup(p, name);
+        if (l && l < &p->locals[p->func_base]) {
+          error_at(p, p->ls.t.offset, "Upvalues are immutable.");
+        }
         if (l && l->is_param) {
           error_at(p, p->ls.t.offset, "Function parameters are immutable.");
         }
