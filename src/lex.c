@@ -127,7 +127,8 @@ static u64 hash_ident_safe(const char* s, u32 len) {
 // capital and contains a lowercase letter. Everything else (lowercase first
 // letter, ALL_CAPS constants, only underscores) is a name. The kind is stored
 // in the Name, so this is only done once per distinct identifier.
-static u8 classify_ident(const u8* s, u32 len) {
+static u8 classify_ident(const u8* s, u32 len, u8* is_const) {
+  *is_const = 0;
   u32 i = 0;
   while (i < len && s[i] == '_') {
     ++i;
@@ -143,6 +144,7 @@ static u8 classify_ident(const u8* s, u32 len) {
       return TK_TYPENAME;
     }
   }
+  *is_const = 1;
   return TK_NAME;
 }
 
@@ -192,7 +194,8 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, u8 kind_if_new) {
   Name* n = &ctx->names[idx];
   n->str = s;
   n->len = len;
-  n->kind = kind_if_new ? kind_if_new : classify_ident(s, len);
+  n->is_const = 0;
+  n->kind = kind_if_new ? kind_if_new : classify_ident(s, len, &n->is_const);
   n->hash = h;
   n->binding = NULL;
   ctx->slots[pos] = tag | (u64)(idx + 1);

@@ -197,7 +197,8 @@ static_assert(sizeof(Token) == 16, "unexpected Token size");
 typedef struct Name {
   const u8* str;  // points into a source buffer (or static, for keywords)
   u32 len;
-  u8 kind;  // TK_NAME, TK_TYPENAME, or a keyword kind
+  u8 kind;      // TK_NAME, TK_TYPENAME, or a keyword kind
+  u8 is_const;  // kind=TK_NAME: an ALL_CAPS constant
   u64 hash;
   void* binding;  // parser: current symbol for this name, or NULL
 } Name;

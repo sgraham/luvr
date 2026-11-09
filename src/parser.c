@@ -20,12 +20,18 @@
 // Locals that can be in scope at once, including those of enclosing functions.
 #define MAX_LOCALS 1024
 
+typedef enum LocalKind {
+  LK_VAR,
+  LK_PARAM,
+  LK_CONST,
+} LocalKind;
+
 // A parameter or local variable of the function being parsed, or of one that
 // encloses it.
 typedef struct Local Local;
 struct Local {
   NameId name;
-  u8 is_param;
+  u8 kind;  // LocalKind
   // The Name's binding before this was declared. It's restored when the
   // function ends.
   Local* shadowed;
@@ -180,8 +186,8 @@ static void declare_local(Parser* p, NameId name, u32 at, int is_param) {
   }
   Local* l = &p->locals[p->num_locals++];
   l->name = name;
-  l->is_param = (u8)is_param;
   Name* n = name_of(p, name);
+  l->kind = is_param ? LK_PARAM : n->is_const ? LK_CONST : LK_VAR;
   l->shadowed = (Local*)n->binding;
   n->binding = l;
 }
@@ -830,8 +836,11 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
         if (l && l < &p->locals[p->func_base]) {
           error_at(p, p->ls.t.offset, "Upvalues are immutable.");
         }
-        if (l && l->is_param) {
+        if (l && l->kind == LK_PARAM) {
           error_at(p, p->ls.t.offset, "Function parameters are immutable.");
+        }
+        if (l && l->kind == LK_CONST) {
+          error_at(p, p->ls.t.offset, "Cannot assign a new value to a constant.");
         }
       }
       int declares = sh == SH_NAME && T(p) == TK_EQ;
