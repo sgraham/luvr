@@ -760,7 +760,7 @@ void lex_next(LexState* ls) {
         if (ls->interp_sp && ls->bracket_depth == ls->interp_stack[ls->interp_sp - 1] + 1u) {
           --ls->bracket_depth;
           --ls->interp_sp;
-          ls->p = lex_string(ls, t, p, true);
+          ls->p = lex_string(ls, t, p, /*cont=*/true);
           return;
         }
         CLOSE(TK_RPAREN);
@@ -851,7 +851,7 @@ void lex_next(LexState* ls) {
         TOK(TK_GT, 1);
 
       case '"':
-        ls->p = lex_string(ls, t, p, false);
+        ls->p = lex_string(ls, t, p, /*cont=*/false);
         return;
 
       case '0':

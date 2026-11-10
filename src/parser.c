@@ -215,7 +215,7 @@ static void declare_if_new(Parser* p, NameId name, u32 at) {
     return;
   }
   if (!own_local(p, name)) {
-    declare_local(p, name, at, false);
+    declare_local(p, name, at, /*is_param=*/false);
   }
 }
 
@@ -959,7 +959,7 @@ static void simple_stat(Parser* p) {
     case TK_DEF:
       error_at(p, p->ls.t.offset, "'%s' can't follow ':' on the same line.", tok_kind_name(T(p)));
     default:
-      decl_or_expr_stat(p, false);
+      decl_or_expr_stat(p, /*toplevel=*/false);
       return;
   }
 }
@@ -1042,7 +1042,7 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
         type(p);
         name = expect_name(p, "parameter name", &at);
       }
-      declare_local(p, name, at, true);
+      declare_local(p, name, at, /*is_param=*/true);
       first = false;
     } while (optional(p, TK_COMMA));
   }
@@ -1052,7 +1052,7 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
 
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, bool is_method) {
-  u32 outer = funcsig(p, is_method, false);
+  u32 outer = funcsig(p, is_method, /*is_foreign=*/false);
   check(p, TK_COLON);
   suite(p);
   func_close(p, outer);
@@ -1106,7 +1106,7 @@ static void stat(Parser* p) {
       return;
     case TK_DEF:
       next(p);
-      funcdef(p, false);
+      funcdef(p, /*is_method=*/false);
       return;
     default:
       simple_stat(p);
@@ -1202,17 +1202,17 @@ static void toplevel_stat(Parser* p) {
   switch (T(p)) {
     case TK_DEF:
       next(p);
-      funcdef(p, false);
+      funcdef(p, /*is_method=*/false);
       return;
     case TK_ON:
       next(p);
       receiver(p);
       if (optional(p, TK_FOREIGN)) {
-        func_close(p, funcsig(p, true, true));
+        func_close(p, funcsig(p, /*is_method=*/true, /*is_foreign=*/true));
         end_of_stat(p);
       } else {
         check(p, TK_DEF);
-        funcdef(p, true);
+        funcdef(p, /*is_method=*/true);
       }
       return;
     case TK_STRUCT:
@@ -1229,13 +1229,13 @@ static void toplevel_stat(Parser* p) {
       return;
     case TK_FOREIGN:
       next(p);
-      func_close(p, funcsig(p, false, true));
+      func_close(p, funcsig(p, /*is_method=*/false, /*is_foreign=*/true));
       end_of_stat(p);
       return;
     case TK_IMPORT:
       error_at(p, p->ls.t.offset, "Imports must come before other declarations.");
     default:
-      decl_or_expr_stat(p, true);
+      decl_or_expr_stat(p, /*toplevel=*/true);
       end_of_stat(p);
       return;
   }
