@@ -1,4 +1,4 @@
-#include "lex.h"
+#include "luvr.h"
 
 // Character classes
 
@@ -34,7 +34,7 @@ static const char* const token_names[TK_NUM_KINDS] = {
 #undef LEX_STR_
 };
 
-const char* tok_kind_name(int kind) {
+const char* tok_kind_name(TokenKind kind) {
   return (kind >= 0 && kind < TK_NUM_KINDS) ? token_names[kind] : "<?>";
 }
 
@@ -51,7 +51,7 @@ void ctx_error(Ctx* ctx, const char* file, const u8* buf, u32 offset, const char
   longjmp(*ctx->on_error, 1);
 }
 
-void src_location(const u8* buf, u32 offset, u32* line, u32* col) {
+static void src_location(const u8* buf, u32 offset, u32* line, u32* col) {
   u32 ln = 1;
   const u8* bol = buf;
   for (const u8* p = buf; p < buf + offset; ++p) {
@@ -74,6 +74,23 @@ void ctx_error_location(const Ctx* ctx, u32* line, u32* col) {
 
 #define lex_error(ls, at, ...) \
   ctx_error((ls)->ctx, (ls)->filename, (ls)->buf, (u32)((at) - (ls)->buf), __VA_ARGS__)
+
+void lex_error_unclosed(LexState* ls,
+                        TokenKind what,
+                        TokenKind who,
+                        u32 who_offset,
+                        const char* found) {
+  u32 who_line, cur_line, col;
+  src_location(ls->buf, who_offset, &who_line, &col);
+  src_location(ls->buf, ls->t.offset, &cur_line, &col);
+  if (who_line == cur_line) {
+    ctx_error(ls->ctx, ls->filename, ls->buf, ls->t.offset, "Expected '%s', found %s.",
+              tok_kind_name(what), found);
+  }
+  ctx_error(ls->ctx, ls->filename, ls->buf, ls->t.offset,
+            "Expected '%s' (to close '%s' at line %u), found %s.", tok_kind_name(what),
+            tok_kind_name(who), who_line, found);
+}
 
 void* ctx_grow(Ctx* ctx, void* p, size_t bytes) {
   void* q = realloc(p, bytes);
@@ -127,7 +144,7 @@ static u64 hash_ident_safe(const char* s, u32 len) {
 // capital and contains a lowercase letter. Everything else (lowercase first
 // letter, ALL_CAPS constants, only underscores) is a name. The kind is stored
 // in the Name, so this is only done once per distinct identifier.
-static u8 classify_ident(const u8* s, u32 len, bool* is_const) {
+static TokenKind classify_ident(const u8* s, u32 len, bool* is_const) {
   *is_const = false;
   u32 i = 0;
   while (i < len && s[i] == '_') {
@@ -168,7 +185,7 @@ static void intern_rehash(Ctx* ctx) {
   ctx->slot_mask = mask;
 }
 
-static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, u8 kind_if_new) {
+static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) {
   u64 tag = h & 0xffffffff00000000ull;
   u32 mask = ctx->slot_mask;
   u32 pos = (u32)h & mask;
@@ -369,7 +386,7 @@ static void lex_layout(LexState* ls, Token* t, const u8* nl) {
 
 // Numbers
 
-static u8 parse_suffix(const u8* s, u32 len) {
+static NumSuffix parse_suffix(const u8* s, u32 len) {
   if (len == 2) {
     if (s[0] == 'i' && s[1] == '8') {
       return SUF_I8;
@@ -474,7 +491,7 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
   }
 
   const u8* num_end = p;
-  u8 suf = SUF_NONE;
+  NumSuffix suf = SUF_NONE;
   if (IS(*p, C_IDCHAR)) {
     const u8* s = p;
     while (IS(*p, C_IDCHAR)) {

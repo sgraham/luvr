@@ -2,12 +2,7 @@
 //   lexdump -d file...   dump tokens (line:col kind payload)
 //   lexdump file...      count tokens and time lexing (no dump)
 
-#include "lex.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
+#include "luvr.h"
 
 static u8* load_file(const char* path, size_t* len) {
   FILE* f = fopen(path, "rb");

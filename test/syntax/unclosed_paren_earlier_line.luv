@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:7:5:    return x
+# CERR: {ssss}         ^ error: Expected ')' (to close '(' at line 5), found 'return'.
+def int f():
+    x = g(1,
+          2
+    return x

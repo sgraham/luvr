@@ -3,8 +3,6 @@
 
 #include "../src/luvr.h"
 
-#include "../src/lex.h"
-
 static double now_sec(void) {
   struct timespec ts;
   timespec_get(&ts, TIME_UTC);

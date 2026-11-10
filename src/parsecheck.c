@@ -3,12 +3,7 @@
 // Prints the first error in each failing file; -q suppresses the summary.
 // Exit status is 1 if any file failed.
 
-#include "parser.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
+#include "luvr.h"
 
 static u8* load_file(const char* path, size_t* len) {
   FILE* f = fopen(path, "rb");

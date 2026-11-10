@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:16:    return g(1 2)
+# CERR: {ssss}                    ^ error: Expected ')', found number.
+def int f():
+    return g(1 2)

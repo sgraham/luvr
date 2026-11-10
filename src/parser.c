@@ -15,7 +15,11 @@
 // Types are recognized lexically (TK_TYPENAME, builtin type keywords), so no
 // decision here consults a symbol table.
 
-#include "parser.h"
+#include "luvr.h"
+
+typedef struct Local Local;
+typedef struct Parser Parser;
+typedef struct Targets Targets;
 
 // Locals that can be in scope at once, including those of enclosing functions.
 #define MAX_LOCALS 1024
@@ -28,7 +32,6 @@ typedef enum LocalKind {
 
 // A parameter or local variable of the function being parsed, or of one that
 // encloses it.
-typedef struct Local Local;
 struct Local {
   NameId name;
   u8 kind;  // LocalKind
@@ -42,7 +45,7 @@ typedef enum GlobalKind {
   GK_VAR,
 } GlobalKind;
 
-typedef struct Parser {
+struct Parser {
   LexState ls;
   Local locals[MAX_LOCALS];
   u32 num_locals;
@@ -55,7 +58,7 @@ typedef struct Parser {
   // Counts names that were found as locals. Until there's code generation,
   // this is the only use of a lookup's result.
   u32 num_resolved;
-} Parser;
+};
 
 // The syntactical shape of parsing an expression. Used to decide whether
 // an expression can be assigned to, used as a statement, or was a type.
@@ -121,7 +124,7 @@ NORETURN static void error_expected(Parser* p, const char* what) {
   error_at(p, p->ls.t.offset, "Expected %s, found %s.", what, describe(p, buf, sizeof(buf)));
 }
 
-static void check(Parser* p, int kind) {
+static void check(Parser* p, TokenKind kind) {
   if (T(p) != kind) {
     char what[16];
     snprintf(what, sizeof(what), "'%s'", tok_kind_name(kind));
@@ -130,7 +133,7 @@ static void check(Parser* p, int kind) {
   next(p);
 }
 
-static bool optional(Parser* p, int kind) {
+static bool optional(Parser* p, TokenKind kind) {
   if (T(p) != kind) {
     return false;
   }
@@ -140,21 +143,13 @@ static bool optional(Parser* p, int kind) {
 
 // Like check(), but if the closer is missing and the opener was on another
 // line, the error includes the opener's line.
-static void check_match(Parser* p, int what, int who, u32 who_offset) {
+static void check_match(Parser* p, TokenKind what, TokenKind who, u32 who_offset) {
   if (T(p) == what) {
     next(p);
     return;
   }
-  u32 who_line, cur_line, col;
-  src_location(p->ls.buf, who_offset, &who_line, &col);
-  src_location(p->ls.buf, p->ls.t.offset, &cur_line, &col);
   char buf[64];
-  if (who_line == cur_line) {
-    error_at(p, p->ls.t.offset, "Expected '%s', found %s.", tok_kind_name(what),
-             describe(p, buf, sizeof(buf)));
-  }
-  error_at(p, p->ls.t.offset, "Expected '%s' (to close '%s' at line %u), found %s.",
-           tok_kind_name(what), tok_kind_name(who), who_line, describe(p, buf, sizeof(buf)));
+  lex_error_unclosed(&p->ls, what, who, who_offset, describe(p, buf, sizeof(buf)));
 }
 
 static void check_name(Parser* p, const char* what) {
@@ -241,21 +236,21 @@ static void func_close(Parser* p, u32 outer) {
   --p->func_depth;
 }
 
-static bool is_builtin_type(int kind) {
+static bool is_builtin_type(TokenKind kind) {
   return kind >= TK_FIRST_TYPE && kind <= TK_LAST_TYPE;
 }
 
 // Tokens that can only start a type, never an expression statement. A NAME
 // can start a type too (module.Type), but that case is handled by parsing the
 // postfix chain first.
-static bool is_type_start(int kind) {
+static bool is_type_start(TokenKind kind) {
   return is_builtin_type(kind) || kind == TK_TYPENAME || kind == TK_STAR || kind == TK_LSQUARE ||
          kind == TK_LBRACE || kind == TK_TYPEOF;
 }
 
 // A simple statement ends at a NEWLINE, which it consumes, or at a DEDENT or
 // end of file, which it leaves for the enclosing block.
-static bool block_follow(int kind) {
+static bool block_follow(TokenKind kind) {
   return kind == TK_DEDENT || kind == TK_EOS;
 }
 
@@ -410,7 +405,7 @@ enum {
   PRIORITY_UNARY = 11,  // unary - ~ &: binds tighter than any binary operator
 };
 
-static BinOpr getbinopr(int kind) {
+static BinOpr getbinopr(TokenKind kind) {
   switch (kind) {
     case TK_OR:
       return OPR_OR;
@@ -565,11 +560,11 @@ static void pop_globals(Parser* p) {
 #define MAX_TARGETS 8
 
 // Loop variables, which are bound after the expression that's iterated.
-typedef struct Targets {
+struct Targets {
   u32 n;
   NameId name[MAX_TARGETS];
   u32 at[MAX_TARGETS];
-} Targets;
+};
 
 // for_targets -> name {',' name}
 static void for_targets(Parser* p, Targets* t) {
@@ -655,7 +650,7 @@ static void dict_literal(Parser* p) {
 // a type if it's TypeName or module.TypeName, and is otherwise continued as an
 // expression.
 static void sizeof_operand(Parser* p) {
-  int k = T(p);
+  TokenKind k = T(p);
   if (is_builtin_type(k) || k == TK_STAR || k == TK_LSQUARE || k == TK_LBRACE || k == TK_TYPEOF) {
     type(p);
   } else if (k == TK_NAME || k == TK_TYPENAME) {
@@ -851,7 +846,7 @@ static void decl_rest(Parser* p, bool toplevel) {
   }
 }
 
-static bool is_augassign(int kind) {
+static bool is_augassign(TokenKind kind) {
   return kind >= TK_PLUSEQ && kind <= TK_SHREQ;
 }
 
@@ -862,7 +857,7 @@ static bool is_augassign(int kind) {
 //   assign -> name_or_lvalue ('=' | augop) expr
 //   call   -> postfix chain ending in a call
 static void decl_or_expr_stat(Parser* p, bool toplevel) {
-  int k = T(p);
+  TokenKind k = T(p);
   u32 at = p->ls.t.offset;
   if (k == TK_NAME || k == TK_TYPENAME) {
     NameId name = p->ls.t.v.name;
