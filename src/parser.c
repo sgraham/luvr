@@ -130,12 +130,12 @@ static void check(Parser* p, int kind) {
   next(p);
 }
 
-static int optional(Parser* p, int kind) {
+static bool optional(Parser* p, int kind) {
   if (T(p) != kind) {
-    return 0;
+    return false;
   }
   next(p);
-  return 1;
+  return true;
 }
 
 // Like check(), but if the closer is missing and the opener was on another
@@ -189,7 +189,7 @@ static Local* lookup(Parser* p, NameId name) {
   return (Local*)name_of(p, name)->binding;
 }
 
-static void declare_local(Parser* p, NameId name, u32 at, int is_param) {
+static void declare_local(Parser* p, NameId name, u32 at, bool is_param) {
   if (p->num_locals == MAX_LOCALS) {
     error_at(p, at, "Too many local variables.");
   }
@@ -215,7 +215,7 @@ static void declare_if_new(Parser* p, NameId name, u32 at) {
     return;
   }
   if (!own_local(p, name)) {
-    declare_local(p, name, at, 0);
+    declare_local(p, name, at, false);
   }
 }
 
@@ -241,21 +241,21 @@ static void func_close(Parser* p, u32 outer) {
   --p->func_depth;
 }
 
-static int is_builtin_type(int kind) {
+static bool is_builtin_type(int kind) {
   return kind >= TK_FIRST_TYPE && kind <= TK_LAST_TYPE;
 }
 
 // Tokens that can only start a type, never an expression statement. A NAME
 // can start a type too (module.Type), but that case is handled by parsing the
 // postfix chain first.
-static int is_type_start(int kind) {
+static bool is_type_start(int kind) {
   return is_builtin_type(kind) || kind == TK_TYPENAME || kind == TK_STAR || kind == TK_LSQUARE ||
          kind == TK_LBRACE || kind == TK_TYPEOF;
 }
 
 // A simple statement ends at a NEWLINE, which it consumes, or at a DEDENT or
 // end of file, which it leaves for the enclosing block.
-static int block_follow(int kind) {
+static bool block_follow(int kind) {
   return kind == TK_DEDENT || kind == TK_EOS;
 }
 
@@ -457,7 +457,7 @@ static BinOpr getbinopr(int kind) {
   }
 }
 
-static int is_comparison(BinOpr op) {
+static bool is_comparison(BinOpr op) {
   return op >= OPR_EQ && op <= OPR_NOTIN;
 }
 
@@ -543,6 +543,16 @@ static void declare_global(Parser* p, NameId name, GlobalKind kind) {
   }
   p->globals[p->num_globals++] = name;
   name_of(p, name)->global = (u8)kind;
+}
+
+// Reports an error at `at` if name is already a global.
+static void check_not_global(Parser* p, NameId name, u32 at) {
+  const Name* n = name_of(p, name);
+  if (n->global) {
+    error_at(p, at,
+             n->is_const ? "Cannot assign a new value to a constant."
+                         : "Cannot re-initialize an existing global.");
+  }
 }
 
 static void pop_globals(Parser* p) {
@@ -661,7 +671,7 @@ static void sizeof_operand(Parser* p) {
 
 // `.field=` designators are only allowed in struct literals
 // (`Stuff(.a=1, true)`) because functions don't have named parameters.
-static void call_args(Parser* p, int is_struct_literal) {
+static void call_args(Parser* p, bool is_struct_literal) {
   u32 at = p->ls.t.offset;
   next(p);  // '('
   if (T(p) != TK_RPAREN) {
@@ -731,7 +741,7 @@ static void postfix(Parser* p, Shape* sh) {
         index_or_slice(p, sh);
         break;
       case TK_LPAREN: {
-        int is_struct_literal = *sh == SH_TYPE;
+        bool is_struct_literal = *sh == SH_TYPE;
         call_args(p, is_struct_literal);
         *sh = is_struct_literal ? SH_VALUE : SH_CALL;
         break;
@@ -825,16 +835,23 @@ static void primary(Parser* p, Shape* sh) {
 // Statements
 
 // The rest of a declaration once its type is parsed: name ['=' expr].
-static void decl_rest(Parser* p) {
+static void decl_rest(Parser* p, bool toplevel) {
   u32 at;
   NameId name = expect_name(p, "variable name", &at);
+  if (toplevel) {
+    check_not_global(p, name, T(p) == TK_EQ ? p->ls.t.offset : at);
+  }
   if (optional(p, TK_EQ)) {
     expr(p);
   }
-  declare_if_new(p, name, at);
+  if (toplevel) {
+    declare_global(p, name, GK_VAR);
+  } else {
+    declare_if_new(p, name, at);
+  }
 }
 
-static int is_augassign(int kind) {
+static bool is_augassign(int kind) {
   return kind >= TK_PLUSEQ && kind <= TK_SHREQ;
 }
 
@@ -844,7 +861,7 @@ static int is_augassign(int kind) {
 //   decl   -> type name ['=' expr]
 //   assign -> name_or_lvalue ('=' | augop) expr
 //   call   -> postfix chain ending in a call
-static void decl_or_expr_stat(Parser* p, int toplevel) {
+static void decl_or_expr_stat(Parser* p, bool toplevel) {
   int k = T(p);
   u32 at = p->ls.t.offset;
   if (k == TK_NAME || k == TK_TYPENAME) {
@@ -852,7 +869,7 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
     Shape sh;
     primary(p, &sh);
     if (sh == SH_TYPE) {
-      decl_rest(p);
+      decl_rest(p, toplevel);
       return;
     }
     if (T(p) == TK_EQ || is_augassign(T(p))) {
@@ -863,11 +880,8 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
         error_at(p, p->ls.t.offset, "Augmented assignment isn't allowed at top level.");
       }
       if (sh == SH_NAME) {
-        const Name* n = name_of(p, name);
-        if (toplevel && n->global) {
-          error_at(p, p->ls.t.offset,
-                   n->is_const ? "Cannot assign a new value to a constant."
-                               : "Cannot re-initialize an existing global.");
+        if (toplevel) {
+          check_not_global(p, name, p->ls.t.offset);
         }
         Local* l = lookup(p, name);
         if (l && l < &p->locals[p->func_base]) {
@@ -880,7 +894,7 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
           error_at(p, p->ls.t.offset, "Cannot assign a new value to a constant.");
         }
       }
-      int declares = sh == SH_NAME && T(p) == TK_EQ;
+      bool declares = sh == SH_NAME && T(p) == TK_EQ;
       next(p);
       expr(p);
       // After the expression, so that it can't see the new local.
@@ -901,7 +915,7 @@ static void decl_or_expr_stat(Parser* p, int toplevel) {
   }
   if (is_type_start(k)) {
     type(p);
-    decl_rest(p);
+    decl_rest(p, toplevel);
     return;
   }
   if (k == TK_INDENT) {
@@ -945,7 +959,7 @@ static void simple_stat(Parser* p) {
     case TK_DEF:
       error_at(p, p->ls.t.offset, "'%s' can't follow ':' on the same line.", tok_kind_name(T(p)));
     default:
-      decl_or_expr_stat(p, 0);
+      decl_or_expr_stat(p, false);
       return;
   }
 }
@@ -983,7 +997,7 @@ static void suite(Parser* p) {
 // A nested function's name is a local of the enclosing function. The new
 // function's scope is opened after the name, and the return value is for
 // func_close().
-static u32 funcsig(Parser* p, int is_method, int is_foreign) {
+static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
   NameId name = p->ls.t.v.name;
   u32 at = p->ls.t.offset;
   if (T(p) == TK_NAME) {
@@ -1012,7 +1026,7 @@ static u32 funcsig(Parser* p, int is_method, int is_foreign) {
   u32 lparen = p->ls.t.offset;
   check(p, TK_LPAREN);
   if (T(p) != TK_RPAREN) {
-    int first = 1;
+    bool first = true;
     do {
       name = p->ls.t.v.name;
       at = p->ls.t.offset;
@@ -1028,8 +1042,8 @@ static u32 funcsig(Parser* p, int is_method, int is_foreign) {
         type(p);
         name = expect_name(p, "parameter name", &at);
       }
-      declare_local(p, name, at, 1);
-      first = 0;
+      declare_local(p, name, at, true);
+      first = false;
     } while (optional(p, TK_COMMA));
   }
   check_match(p, TK_RPAREN, TK_LPAREN, lparen);
@@ -1037,8 +1051,8 @@ static u32 funcsig(Parser* p, int is_method, int is_foreign) {
 }
 
 // funcdef -> funcsig ':' suite   (after 'def')
-static void funcdef(Parser* p, int is_method) {
-  u32 outer = funcsig(p, is_method, 0);
+static void funcdef(Parser* p, bool is_method) {
+  u32 outer = funcsig(p, is_method, false);
   check(p, TK_COLON);
   suite(p);
   func_close(p, outer);
@@ -1092,7 +1106,7 @@ static void stat(Parser* p) {
       return;
     case TK_DEF:
       next(p);
-      funcdef(p, 0);
+      funcdef(p, false);
       return;
     default:
       simple_stat(p);
@@ -1188,17 +1202,17 @@ static void toplevel_stat(Parser* p) {
   switch (T(p)) {
     case TK_DEF:
       next(p);
-      funcdef(p, 0);
+      funcdef(p, false);
       return;
     case TK_ON:
       next(p);
       receiver(p);
       if (optional(p, TK_FOREIGN)) {
-        func_close(p, funcsig(p, 1, 1));
+        func_close(p, funcsig(p, true, true));
         end_of_stat(p);
       } else {
         check(p, TK_DEF);
-        funcdef(p, 1);
+        funcdef(p, true);
       }
       return;
     case TK_STRUCT:
@@ -1215,13 +1229,13 @@ static void toplevel_stat(Parser* p) {
       return;
     case TK_FOREIGN:
       next(p);
-      func_close(p, funcsig(p, 0, 1));
+      func_close(p, funcsig(p, false, true));
       end_of_stat(p);
       return;
     case TK_IMPORT:
       error_at(p, p->ls.t.offset, "Imports must come before other declarations.");
     default:
-      decl_or_expr_stat(p, 1);
+      decl_or_expr_stat(p, true);
       end_of_stat(p);
       return;
   }

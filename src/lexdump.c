@@ -100,7 +100,7 @@ static void dump_token(const LexState* ls, u32 line, u32 col) {
 
 static int run_file(Ctx* ctx,
                     const char* path,
-                    int dump,
+                    bool dump,
                     u64* total_tokens,
                     size_t* total_bytes,
                     double* total_time) {
@@ -155,10 +155,10 @@ static int run_file(Ctx* ctx,
 }
 
 int main(int argc, char** argv) {
-  int dump = 0;
+  bool dump = false;
   int first = 1;
   if (argc > 1 && strcmp(argv[1], "-d") == 0) {
-    dump = 1;
+    dump = true;
     first = 2;
   }
   if (first >= argc) {

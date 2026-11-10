@@ -127,8 +127,8 @@ static u64 hash_ident_safe(const char* s, u32 len) {
 // capital and contains a lowercase letter. Everything else (lowercase first
 // letter, ALL_CAPS constants, only underscores) is a name. The kind is stored
 // in the Name, so this is only done once per distinct identifier.
-static u8 classify_ident(const u8* s, u32 len, u8* is_const) {
-  *is_const = 0;
+static u8 classify_ident(const u8* s, u32 len, bool* is_const) {
+  *is_const = false;
   u32 i = 0;
   while (i < len && s[i] == '_') {
     ++i;
@@ -144,7 +144,7 @@ static u8 classify_ident(const u8* s, u32 len, u8* is_const) {
       return TK_TYPENAME;
     }
   }
-  *is_const = 1;
+  *is_const = true;
   return TK_NAME;
 }
 
@@ -194,7 +194,7 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, u8 kind_if_new) {
   Name* n = &ctx->names[idx];
   n->str = s;
   n->len = len;
-  n->is_const = 0;
+  n->is_const = false;
   n->global = 0;
   n->kind = kind_if_new ? kind_if_new : classify_ident(s, len, &n->is_const);
   n->hash = h;
@@ -410,8 +410,8 @@ static int digit_value(u8 c) {
 static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
   const u8* start = p;
   u64 v = 0;
-  int overflow = 0;
-  int is_float = 0;
+  bool overflow = false;
+  bool is_float = false;
   t->offset = (u32)(p - ls->buf);
 
   if (p[0] == '0' && (p[1] == 'x' || p[1] == 'o' || p[1] == 'b')) {
@@ -431,7 +431,7 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
         break;
       }
       if (v > (UINT64_MAX - d) / base) {
-        overflow = 1;
+        overflow = true;
       }
       v = v * base + d;
       ++ndigits;
@@ -450,14 +450,14 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
       }
       u32 d = c - '0';
       if (v > (UINT64_MAX - d) / 10) {
-        overflow = 1;
+        overflow = true;
       }
       v = v * 10 + d;
     }
     // A float requires digits on both sides of the '.', so `1.foo()` is a
     // method call on an int, and `1.` and `.5` aren't floats.
     if (*p == '.' && IS(p[1], C_DIGIT)) {
-      is_float = 1;
+      is_float = true;
       ++p;
       while (IS(*p, C_DIGIT) || *p == '_') {
         ++p;
@@ -465,7 +465,7 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
     }
     if ((*p == 'e' || *p == 'E') &&
         (IS(p[1], C_DIGIT) || ((p[1] == '+' || p[1] == '-') && IS(p[2], C_DIGIT)))) {
-      is_float = 1;
+      is_float = true;
       p += 2;
       while (IS(*p, C_DIGIT) || *p == '_') {
         ++p;
@@ -481,12 +481,12 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
       ++p;
     }
     suf = parse_suffix(s, (u32)(p - s));
-    int hex_like = start[0] == '0' && (start[1] == 'x' || start[1] == 'o' || start[1] == 'b');
+    bool hex_like = start[0] == '0' && (start[1] == 'x' || start[1] == 'o' || start[1] == 'b');
     if (suf == SUF_NONE || (is_float && suf < SUF_F32) || (hex_like && suf >= SUF_F32)) {
       lex_error(ls, s, "Invalid suffix '%.*s' on number.", (int)(p - s), (const char*)s);
     }
     if (suf >= SUF_F32) {
-      is_float = 1;  // 1f32 is a float
+      is_float = true;  // 1f32 is a float
     }
   }
 
@@ -608,15 +608,15 @@ static const u8* decode_escape(LexState* ls, const u8* q) {
   return q + 2;
 }
 
-// delim is the opening '"' (cont == 0) or the ')' that closed a \( (cont ==
-// 1). Reads up to the closing '"' or the next \(. Content without escapes
+// delim is the opening '"' (cont is false) or the ')' that closed a \( (cont
+// is true). Reads up to the closing '"' or the next \(. Content without escapes
 // isn't copied, and is referenced as a slice of the source.
-static const u8* lex_string(LexState* ls, Token* t, const u8* delim, int cont) {
+static const u8* lex_string(LexState* ls, Token* t, const u8* delim, bool cont) {
   Ctx* ctx = ls->ctx;
   const u8* s = delim + 1;
   const u8* q = s;
   const u8* run = s;  // start of not-yet-copied bytes (escaped mode)
-  int escaped = 0;
+  bool escaped = false;
   u32 bstart = 0;
   t->offset = (u32)(delim - ls->buf);
   for (;;) {
@@ -626,7 +626,7 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, int cont) {
     }
     if (c == '\\') {
       if (!escaped) {
-        escaped = 1;
+        escaped = true;
         bstart = ctx->num_strbytes;
       }
       strbytes_append(ctx, run, (size_t)(q - run));
@@ -760,7 +760,7 @@ void lex_next(LexState* ls) {
         if (ls->interp_sp && ls->bracket_depth == ls->interp_stack[ls->interp_sp - 1] + 1u) {
           --ls->bracket_depth;
           --ls->interp_sp;
-          ls->p = lex_string(ls, t, p, 1);
+          ls->p = lex_string(ls, t, p, true);
           return;
         }
         CLOSE(TK_RPAREN);
@@ -851,7 +851,7 @@ void lex_next(LexState* ls) {
         TOK(TK_GT, 1);
 
       case '"':
-        ls->p = lex_string(ls, t, p, 0);
+        ls->p = lex_string(ls, t, p, false);
         return;
 
       case '0':

@@ -41,10 +41,10 @@ static double now_sec(void) {
 }
 
 int main(int argc, char** argv) {
-  int quiet = 0;
+  bool quiet = false;
   int first = 1;
   if (argc > 1 && strcmp(argv[1], "-q") == 0) {
-    quiet = 1;
+    quiet = true;
     first = 2;
   }
   if (first >= argc) {
