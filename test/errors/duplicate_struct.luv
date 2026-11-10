@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:8:struct Stuff:
+# CERR: {ssss}            ^ error: Duplicate top-level definition of 'Stuff'.
+struct Stuff:
+    int a
+
+struct Stuff:
+    int b

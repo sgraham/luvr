@@ -44,6 +44,7 @@ typedef enum GlobalKind {
   GK_NONE,
   GK_VAR,
   GK_FUNC,
+  GK_TYPE,
 } GlobalKind;
 
 struct Parser {
@@ -546,7 +547,7 @@ static void check_not_global(Parser* p, NameId name, u32 at) {
   }
 }
 
-// Declares a function, which can only be defined once.
+// Declares a function or type, which can only be defined once.
 //
 // TODO: This costs 2-5% on dumbbench, which has 1.25M top-level functions.
 // About half is code layout in funcsig() (moving the error report out of line
@@ -1229,6 +1230,7 @@ static void toplevel_stat(Parser* p) {
       if (T(p) != TK_TYPENAME) {
         error_expected(p, "struct name (a TypeName)");
       }
+      declare_definition(p, p->ls.t.v.name, p->ls.t.offset, GK_TYPE);
       next(p);
       if (T(p) == TK_LBRACE) {
         type_params(p);
