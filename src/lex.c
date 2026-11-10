@@ -113,8 +113,8 @@ static void intern_rehash(Ctx* ctx) {
     ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
   }
   u32 mask = new_size - 1;
-  for (u32 i = 0; i < ctx->num_names; ++i) {
-    u64 h = ctx->names[i].hash;
+  for (u32 i = 0; i < ctx->names.num; ++i) {
+    u64 h = ctx->names.v[i].hash;
     u32 pos = (u32)h & mask;
     while (slots[pos]) {
       pos = (pos + 1) & mask;
@@ -137,19 +137,15 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) 
     }
     if ((slot & 0xffffffff00000000ull) == tag) {
       u32 idx = (u32)slot - 1;
-      const Name* n = &ctx->names[idx];
+      const Name* n = &ctx->names.v[idx];
       if (n->len == len && memcmp(n->str, s, len) == 0) {
         return idx;
       }
     }
     pos = (pos + 1) & mask;
   }
-  if (ctx->num_names == ctx->cap_names) {
-    ctx->cap_names *= 2;
-    ctx->names = (Name*)ctx_grow(ctx, ctx->names, ctx->cap_names * sizeof(Name));
-  }
-  u32 idx = ctx->num_names++;
-  Name* n = &ctx->names[idx];
+  u32 idx = ctx->names.num;
+  Name* n = vec_push(ctx, &ctx->names);
   n->str = s;
   n->len = len;
   n->is_const = false;
@@ -158,7 +154,7 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) 
   n->hash = h;
   n->binding = NULL;
   ctx->slots[pos] = tag | (u64)(idx + 1);
-  if (ctx->num_names * 2 > mask + 1) {
+  if (ctx->names.num * 2 > mask + 1) {
     intern_rehash(ctx);
   }
   return idx;
@@ -169,9 +165,9 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) 
 bool lex_intern_init(Ctx* ctx) {
   ctx->slot_mask = (1u << 12) - 1;
   ctx->slots = (u64*)calloc(ctx->slot_mask + 1, sizeof(u64));
-  ctx->cap_names = 1u << 10;
-  ctx->names = (Name*)malloc(ctx->cap_names * sizeof(Name));
-  if (!ctx->slots || !ctx->names) {
+  ctx->names.cap = 1u << 10;
+  ctx->names.v = (Name*)malloc(ctx->names.cap * sizeof(Name));
+  if (!ctx->slots || !ctx->names.v) {
     return false;
   }
   // Keywords and builtin types are in the same table, so one lookup is
@@ -197,36 +193,23 @@ bool lex_intern_init(Ctx* ctx) {
 // Decoded string storage
 
 static void strbytes_append(Ctx* ctx, const u8* s, size_t n) {
-  if ((size_t)ctx->num_strbytes + n > ctx->cap_strbytes) {
-    size_t cap = ctx->cap_strbytes ? ctx->cap_strbytes : 4096;
-    while (cap < (size_t)ctx->num_strbytes + n) {
-      cap *= 2;
-    }
-    if (cap > 0xffffffffu) {
-      ctx_error(ctx, NULL, NULL, 0, "Too much string literal data.");
-    }
-    ctx->strbytes = (u8*)ctx_grow(ctx, ctx->strbytes, cap);
-    ctx->cap_strbytes = (u32)cap;
-  }
-  memcpy(ctx->strbytes + ctx->num_strbytes, s, n);
-  ctx->num_strbytes += (u32)n;
+  vec_reserve(ctx, &ctx->strbytes, n);
+  memcpy(ctx->strbytes.v + ctx->strbytes.num, s, n);
+  ctx->strbytes.num += (u32)n;
 }
 
 static u32 strs_add(Ctx* ctx, u32 off, u32 len) {
-  if (ctx->num_strs == ctx->cap_strs) {
-    ctx->cap_strs = ctx->cap_strs ? ctx->cap_strs * 2 : 256;
-    ctx->strs = (StrRef*)ctx_grow(ctx, ctx->strs, ctx->cap_strs * sizeof(StrRef));
-  }
-  ctx->strs[ctx->num_strs].off = off;
-  ctx->strs[ctx->num_strs].len = len;
-  return ctx->num_strs++;
+  StrRef* r = vec_push(ctx, &ctx->strs);
+  r->off = off;
+  r->len = len;
+  return ctx->strs.num - 1;
 }
 
 const u8* lex_str(const LexState* ls, const Token* t, u32* len) {
   if (t->flags & TF_ESCAPED) {
-    const StrRef* r = &ls->ctx->strs[t->v.str];
+    const StrRef* r = &ls->ctx->strs.v[t->v.str];
     *len = r->len;
-    return ls->ctx->strbytes + r->off;
+    return ls->ctx->strbytes.v + r->off;
   }
   *len = t->v.len;
   return ls->buf + t->offset + 1;
@@ -575,7 +558,7 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, bool cont) 
     if (c == '\\') {
       if (!escaped) {
         escaped = true;
-        bstart = ctx->num_strbytes;
+        bstart = ctx->strbytes.num;
       }
       strbytes_append(ctx, run, (size_t)(q - run));
       q = decode_escape(ls, q);
@@ -591,7 +574,7 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, bool cont) 
   if (escaped) {
     strbytes_append(ctx, run, (size_t)(q - run));
     t->flags = TF_ESCAPED;
-    t->v.str = strs_add(ctx, bstart, ctx->num_strbytes - bstart);
+    t->v.str = strs_add(ctx, bstart, ctx->strbytes.num - bstart);
   } else {
     t->v.len = (u32)(q - s);
   }
@@ -823,7 +806,7 @@ void lex_next(LexState* ls) {
           } while (IS(*p, C_IDCHAR));
           u32 len = (u32)(p - s);
           u32 idx = intern(ls->ctx, s, len, hash_ident(s, len), 0);
-          t->kind = ls->ctx->names[idx].kind;
+          t->kind = ls->ctx->names.v[idx].kind;
           t->offset = (u32)(s - ls->buf);
           t->v.name = (NameId){idx};
           ls->p = p;

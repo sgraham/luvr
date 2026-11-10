@@ -53,8 +53,7 @@ struct Parser {
   u32 func_depth;  // 0 at top level
   // Names declared as globals by this file, so that Name.global can be
   // cleared at the end.
-  NameId* globals;
-  u32 num_globals, cap_globals;
+  VEC(NameId) globals;
   // Counts names that were found as locals. Until there's code generation,
   // this is the only use of a lookup's result.
   u32 num_resolved;
@@ -177,7 +176,7 @@ static NameId expect_name(Parser* p, const char* what, u32* at) {
 // resolved so far. Other names aren't looked up anywhere yet.
 
 static Name* name_of(Parser* p, NameId name) {
-  return &p->ls.ctx->names[name.idx];
+  return &p->ls.ctx->names.v[name.idx];
 }
 
 static Local* lookup(Parser* p, NameId name) {
@@ -532,11 +531,7 @@ static void interpolated_string(Parser* p) {
 // globals.
 
 static void declare_global(Parser* p, NameId name, GlobalKind kind) {
-  if (p->num_globals == p->cap_globals) {
-    p->cap_globals = p->cap_globals ? p->cap_globals * 2 : 64;
-    p->globals = (NameId*)ctx_grow(p->ls.ctx, p->globals, p->cap_globals * sizeof(NameId));
-  }
-  p->globals[p->num_globals++] = name;
+  *vec_push(p->ls.ctx, &p->globals) = name;
   name_of(p, name)->global = (u8)kind;
 }
 
@@ -551,10 +546,10 @@ static void check_not_global(Parser* p, NameId name, u32 at) {
 }
 
 static void pop_globals(Parser* p) {
-  for (u32 i = 0; i < p->num_globals; ++i) {
-    name_of(p, p->globals[i])->global = GK_NONE;
+  for (u32 i = 0; i < p->globals.num; ++i) {
+    name_of(p, p->globals.v[i])->global = GK_NONE;
   }
-  p->num_globals = 0;
+  p->globals.num = 0;
 }
 
 #define MAX_TARGETS 8
@@ -1259,14 +1254,14 @@ static void parse_module(Parser* p) {
 static void parse_end(Parser* p) {
   pop_locals(p, 0);
   pop_globals(p);
-  free(p->globals);
+  free(p->globals.v);
   free(p);
 }
 
 void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len) {
   // The Parser isn't a local, so that it's still valid after a longjmp.
   // TODO: Freeing on error needs its own setjmp here. Ctx already grows its
-  // tables with ctx_grow(), so it'd be better to settle on one owner for
+  // tables with vec_push(), so it'd be better to settle on one owner for
   // allocations that error paths can clean up.
   Parser* p = (Parser*)malloc(sizeof(Parser));
   if (!p) {
@@ -1276,8 +1271,8 @@ void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len) {
   p->func_base = 0;
   p->func_depth = 0;
   p->num_resolved = 0;
-  p->globals = NULL;
-  p->num_globals = p->cap_globals = 0;
+  p->globals.v = NULL;
+  p->globals.num = p->globals.cap = 0;
   // Names are shared by all files parsed with ctx, so this file's bindings
   // are undone at the end, including after an error.
   jmp_buf* outer = ctx->on_error;

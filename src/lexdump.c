@@ -174,7 +174,7 @@ int main(int argc, char** argv) {
   }
   if (!dump) {
     fprintf(stderr, "%llu tokens, %.1f MB, %u names, %.3f s (%.0f MB/s, %.1f Mtok/s)\n",
-            (unsigned long long)ntok, (double)nbytes / 1e6, ctx.num_names, secs,
+            (unsigned long long)ntok, (double)nbytes / 1e6, ctx.names.num, secs,
             secs > 0 ? (double)nbytes / 1e6 / secs : 0.0,
             secs > 0 ? (double)ntok / 1e6 / secs : 0.0);
   }

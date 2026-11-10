@@ -11,9 +11,9 @@ bool ctx_init(Ctx* ctx) {
 
 void ctx_free(Ctx* ctx) {
   free(ctx->slots);
-  free(ctx->names);
-  free(ctx->strs);
-  free(ctx->strbytes);
+  free(ctx->names.v);
+  free(ctx->strs.v);
+  free(ctx->strbytes.v);
   memset(ctx, 0, sizeof(*ctx));
 }
 
@@ -68,10 +68,21 @@ void ctx_error_unclosed(const LexState* ls,
             tok_kind_name(who), who_line, found);
 }
 
-void* ctx_grow(Ctx* ctx, void* p, size_t bytes) {
-  void* q = realloc(p, bytes);
-  if (!q) {
+void* vec_grow_(Ctx* ctx, void* v, u32* cap, size_t need, size_t elem_size) {
+  size_t c = *cap ? (size_t)*cap * 2 : 16;
+  while (c < need) {
+    c *= 2;
+  }
+  if (c > UINT32_MAX) {
+    if (need > UINT32_MAX) {
+      ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+    }
+    c = UINT32_MAX;
+  }
+  v = realloc(v, c * elem_size);
+  if (!v) {
     ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
   }
-  return q;
+  *cap = (u32)c;
+  return v;
 }

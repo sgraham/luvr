@@ -140,6 +140,28 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
+// A growable array of T. The elements are v[0..num).
+#define VEC(T) \
+  struct {     \
+    T* v;      \
+    u32 num;   \
+    u32 cap;   \
+  }
+
+// Makes room for n more elements in vec.
+#define vec_reserve(ctx, vec, n)                                                             \
+  ((size_t)(vec)->num + (n) > (vec)->cap                                                     \
+       ? (void)((vec)->v = vec_grow_((ctx), (vec)->v, &(vec)->cap, (size_t)(vec)->num + (n), \
+                                     sizeof(*(vec)->v)))                                     \
+       : (void)0)
+
+// Appends an uninitialized element to vec, and returns a pointer to it.
+#define vec_push(ctx, vec) (vec_reserve((ctx), (vec), 1), &(vec)->v[(vec)->num++])
+
+// Grows *cap to at least need, and returns v reallocated to match. Running out
+// of memory, or needing more than 2^32 elements, is an error.
+void* vec_grow_(Ctx* ctx, void* v, u32* cap, size_t need, size_t elem_size);
+
 // Token kinds:
 // - X(name, display) for non-keywords
 // - KW(name, spelling) for keywords
@@ -285,14 +307,11 @@ struct Ctx {
   // that 0 is empty.
   u64* slots;
   u32 slot_mask;
-  Name* names;
-  u32 num_names, cap_names;
+  VEC(Name) names;
 
   // Decoded copies of string literals that contained escapes.
-  StrRef* strs;
-  u32 num_strs, cap_strs;
-  u8* strbytes;
-  u32 num_strbytes, cap_strbytes;
+  VEC(StrRef) strs;
+  VEC(u8) strbytes;
 };
 
 bool ctx_init(Ctx* ctx);
@@ -301,9 +320,6 @@ void ctx_free(Ctx* ctx);
 // Line and column are 1-based. They're found by scanning from the start of the
 // buffer, so this is only suitable for the error path.
 void ctx_error_location(const Ctx* ctx, u32* line, u32* col);
-
-// realloc() that reports running out of memory as an error.
-void* ctx_grow(Ctx* ctx, void* p, size_t bytes);
 
 // Records the error in ctx and longjmps to ctx->on_error.
 NORETURN void ctx_error(Ctx* ctx,
@@ -445,7 +461,7 @@ const char* tok_kind_name(TokenKind kind);
 bool lex_intern_init(Ctx* ctx);
 
 static inline const Name* lex_name(const Ctx* ctx, NameId id) {
-  return &ctx->names[id.idx];
+  return &ctx->names.v[id.idx];
 }
 
 // Content of a STRING* token (not NUL-terminated).
