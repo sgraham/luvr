@@ -38,67 +38,8 @@ const char* tok_kind_name(TokenKind kind) {
   return (kind >= 0 && kind < TK_NUM_KINDS) ? token_names[kind] : "<?>";
 }
 
-// Errors
-
-void ctx_error(Ctx* ctx, const char* file, const u8* buf, u32 offset, const char* fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
-  vsnprintf(ctx->err_msg, sizeof(ctx->err_msg), fmt, ap);
-  va_end(ap);
-  ctx->err_file = file;
-  ctx->err_buf = buf;
-  ctx->err_offset = offset;
-  longjmp(*ctx->on_error, 1);
-}
-
-static void src_location(const u8* buf, u32 offset, u32* line, u32* col) {
-  u32 ln = 1;
-  const u8* bol = buf;
-  for (const u8* p = buf; p < buf + offset; ++p) {
-    if (*p == '\n') {
-      ++ln;
-      bol = p + 1;
-    }
-  }
-  *line = ln;
-  *col = (u32)(buf + offset - bol) + 1;
-}
-
-void ctx_error_location(const Ctx* ctx, u32* line, u32* col) {
-  if (!ctx->err_buf) {
-    *line = *col = 0;
-    return;
-  }
-  src_location(ctx->err_buf, ctx->err_offset, line, col);
-}
-
 #define lex_error(ls, at, ...) \
   ctx_error((ls)->ctx, (ls)->filename, (ls)->buf, (u32)((at) - (ls)->buf), __VA_ARGS__)
-
-void lex_error_unclosed(LexState* ls,
-                        TokenKind what,
-                        TokenKind who,
-                        u32 who_offset,
-                        const char* found) {
-  u32 who_line, cur_line, col;
-  src_location(ls->buf, who_offset, &who_line, &col);
-  src_location(ls->buf, ls->t.offset, &cur_line, &col);
-  if (who_line == cur_line) {
-    ctx_error(ls->ctx, ls->filename, ls->buf, ls->t.offset, "Expected '%s', found %s.",
-              tok_kind_name(what), found);
-  }
-  ctx_error(ls->ctx, ls->filename, ls->buf, ls->t.offset,
-            "Expected '%s' (to close '%s' at line %u), found %s.", tok_kind_name(what),
-            tok_kind_name(who), who_line, found);
-}
-
-void* ctx_grow(Ctx* ctx, void* p, size_t bytes) {
-  void* q = realloc(p, bytes);
-  if (!q) {
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
-  }
-  return q;
-}
 
 // Interning. The table is intentionally simple so that it's a baseline to
 // benchmark alternatives against.
@@ -225,14 +166,12 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) 
 
 // Context
 
-bool ctx_init(Ctx* ctx) {
-  memset(ctx, 0, sizeof(*ctx));
+bool lex_intern_init(Ctx* ctx) {
   ctx->slot_mask = (1u << 12) - 1;
   ctx->slots = (u64*)calloc(ctx->slot_mask + 1, sizeof(u64));
   ctx->cap_names = 1u << 10;
   ctx->names = (Name*)malloc(ctx->cap_names * sizeof(Name));
   if (!ctx->slots || !ctx->names) {
-    ctx_free(ctx);
     return false;
   }
   // Keywords and builtin types are in the same table, so one lookup is
@@ -253,14 +192,6 @@ bool ctx_init(Ctx* ctx) {
     intern(ctx, (const u8*)kws[i].s, len, hash_ident_safe(kws[i].s, len), kws[i].kind);
   }
   return true;
-}
-
-void ctx_free(Ctx* ctx) {
-  free(ctx->slots);
-  free(ctx->names);
-  free(ctx->strs);
-  free(ctx->strbytes);
-  memset(ctx, 0, sizeof(*ctx));
 }
 
 // Decoded string storage

@@ -149,7 +149,7 @@ static void check_match(Parser* p, TokenKind what, TokenKind who, u32 who_offset
     return;
   }
   char buf[64];
-  lex_error_unclosed(&p->ls, what, who, who_offset, describe(p, buf, sizeof(buf)));
+  ctx_error_unclosed(&p->ls, what, who, who_offset, describe(p, buf, sizeof(buf)));
 }
 
 static void check_name(Parser* p, const char* what) {

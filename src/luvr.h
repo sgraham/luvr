@@ -140,80 +140,6 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
-// API
-
-// Require input buffers to be padded with >= LEX_PADDING 0 bytes so that the
-// lexer can read without bounds checking.
-#define LEX_PADDING 16
-
-// Compiler context, which owns all allocations. There's one per compilation,
-// and it can't be shared between threads.
-struct Ctx {
-  jmp_buf* on_error;  // must be set (via setjmp) before lexing
-
-  // Filled in before the longjmp to on_error.
-  char err_msg[256];
-  const char* err_file;
-  const u8* err_buf;
-  u32 err_offset;
-
-  // Intern table, using open addressing and linear probing. Each slot is the
-  // upper 32 bits of the hash, and the name index + 1 in the lower 32 bits, so
-  // that 0 is empty.
-  u64* slots;
-  u32 slot_mask;
-  Name* names;
-  u32 num_names, cap_names;
-
-  // Decoded copies of string literals that contained escapes.
-  StrRef* strs;
-  u32 num_strs, cap_strs;
-  u8* strbytes;
-  u32 num_strbytes, cap_strbytes;
-};
-
-bool ctx_init(Ctx* ctx);
-void ctx_free(Ctx* ctx);
-
-// Line and column are 1-based. They're found by scanning from the start of the
-// buffer, so this is only suitable for the error path.
-void ctx_error_location(const Ctx* ctx, u32* line, u32* col);
-
-// Recursive-descent parser. The only lookahead is the lexer's current token.
-// There's no backtracking and no token buffer. It only accepts or rejects.
-// There's no code generation yet.
-//
-// Returns normally if the file is syntactically valid. On the first syntax
-// error, the message and location are stored in ctx (see
-// ctx_error_location()) and it longjmps to ctx->on_error.
-//
-// As with lex_init(), buf must have LEX_PADDING zero bytes after len and
-// must outlive ctx.
-void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len);
-
-// Errors and allocation
-
-// realloc() that reports running out of memory as an error.
-void* ctx_grow(Ctx* ctx, void* p, size_t bytes);
-
-// Records the error in ctx and longjmps to ctx->on_error.
-NORETURN void ctx_error(Ctx* ctx,
-                        const char* file,
-                        const u8* buf,
-                        u32 offset,
-                        const char* fmt,
-                        ...);
-
-// Lexer
-//
-// The lexer is pull-style. The parser calls lex_next() to get a token into
-// ls->t. There is no token buffer and no "peek". The grammar was finessed (and
-// occasionally slightly hacked) so that the parser never needs to see more
-// than a single token.
-
-// Maximum nesting of \( ) string interpolation.
-#define LEX_MAX_INTERP 16
-
 // Token kinds:
 // - X(name, display) for non-keywords
 // - KW(name, spelling) for keywords
@@ -337,6 +263,87 @@ typedef enum TokenKind {
 } TokenKind;
 // clang-format on
 
+// API
+
+// Require input buffers to be padded with >= LEX_PADDING 0 bytes so that the
+// lexer can read without bounds checking.
+#define LEX_PADDING 16
+
+// Compiler context, which owns all allocations. There's one per compilation,
+// and it can't be shared between threads.
+struct Ctx {
+  jmp_buf* on_error;  // must be set (via setjmp) before lexing
+
+  // Filled in before the longjmp to on_error.
+  char err_msg[256];
+  const char* err_file;
+  const u8* err_buf;
+  u32 err_offset;
+
+  // Intern table, using open addressing and linear probing. Each slot is the
+  // upper 32 bits of the hash, and the name index + 1 in the lower 32 bits, so
+  // that 0 is empty.
+  u64* slots;
+  u32 slot_mask;
+  Name* names;
+  u32 num_names, cap_names;
+
+  // Decoded copies of string literals that contained escapes.
+  StrRef* strs;
+  u32 num_strs, cap_strs;
+  u8* strbytes;
+  u32 num_strbytes, cap_strbytes;
+};
+
+bool ctx_init(Ctx* ctx);
+void ctx_free(Ctx* ctx);
+
+// Line and column are 1-based. They're found by scanning from the start of the
+// buffer, so this is only suitable for the error path.
+void ctx_error_location(const Ctx* ctx, u32* line, u32* col);
+
+// realloc() that reports running out of memory as an error.
+void* ctx_grow(Ctx* ctx, void* p, size_t bytes);
+
+// Records the error in ctx and longjmps to ctx->on_error.
+NORETURN void ctx_error(Ctx* ctx,
+                        const char* file,
+                        const u8* buf,
+                        u32 offset,
+                        const char* fmt,
+                        ...);
+
+// Reports that the token kind `what` was expected instead of the current
+// token, which is described by `found`. If the `who` that it would close is on
+// an earlier line, the message says which.
+NORETURN void ctx_error_unclosed(const LexState* ls,
+                                 TokenKind what,
+                                 TokenKind who,
+                                 u32 who_offset,
+                                 const char* found);
+
+// Recursive-descent parser. The only lookahead is the lexer's current token.
+// There's no backtracking and no token buffer. It only accepts or rejects.
+// There's no code generation yet.
+//
+// Returns normally if the file is syntactically valid. On the first syntax
+// error, the message and location are stored in ctx (see
+// ctx_error_location()) and it longjmps to ctx->on_error.
+//
+// As with lex_init(), buf must have LEX_PADDING zero bytes after len and
+// must outlive ctx.
+void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len);
+
+// Lexer
+//
+// The lexer is pull-style. The parser calls lex_next() to get a token into
+// ls->t. There is no token buffer and no "peek". The grammar was finessed (and
+// occasionally slightly hacked) so that the parser never needs to see more
+// than a single token.
+
+// Maximum nesting of \( ) string interpolation.
+#define LEX_MAX_INTERP 16
+
 // Literal suffixes (e.g. 123i32, 1.5f64). Stored in the bottom nibble of
 // Token.flags (TF_SUFFIX_MASK).
 typedef enum NumSuffix {
@@ -433,14 +440,9 @@ void lex_next(LexState* ls);
 
 const char* tok_kind_name(TokenKind kind);
 
-// Reports that the token kind `what` was expected instead of the current
-// token, which is described by `found`. If the `who` that it would close is on
-// an earlier line, the message says which.
-NORETURN void lex_error_unclosed(LexState* ls,
-                                 TokenKind what,
-                                 TokenKind who,
-                                 u32 who_offset,
-                                 const char* found);
+// Allocates the intern table and interns the keywords. Returns false if
+// allocation fails.
+bool lex_intern_init(Ctx* ctx);
 
 static inline const Name* lex_name(const Ctx* ctx, NameId id) {
   return &ctx->names[id.idx];
