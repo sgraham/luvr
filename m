@@ -7,14 +7,15 @@ import re
 import subprocess
 import sys
 
-TARGETS = [
-    ("lexdump", ["src/lexdump.c", "src/lex.c", "src/ctx.c"]),
-    ("lexfloor", ["bench/lexfloor.c", "src/lex.c", "src/ctx.c"]),
-    ("parsecheck", ["src/parsecheck.c", "src/parser.c", "src/lex.c", "src/ctx.c"]),
-]
+TARGETS = {
+    "lexdump": ["src/lexdump.c", "src/lex.c", "src/ctx.c"],
+    "lexfloor": ["bench/lexfloor.c", "src/lex.c", "src/ctx.c"],
+    "parsecheck": ["src/parsecheck.c", "src/parser.c", "src/lex.c", "src/ctx.c"],
+}
 
 
-def commands(args):
+def commands(args, name):
+    srcs = TARGETS[name]
     if sys.platform == "win32":
         cc = "cl" if args.msvc else "clang-cl"
         flags = ["/nologo", "-D_CRT_SECURE_NO_WARNINGS=0", "/Zi", "/W4", "/WX"]
@@ -28,17 +29,15 @@ def commands(args):
                 link += ["/LTCG"]
         # Run from out/ so that .obj and .pdb files are written there. Sources
         # are absolute so that diagnostics have paths that work from anywhere.
-        for name, srcs in TARGETS:
-            srcs = [os.path.abspath(s) for s in srcs]
-            yield [cc] + flags + srcs + ["/link"] + link + [f"/out:{name}.exe"], "out"
+        srcs = [os.path.abspath(s) for s in srcs]
+        return [cc] + flags + srcs + ["/link"] + link + [f"/out:{name}.exe"], "out"
     else:
         flags = ["-g", "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Wimplicit-fallthrough"]
         if args.debug:
             flags += ["-O0", "-DBUILD_DEBUG=1"]
         else:
             flags += ["-O2", "-DBUILD_DEBUG=0"]
-        for name, srcs in TARGETS:
-            yield ["clang"] + flags + srcs + ["-o", f"out/{name}"], None
+        return ["clang"] + flags + srcs + ["-o", f"out/{name}"], None
 
 
 def expected_error(path):
@@ -81,18 +80,24 @@ def run_tests():
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Build everything into out/.")
+    ap = argparse.ArgumentParser(description="Build parsecheck, or the given tool, into out/.")
     ap.add_argument("-d", "--debug", action="store_true", help="debug build (default is release)")
     ap.add_argument("--msvc", action="store_true", help="on Windows, use cl instead of clang-cl")
-    ap.add_argument("action", nargs="?", choices=["test"], help="run the parser tests after building")
+    ap.add_argument(
+        "action",
+        nargs="?",
+        choices=["test", "lexdump", "lexfloor"],
+        help="test: build parsecheck and run the parser tests. lexdump, lexfloor: build that tool instead of parsecheck",
+    )
     args = ap.parse_args()
 
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     os.makedirs("out", exist_ok=True)
-    for cmd, cwd in commands(args):
-        rc = subprocess.call(cmd, cwd=cwd)
-        if rc:
-            sys.exit(rc)
+    name = args.action if args.action in TARGETS else "parsecheck"
+    cmd, cwd = commands(args, name)
+    rc = subprocess.call(cmd, cwd=cwd)
+    if rc:
+        sys.exit(rc)
     if args.action == "test" and not run_tests():
         sys.exit(1)
 
