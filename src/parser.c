@@ -43,6 +43,7 @@ struct Local {
 typedef enum GlobalKind {
   GK_NONE,
   GK_VAR,
+  GK_FUNC,
 } GlobalKind;
 
 struct Parser {
@@ -545,6 +546,20 @@ static void check_not_global(Parser* p, NameId name, u32 at) {
   }
 }
 
+// Declares a function, which can only be defined once.
+//
+// TODO: This costs 2-5% on dumbbench, which has 1.25M top-level functions.
+// About half is code layout in funcsig() (moving the error report out of line
+// recovers most of that), and the rest is growing p->globals and clearing it in
+// pop_globals(). Revisit once globals have their own records for codegen.
+static void declare_definition(Parser* p, NameId name, u32 at, GlobalKind kind) {
+  const Name* n = name_of(p, name);
+  if (n->global) {
+    error_at(p, at, "Duplicate top-level definition of '%.*s'.", (int)n->len, (const char*)n->str);
+  }
+  declare_global(p, name, kind);
+}
+
 static void pop_globals(Parser* p) {
   for (u32 i = 0; i < p->globals.num; ++i) {
     name_of(p, p->globals.v[i])->global = GK_NONE;
@@ -984,9 +999,9 @@ static void suite(Parser* p) {
 // a type. A method's `self` and a module.Type parameter are distinguished the
 // same way.
 //
-// A nested function's name is a local of the enclosing function. The new
-// function's scope is opened after the name, and the return value is for
-// func_close().
+// A top-level function's name is a global, and a nested function's name is a
+// local of the enclosing function. The new function's scope is opened after
+// the name, and the return value is for func_close().
 static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
   NameId name = p->ls.t.v.name;
   u32 at = p->ls.t.offset;
@@ -1003,7 +1018,11 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
     name = expect_name(p, "function name", &at);
   }
   if (!is_method) {
-    declare_if_new(p, name, at);
+    if (p->func_depth == 0) {
+      declare_definition(p, name, at, GK_FUNC);
+    } else {
+      declare_if_new(p, name, at);
+    }
   }
   u32 outer = func_open(p);
   if (T(p) == TK_LBRACE) {
