@@ -952,6 +952,18 @@ static void simple_stat(Parser* p) {
       expr(p);
       return;
     case TK_GLOBAL:
+      next(p);
+      for (;;) {
+        u32 at;
+        const Name* n = name_of(p, expect_name(p, "variable name", &at));
+        if (!n->global) {
+          error_at(p, at, "Undefined global '%.*s'.", (int)n->len, (const char*)n->str);
+        }
+        if (!optional(p, TK_COMMA)) {
+          break;
+        }
+      }
+      return;
     case TK_NONLOCAL:
       next(p);
       do {
