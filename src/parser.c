@@ -1027,9 +1027,13 @@ static void simple_stat(Parser* p) {
 static void block(Parser* p) {
   next(p);  // INDENT
   for (;;) {
+    TokenKind k = T(p);
     stat(p);
     if (block_follow(T(p))) {
       break;
+    }
+    if (k == TK_RETURN) {
+      error_at(p, p->ls.t.offset, "Expect end of block.");
     }
   }
   check(p, TK_DEDENT);
