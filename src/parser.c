@@ -484,8 +484,11 @@ static void subexpr(Parser* p, int limit, Shape* sh) {
     case TK_AMP: {
       next(p);
       u32 at = p->ls.t.offset;
+      // Only valid if the operand turns out to be a bare name.
+      NameId name = p->ls.t.v.name;
       subexpr(p, PRIORITY_UNARY, sh);
-      if (*sh != SH_NAME && *sh != SH_LVALUE) {
+      const Local* l = *sh == SH_NAME ? lookup(p, name) : NULL;
+      if ((*sh != SH_NAME && *sh != SH_LVALUE) || (l && l->kind == LK_PARAM)) {
         error_at(p, at, "Can't take the address of non-lvalue.");
       }
       *sh = SH_VALUE;
