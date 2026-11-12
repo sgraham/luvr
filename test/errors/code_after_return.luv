@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:8:9:        print "bad"
-# CERR: {ssss}             ^ error: Expect end of block.
+# CERR: {ssss}             ^ error: Expected end of block, found 'print'.
 def int main():
     if true:
         print "will return"

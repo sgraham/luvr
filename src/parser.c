@@ -1033,7 +1033,7 @@ static void block(Parser* p) {
       break;
     }
     if (k == TK_RETURN) {
-      error_at(p, p->ls.t.offset, "Expect end of block.");
+      error_expected(p, "end of block");
     }
   }
   check(p, TK_DEDENT);
