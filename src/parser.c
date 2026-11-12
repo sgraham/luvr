@@ -197,8 +197,7 @@ static void declare_local(Parser* p, NameId name, u32 at, bool is_param) {
   n->binding = l;
 }
 
-// Returns the current function's local for name, ignoring those of enclosing
-// functions.
+// The current function's local for name, ignoring those of enclosing functions.
 static Local* own_local(Parser* p, NameId name) {
   Local* l = lookup(p, name);
   return l && l >= &p->locals[p->func_base] ? l : NULL;
@@ -1273,6 +1272,7 @@ static void parse_module(Parser* p) {
 
 // Undoes the file's bindings and frees the Parser.
 static void parse_end(Parser* p) {
+  // TODO: These (esp globals) might be unnecessarily expensive.
   pop_locals(p, 0);
   pop_globals(p);
   free(p->globals.v);

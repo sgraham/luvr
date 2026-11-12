@@ -17,8 +17,6 @@ void ctx_free(Ctx* ctx) {
   memset(ctx, 0, sizeof(*ctx));
 }
 
-// Errors
-
 void ctx_error(Ctx* ctx, const char* file, const u8* buf, u32 offset, const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
