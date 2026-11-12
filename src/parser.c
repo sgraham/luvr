@@ -904,13 +904,18 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           check_not_global(p, name, p->ls.t.offset);
         }
         Local* l = lookup(p, name);
-        if (l && l < &p->locals[p->func_base] && l->kind != LK_GLOBAL) {
+        // An enclosing function's 'global' doesn't apply to this function, so
+        // this assignment declares a new local.
+        if (l && l < &p->locals[p->func_base] && l->kind == LK_GLOBAL) {
+          l = NULL;
+        }
+        if (l && l < &p->locals[p->func_base]) {
           error_at(p, p->ls.t.offset, "Upvalues are immutable.");
         }
         if (l && l->kind == LK_PARAM) {
           error_at(p, p->ls.t.offset, "Function parameters are immutable.");
         }
-        if (l && l->kind == LK_CONST) {
+        if (l && (l->kind == LK_CONST || (l->kind == LK_GLOBAL && name_of(p, name)->is_const))) {
           error_at(p, p->ls.t.offset, "Cannot assign a new value to a constant.");
         }
       }
