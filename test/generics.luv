@@ -53,6 +53,10 @@ def mod.Box{T} boxed{T}(mod.Box{T} b, mod.Opt{List{T}} o):
     return b
 
 def main():
+    List{int} xs = make{int}(0)
+    *List{int} q = null
+    x = 1
+    y = 2
     List{List{int}} xss = make{List{int}}(4)
     Pair{int, str} p = Pair{int, str}(.first=1, .second="x")
     mod.Map{str, int} m = mod.new_map{str, int}()
