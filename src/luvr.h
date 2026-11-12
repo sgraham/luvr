@@ -420,9 +420,10 @@ static_assert(sizeof(Token) == 16, "unexpected Token size");
 struct Name {
   const u8* str;  // points into a source buffer (or static, for keywords)
   u32 len;
-  u8 kind;        // TK_NAME, TK_TYPENAME, or a keyword kind
-  bool is_const;  // kind=TK_NAME: an ALL_CAPS constant
-  u8 global;      // parser: kind of global in the file being parsed, or 0
+  u8 kind;          // TK_NAME, TK_TYPENAME, or a keyword kind
+  bool is_const;    // kind=TK_NAME: an ALL_CAPS constant
+  u8 global;        // parser: kind of global in the file being parsed, or 0
+  bool is_builtin;  // kind=TK_NAME: a builtin function such as len
   u64 hash;
   void* binding;  // parser: current symbol for this name, or NULL
 };
