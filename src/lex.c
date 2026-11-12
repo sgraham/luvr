@@ -200,6 +200,10 @@ bool lex_intern_init(Ctx* ctx) {
   return true;
 }
 
+NameId lex_intern(Ctx* ctx, const u8* s, u32 len) {
+  return (NameId){intern(ctx, s, len, hash_ident(s, len), 0)};
+}
+
 // Decoded string storage
 
 static void strbytes_append(Ctx* ctx, const u8* s, size_t n) {

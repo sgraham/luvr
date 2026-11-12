@@ -461,6 +461,10 @@ const char* tok_kind_name(TokenKind kind);
 // allocation fails.
 bool lex_intern_init(Ctx* ctx);
 
+// Interns s, which must be followed by at least 7 readable bytes (as source
+// text is, because of LEX_PADDING).
+NameId lex_intern(Ctx* ctx, const u8* s, u32 len);
+
 static inline const Name* lex_name(const Ctx* ctx, NameId id) {
   return &ctx->names.v[id.idx];
 }

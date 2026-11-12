@@ -48,6 +48,7 @@ typedef enum GlobalKind {
   GK_VAR,
   GK_FUNC,
   GK_TYPE,
+  GK_MODULE,
 } GlobalKind;
 
 struct Parser {
@@ -1305,13 +1306,20 @@ static void toplevel_stat(Parser* p) {
 static void parse_module(Parser* p) {
   next(p);
   while (optional(p, TK_IMPORT)) {
-    if (T(p) != TK_STRING) {
+    // Escaped strings are decoded into Ctx.strbytes, which isn't padded for
+    // lex_intern(), and a module name has no reason to contain escapes.
+    if (T(p) != TK_STRING || (p->ls.t.flags & TF_ESCAPED)) {
       error_expected(p, "quoted module name");
     }
+    u32 len;
+    const u8* s = lex_str(&p->ls, &p->ls.t, &len);
+    NameId name = lex_intern(p->ls.ctx, s, len);
     next(p);
     if (optional(p, TK_AS)) {
-      check_name(p, "module alias");
+      u32 at;
+      name = expect_name(p, "module alias", &at);
     }
+    declare_global(p, name, GK_MODULE);
     end_of_stat(p);
   }
   while (T(p) != TK_EOS) {
