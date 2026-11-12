@@ -275,9 +275,12 @@ static void end_of_stat(Parser* p) {
 static void type_args(Parser* p) {
   u32 at = p->ls.t.offset;
   next(p);  // '{'
-  do {
+  for (;;) {
     type(p);
-  } while (optional(p, TK_COMMA));
+    if (!optional(p, TK_COMMA)) {
+      break;
+    }
+  }
   check_match(p, TK_RBRACE, TK_LBRACE, at);
 }
 
@@ -292,9 +295,12 @@ static void type_param(Parser* p) {
 static void type_params(Parser* p) {
   u32 at = p->ls.t.offset;
   next(p);  // '{'
-  do {
+  for (;;) {
     type_param(p);
-  } while (optional(p, TK_COMMA));
+    if (!optional(p, TK_COMMA)) {
+      break;
+    }
+  }
   check_match(p, TK_RBRACE, TK_LBRACE, at);
 }
 
@@ -579,7 +585,7 @@ struct Targets {
 // for_targets -> name {',' name}
 static void for_targets(Parser* p, Targets* t) {
   t->n = 0;
-  do {
+  for (;;) {
     if (T(p) != TK_NAME) {
       error_expected(p, "loop variable name");
     }
@@ -590,7 +596,10 @@ static void for_targets(Parser* p, Targets* t) {
     t->at[t->n] = p->ls.t.offset;
     ++t->n;
     next(p);
-  } while (optional(p, TK_COMMA));
+    if (!optional(p, TK_COMMA)) {
+      break;
+    }
+  }
 }
 
 // '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
@@ -680,7 +689,7 @@ static void call_args(Parser* p, bool is_struct_literal) {
   u32 at = p->ls.t.offset;
   next(p);  // '('
   if (T(p) != TK_RPAREN) {
-    do {
+    for (;;) {
       if (T(p) == TK_RPAREN) {
         error_at(p, p->ls.t.offset, "Trailing commas aren't allowed in calls.");
       }
@@ -693,7 +702,10 @@ static void call_args(Parser* p, bool is_struct_literal) {
         check(p, TK_EQ);
       }
       expr(p);
-    } while (optional(p, TK_COMMA));
+      if (!optional(p, TK_COMMA)) {
+        break;
+      }
+    }
   }
   check_match(p, TK_RPAREN, TK_LPAREN, at);
 }
@@ -966,9 +978,12 @@ static void simple_stat(Parser* p) {
       return;
     case TK_NONLOCAL:
       next(p);
-      do {
+      for (;;) {
         check_name(p, "variable name");
-      } while (optional(p, TK_COMMA));
+        if (!optional(p, TK_COMMA)) {
+          break;
+        }
+      }
       return;
     case TK_IF:
     case TK_FOR:
@@ -984,9 +999,12 @@ static void simple_stat(Parser* p) {
 // block -> INDENT stat {stat} DEDENT
 static void block(Parser* p) {
   next(p);  // INDENT
-  do {
+  for (;;) {
     stat(p);
-  } while (!block_follow(T(p)));
+    if (block_follow(T(p))) {
+      break;
+    }
+  }
   check(p, TK_DEDENT);
 }
 
@@ -1048,7 +1066,7 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
   check(p, TK_LPAREN);
   if (T(p) != TK_RPAREN) {
     bool first = true;
-    do {
+    for (;;) {
       name = p->ls.t.v.name;
       at = p->ls.t.offset;
       if (T(p) == TK_NAME) {
@@ -1065,7 +1083,10 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
       }
       declare_local(p, name, at, /*is_param=*/true);
       first = false;
-    } while (optional(p, TK_COMMA));
+      if (!optional(p, TK_COMMA)) {
+        break;
+      }
+    }
   }
   check_match(p, TK_RPAREN, TK_LPAREN, lparen);
   return outer;
@@ -1145,7 +1166,7 @@ static void struct_body(Parser* p) {
     error_expected(p, "an indented block of fields");
   }
   next(p);
-  do {
+  for (;;) {
     if (!optional(p, TK_PASS)) {
       type(p);
       check_name(p, "field name");
@@ -1154,7 +1175,10 @@ static void struct_body(Parser* p) {
       }
     }
     end_of_stat(p);
-  } while (!block_follow(T(p)));
+    if (block_follow(T(p))) {
+      break;
+    }
+  }
   check(p, TK_DEDENT);
 }
 
@@ -1181,9 +1205,12 @@ static void receiver(Parser* p) {
       if (T(p) == TK_LBRACE) {
         u32 brace = p->ls.t.offset;
         next(p);
-        do {
+        for (;;) {
           receiver_param(p);
-        } while (optional(p, TK_COMMA));
+          if (!optional(p, TK_COMMA)) {
+            break;
+          }
+        }
         check_match(p, TK_RBRACE, TK_LBRACE, brace);
       }
       return;

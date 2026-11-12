@@ -124,7 +124,7 @@ static int run_file(Ctx* ctx,
     // incrementally.
     u32 line = 1, last = 0;
     const u8* bol = buf;
-    do {
+    for (;;) {
       lex_next(&ls);
       ++ntok;
       for (; last < ls.t.offset && last < len; ++last) {
@@ -134,12 +134,18 @@ static int run_file(Ctx* ctx,
         }
       }
       dump_token(&ls, line, (u32)(buf + ls.t.offset - bol) + 1);
-    } while (ls.t.kind != TK_EOS);
+      if (ls.t.kind == TK_EOS) {
+        break;
+      }
+    }
   } else {
-    do {
+    for (;;) {
       lex_next(&ls);
       ++ntok;
-    } while (ls.t.kind != TK_EOS);
+      if (ls.t.kind == TK_EOS) {
+        break;
+      }
+    }
   }
   double t1 = now_sec();
   *total_tokens += ntok;

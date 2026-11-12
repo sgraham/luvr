@@ -801,9 +801,12 @@ void lex_next(LexState* ls) {
       default:
         if (IS(*p, C_IDSTART)) {  // identifier or keyword
           const u8* s = p;
-          do {
+          for (;;) {
             ++p;
-          } while (IS(*p, C_IDCHAR));
+            if (!IS(*p, C_IDCHAR)) {
+              break;
+            }
+          }
           u32 len = (u32)(p - s);
           u32 idx = intern(ls->ctx, s, len, hash_ident(s, len), 0);
           t->kind = ls->ctx->names.v[idx].kind;
