@@ -85,7 +85,7 @@ grammar is LL(1). The rest are local.
 | D1 | **decided** 2026-11-07 | Single pass as much as possible: (c) hybrid. The only exceptions are D10's lexer rewind and D11's skim-on-miss. No general AST. |
 | D2 | **decided** 2026-11-07 | Significant indentation, fixed 4-space unit. Tabs and non-multiples of 4 are errors. |
 | D3 | **decided** 2026-11-07 | One layout token per line boundary (`NEWLINE` / `INDENT` / `DEDENT`×k), and newlines are whitespace inside brackets. D3a: **yes**, one-line suites for simple statements. D3b: **no** `\` continuation. The `newline_before` flag variant is only a later measurement idea. |
-| D4 | **decided** 2026-11-07 | Lexical naming convention as a hard rule (CamelCase / single capital = `TK_TYPENAME`, builtin types are keywords). Drop `IDENT_CONST` and `IDENT_IMPORT` lexing. |
+| D4 | **decided** 2026-11-07 | Lexical naming convention as a hard rule (CamelCase / single capital = `TK_TYPENAME`, builtin types are keywords). Drop `IDENT_CONST` and `IDENT_IMPORT` lexing. A single capital is always a generic type parameter (D21, 2026-11-12). |
 | D5 | **decided** 2026-11-07 | Statement-start dispatch as in the D5 table: no prefix deref for now (revisit, postfix form, if `p[0]` gets tedious), only call/assignment expression statements. D5a: **no** multiple declarators. D5b: **deferred**. The multiple-values-not-tuples proposal is kept below for reference. Revisit when real code needs it, alongside a Zig-like `!T`/`try` error type, which may be the better answer. The parenthesized-RHS formatter escape is not agreed. |
 | D6 | **decided** 2026-11-07 | (b) declare at first assignment, visible from that point on (current luv60 behaviour), function-level scope, `global` to opt out. An intentional difference from Python's whole-function rule. |
 | D7 | **decided** 2026-11-07 | As in the D7 table. **`print` stays a keyword statement** (`print expr`). **`cast T(x)`** with required parens (matching `sizeof(...)` etc.): after `cast` the parser reads a type, and `(` must follow. No cast precedence rule needed. Intended for pointer↔int and similar. `sizeof`/`alignof` use the first-token rule, `typeof(e)` is a type form, `offsetof` is type-only. `len`/`range` are builtin symbols (`fmt` is dropped, D13), not keywords. |
@@ -102,8 +102,9 @@ grammar is LL(1). The rest are local.
 | D18 | n/a | Guidance for future syntax, nothing to decide now. |
 | D19 | **decided** 2026-11-07 | D19a: trailing commas **only in list/dict literals** (not calls, params, or compound literals). D19b: **no** adjacent string concatenation. Section 9 rules 1–5 remain constraints on everything else. |
 | D20 | open | **Looping constructs.** No `while` keyword (removed from the lexer). Investigate a general `for` that covers `while`-style loops (e.g. `for cond:` vs. `for x in xs:`). Interesting for LL(1): after `for`, telling `NAME [, NAME] in` from a condition expression needs care, since a condition can also start with `NAME`. Options include parse-then-decide on `in`, as with D5's expdesc dispatch. |
-| D21 | **decided** 2026-11-08 (provisional) | Generics use `{}`: `List{int}`, `struct Pair{A, B}`, `def T max{T}(...)`, explicit `max{u64}(...)`, inferred by default. Monomorphized by re-parsing the body per instantiation. Options explored (`<>`, `[]`, `'`, `!`, parameter placement) are recorded in D21, since the user may revisit this after writing generic code. |
+| D21 | **decided** 2026-11-08 (provisional), **revised** 2026-11-12 | Generics use `{}`: `List{int}`, `struct Pair{A, B}`, `def T max{T}(...)`, explicit `max{u64}(...)`, inferred by default. Monomorphized by re-parsing the body per instantiation. Revised: type parameters are exactly one capital letter (`[A-Z]`), and a single capital letter is always a type parameter, never a struct name. `{...}` lists are still required and give the order of explicit type arguments. A return type that uses parameters before `{T}` is checked afterwards with a 26-bit mask, so binding stays single-pass. Options explored (`<>`, `[]`, `'`, `!`, parameter placement, `$T`, alphabetical order) are recorded in D21, since the user may revisit this after writing generic code. |
 | D22 | **decided** 2026-11-08 | Methods (`on`): keyed on (generic type, name), no specialization, no methods on pointers, methods only in the receiver type's own module (builtin types: the prelude, D22a open), no free-function overloading. Static methods (`List{int}.new()`) and dunders as operator spellings. |
+| D23 | **open** 2026-11-12 | Arrays, lists and slices, and how their memory is managed. What `a = [1, 2, 3]` is, what `a[1:]` is, what a comprehension produces, and what the user has to do to free each of them. This affects literal typing, comprehensions (D10), `[]T`/`{K}V` (D21, D22a) and likely more syntax, so it's settled before further type work. |
 
 ### D1 ★ Single-pass emit vs. building an AST
 
@@ -212,7 +213,8 @@ classic ambiguity: `T * x;`, `T(x);`, and the lexer hack. luv60 avoids most of
 it by **classifying identifiers lexically** (`categorizer.in.c:8-10`):
 
 - `varname` = starts lowercase → `IDENT_VAR`
-- `typename` = CamelCase / single capital → `IDENT_TYPE`
+- `typename` = CamelCase / single capital → `IDENT_TYPE`. A single capital
+  is always a generic type parameter, never a struct name (D21).
 - `constname` = `ALL_CAPS` → `IDENT_CONST`
 - builtin types (`int`, `i32`, `str`, `bool`, ...) are keywords.
 
@@ -791,14 +793,42 @@ already counts as a bracket in the lexer, so long argument lists can wrap
 across lines. `}}` is two tokens, so nesting needs no special case. Type
 arguments are types only, never expressions.
 
+**Revised (2026-11-12): type parameters are single capital letters.** A
+type parameter is exactly one capital letter, `[A-Z]`, and a single capital
+letter is always a type parameter. Struct names need at least two letters
+(`Elem`, not `T`). The syntax above is unchanged.
+
+- Every type parameter is still declared in a `{...}` list: on the struct
+  (`struct Map{K, V}:`), on the function (`def T max{T}`), or on a method's
+  receiver (`on List{T} def ...`). The list gives the order of explicit
+  type arguments (`Map{str, int}`, `max{u64}(...)`). A single capital that
+  isn't declared by an enclosing list is an error ("Undefined type parameter
+  'U'."), including in a body. A nested function sees its enclosing
+  function's parameters.
+- Binding is single-pass. Struct fields and function parameters and bodies
+  all come after the list that declares their type parameters. Only a
+  function's return type comes first. Because a type parameter is known from
+  its spelling, the return type doesn't need resolving where it's parsed.
+  The parser records each one used in a 26-bit mask (bit `c - 'A'`), and
+  checks the mask against the declared parameters once the list (and the
+  receiver, for a method) has been parsed.
+- Type parameters and real types can't be confused, so "Undefined type"
+  never needs to know about generics. Generic code is also easy to spot
+  when reading. The cost is losing descriptive parameter names (`Elem`,
+  `Key`), which would be checked as real types instead.
+- The lexer classifies a name once per distinct identifier (D4), so telling
+  `T` from `Tree` costs nothing at each use.
+- Single capitals are currently `TK_TYPENAME`, not constants, so no constant
+  spellings are lost. No test here or in luv60 has a single-letter struct.
+
 Rules in the prototype:
 
-- Type parameters (`struct Pair{A, B}`, `def T max{T}`) must be TYPENAMEs
-  (D4), so `T`, `K`, `Elem` all work. Builtins and `mod.Type` are rejected.
+- Type parameters (`struct Pair{A, B}`, `def T max{T}`) must be single
+  capital letters (see the revision above). Builtins, longer type names and
+  `mod.Type` are rejected.
 - Generic function parameters come after the function name, matching
-  structs. The return type can use `T` before `{T}` declares it. The parser
-  doesn't care (D4). For a single-pass code generator this means the return
-  type is resolved after the parameter list is seen.
+  structs. The return type can use `T` before `{T}` declares it, and is
+  checked after the list with the mask described above.
 - `foreign` functions can't be generic.
 - Type arguments can't be given twice (`List{int}{str}`), and can't follow
   a call or other value (`f(){int}`).
@@ -815,7 +845,10 @@ Rules in the prototype:
 Known wart: braces now mean both generics and dicts. `{K}V` inside type
 arguments reads badly: `List{{str}int}`. The user's inclination is to later
 replace both `[]T` and `{K}V` with more verbose generic synonyms (e.g.
-`Slice{T}`, `Dict{K, V}`), which would remove the overlap. Not decided.
+`Slice{T}`, `Dict{K, V}`), which would remove the overlap. Superseded
+(2026-11-12): `[]T` and `{K}V` are kept as synonyms for prelude `List{T}`
+and `Dict{K, V}`, so user code rarely needs to nest them inside `{}`. See
+D23, which is open.
 
 Options explored:
 
@@ -861,6 +894,19 @@ Options explored:
 - Inference only (no explicit call-site syntax at all) was considered
   acceptable and doesn't block adding explicit syntax later. `{}` makes the
   question moot since explicit arguments come for free.
+- **Implicit `$T` parameters** (2026-11-12): `def $T max($T a, $T b)`, with
+  the sigil marking a type parameter and the first use declaring it, and no
+  `{T}` list on functions. Single-pass and LL(1) (`$T` is one token). It was
+  rejected because explicit type arguments would then need an order taken
+  from first appearance, which silently changes if parameters are reordered,
+  and because structs would still need a list. It's also noisier. `'T` was
+  considered for the same idea and is worse, because an unpaired `'`
+  confuses editors and other tooling.
+- **Alphabetical order for explicit type arguments** (2026-11-12): with
+  single-letter parameters, `Pair{int, str}` could bind `A`, `B` in
+  alphabetical order, so no lists are needed at all. Rejected as too subtle.
+  `{K, V}` only works by accident of the alphabet, and something like
+  `{V, K}` couldn't be written.
 
 ### D22 Methods (`on`) and overloading
 
@@ -933,6 +979,48 @@ either, and provide free functions instead. If `[]T` and `{K}V` are later
 replaced by generic structs (`List{T}`, `Dict{K, V}`, see D21), those become
 ordinary structs defined in the prelude, and only true primitives (`int`,
 `str`, ...) are left needing the special case.
+
+### D23 Arrays, lists and slices (open)
+
+Paused on 2026-11-12 to think through, because how this memory is managed,
+and what the user has to do with it, will change later decisions and syntax.
+
+The questions:
+
+- What `a = [1, 2, 3]` is. In luv60 it's a fixed array `[3]i32`, so
+  `a.append(4)` is an error ("Undefined member function append on type
+  [3]i32.", `array_no_append.luv`). An owning list needs a declared type
+  (`[]int nums = [1, 2, 3]`). The user wrestled with this in luv60 without a
+  satisfying answer.
+- What a slice `a[i:j]` (D8) is: a copy, or a view into `a`. In luv60 it
+  was a view of some kind. `list_slice_append.luv` expects `nums[2:]` of a
+  `[]int` to fail a runtime check on `append`.
+- What a comprehension produces, and from what. `[x*2 for x in xs]` over an
+  array, a list, a slice or `range`. The existing errors
+  (`compr_array_from_non_array`, `compr_filter_array`,
+  `compr_array_from_diff_sized_array`) show where luv60 drew the boundary
+  between arrays and lists.
+- Who owns each of them and how they're freed. There's no decision on
+  memory management at all yet. Go can hide the difference between an
+  owning list and a view partly because it's garbage collected.
+- The spelling. `[]T` was chosen to look like Python, so it owns its storage
+  like `std::vector`. In Go, Zig and Odin `[]T` is a view (a slice), which
+  may confuse readers, and a view type is needed regardless.
+
+What's agreed so far:
+
+- The compiler is closely tied to the implementations of `List` and `Dict`,
+  because of literals and comprehensions. It knows `List{T}`'s layout and
+  builds literals and comprehensions directly, and preallocates when the
+  length is known. The methods (`append`, growth, dunders) are luv code in
+  the prelude (D22a). `Dict` literals probably call a prelude insert
+  function rather than the compiler knowing the hash table.
+- `[]T` and `{K}V` are intended as transparent synonyms for prelude
+  `List{T}` and `Dict{K, V}`, which the compiler knows about only to make
+  code less noisy. Diagnostics print the short form. This replaces the
+  inclination in D21 to replace them with verbose synonyms. Whether `[]T`
+  keeps meaning the owning list depends on the questions above.
+- Fixed arrays `[N]T` stay primitive value types.
 
 ---
 
@@ -1235,7 +1323,7 @@ bench/                      # scripts comparing against luac -p and luv60
 
 ## 7. Decisions that are the user's call
 
-Tracked in the **Decision log** at the top of section 2. Open: D20 (general `for`). Provisional: D21 (generics syntax). Open: D22a (methods on builtin types and the prelude). Deferred: D15 (to measurement), D5b (until
+Tracked in the **Decision log** at the top of section 2. Open: D20 (general `for`). Provisional: D21 (generics syntax). Open: D22a (methods on builtin types and the prelude), D23 (arrays, lists, slices and their memory). Deferred: D15 (to measurement), D5b (until
 real code needs it).
 
 ---
