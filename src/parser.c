@@ -477,11 +477,20 @@ static void subexpr(Parser* p, int limit, Shape* sh) {
       break;
     case TK_MINUS:
     case TK_TILDE:
-    case TK_AMP:
       next(p);
       subexpr(p, PRIORITY_UNARY, sh);
       *sh = SH_VALUE;
       break;
+    case TK_AMP: {
+      next(p);
+      u32 at = p->ls.t.offset;
+      subexpr(p, PRIORITY_UNARY, sh);
+      if (*sh != SH_NAME && *sh != SH_LVALUE) {
+        error_at(p, at, "Can't take the address of non-lvalue.");
+      }
+      *sh = SH_VALUE;
+      break;
+    }
     default:
       primary(p, sh);
       break;
