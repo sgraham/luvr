@@ -60,9 +60,6 @@ struct Parser {
   // Names declared as globals by this file, so that Name.global can be
   // cleared at the end.
   VEC(NameId) globals;
-  // Counts names that were found as locals. Until there's code generation,
-  // this is the only use of a lookup's result.
-  u32 num_resolved;
 };
 
 // The syntactical shape of parsing an expression. Used to decide whether
@@ -802,11 +799,18 @@ static void primary(Parser* p, Shape* sh) {
     case TK_STRING_BEGIN:
       interpolated_string(p);
       break;
-    case TK_NAME:
-      p->num_resolved += lookup(p, p->ls.t.v.name) != NULL;
+    case TK_NAME: {
+      const Name* n = name_of(p, p->ls.t.v.name);
+      bool defined = n->binding || n->global || n->is_builtin;
       next(p);
+      // A name followed by '=' is an assignment target, which declares the name
+      // if it's new.
+      if (!defined && T(p) != TK_EQ) {
+        error_at(p, at, "Undefined reference to '%.*s'.", (int)n->len, (const char*)n->str);
+      }
       *sh = SH_NAME;
       break;
+    }
     case TK_TYPENAME:
       next(p);
       *sh = SH_TYPE;
@@ -1348,7 +1352,6 @@ void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len) {
   p->num_locals = 0;
   p->func_base = 0;
   p->func_depth = 0;
-  p->num_resolved = 0;
   p->globals.v = NULL;
   p->globals.num = p->globals.cap = 0;
   // Names are shared by all files parsed with ctx, so this file's bindings
