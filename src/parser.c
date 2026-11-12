@@ -28,6 +28,9 @@ typedef enum LocalKind {
   LK_VAR,
   LK_PARAM,
   LK_CONST,
+  // Named in a 'global' statement, so assignments in this function go to the
+  // global rather than declaring a local.
+  LK_GLOBAL,
 } LocalKind;
 
 // A parameter or local variable of the function being parsed, or of one that
@@ -185,14 +188,14 @@ static Local* lookup(Parser* p, NameId name) {
   return (Local*)name_of(p, name)->binding;
 }
 
-static void declare_local(Parser* p, NameId name, u32 at, bool is_param) {
+static void declare_local(Parser* p, NameId name, u32 at, LocalKind kind) {
   if (p->num_locals == MAX_LOCALS) {
     error_at(p, at, "Too many local variables.");
   }
   Local* l = &p->locals[p->num_locals++];
   l->name = name;
   Name* n = name_of(p, name);
-  l->kind = is_param ? LK_PARAM : n->is_const ? LK_CONST : LK_VAR;
+  l->kind = (u8)kind;
   l->shadowed = (Local*)n->binding;
   n->binding = l;
 }
@@ -210,7 +213,7 @@ static void declare_if_new(Parser* p, NameId name, u32 at) {
     return;
   }
   if (!own_local(p, name)) {
-    declare_local(p, name, at, /*is_param=*/false);
+    declare_local(p, name, at, name_of(p, name)->is_const ? LK_CONST : LK_VAR);
   }
 }
 
@@ -901,7 +904,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           check_not_global(p, name, p->ls.t.offset);
         }
         Local* l = lookup(p, name);
-        if (l && l < &p->locals[p->func_base]) {
+        if (l && l < &p->locals[p->func_base] && l->kind != LK_GLOBAL) {
           error_at(p, p->ls.t.offset, "Upvalues are immutable.");
         }
         if (l && l->kind == LK_PARAM) {
@@ -967,10 +970,12 @@ static void simple_stat(Parser* p) {
       next(p);
       for (;;) {
         u32 at;
-        const Name* n = name_of(p, expect_name(p, "variable name", &at));
+        NameId name = expect_name(p, "variable name", &at);
+        const Name* n = name_of(p, name);
         if (!n->global) {
           error_at(p, at, "Undefined global '%.*s'.", (int)n->len, (const char*)n->str);
         }
+        declare_local(p, name, at, LK_GLOBAL);
         if (!optional(p, TK_COMMA)) {
           break;
         }
@@ -1081,7 +1086,7 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
         type(p);
         name = expect_name(p, "parameter name", &at);
       }
-      declare_local(p, name, at, /*is_param=*/true);
+      declare_local(p, name, at, LK_PARAM);
       first = false;
       if (!optional(p, TK_COMMA)) {
         break;

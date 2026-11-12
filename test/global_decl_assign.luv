@@ -1,0 +1,11 @@
+# OUT: 3
+x = 1
+
+def int main():
+    global x
+    x = 2
+    def f():
+        x = 3
+        print x
+    f()
+    return 0
