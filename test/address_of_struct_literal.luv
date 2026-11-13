@@ -1,0 +1,5 @@
+struct Stuff:
+    int a
+
+def main():
+    *Stuff s = &Stuff(.a=1)

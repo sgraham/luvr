@@ -74,11 +74,12 @@ struct Parser {
 // The syntactical shape of parsing an expression. Used to decide whether
 // an expression can be assigned to, used as a statement, or was a type.
 typedef enum Shape {
-  SH_VALUE,   // anything else: literals, operators, struct literals, ...
-  SH_NAME,    // a bare name: assignable
-  SH_LVALUE,  // a field or index: assignable
-  SH_CALL,    // a function or method call: valid as a statement
-  SH_TYPE,    // TypeName or module.TypeName
+  SH_VALUE,           // anything else: literals, operators, ...
+  SH_NAME,            // a bare name: assignable
+  SH_LVALUE,          // a field or index: assignable
+  SH_CALL,            // a function or method call: valid as a statement
+  SH_TYPE,            // TypeName or module.TypeName
+  SH_STRUCT_LITERAL,  // Stuff(...): '&' allocates it in the current arena
 } Shape;
 
 static void expr(Parser* p);
@@ -546,7 +547,8 @@ static void subexpr(Parser* p, int limit, Shape* sh) {
       NameId name = p->ls.t.v.name;
       subexpr(p, PRIORITY_UNARY, sh);
       const Local* l = *sh == SH_NAME ? lookup(p, name) : NULL;
-      if ((*sh != SH_NAME && *sh != SH_LVALUE) || (l && l->kind == LK_PARAM)) {
+      if ((*sh != SH_NAME && *sh != SH_LVALUE && *sh != SH_STRUCT_LITERAL) ||
+          (l && l->kind == LK_PARAM)) {
         error_at(p, at, "Can't take the address of non-lvalue.");
       }
       *sh = SH_VALUE;
@@ -831,7 +833,7 @@ static void postfix(Parser* p, Shape* sh) {
       case TK_LPAREN: {
         bool is_struct_literal = *sh == SH_TYPE;
         call_args(p, is_struct_literal);
-        *sh = is_struct_literal ? SH_VALUE : SH_CALL;
+        *sh = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
         break;
       }
       case TK_LBRACE:

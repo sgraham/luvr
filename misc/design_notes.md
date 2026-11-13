@@ -1390,10 +1390,10 @@ copy.**
 - A single object is allocated with `&Stuff(.a=1)`: the value goes into the
   current arena, and the result is a pointer to it. A list literal
   `[1, 2, 3]` is the same thing for `&List{int}(...)`, with its elements in
-  the current arena, so the literal isn't special. Today `&` of a compound
-  literal is the non-lvalue error (`address_of_const.luv`), which becomes
-  this allowed case. `new(...)` is the alternative if `&Stuff(...)` turns out
-  to be too subtle.
+  the current arena, so the literal isn't special. The parser accepts `&` of
+  a struct literal (`address_of_struct_literal.luv`) but not of other
+  values such as `&5` or `&f()`. `new(...)` is the alternative if
+  `&Stuff(...)` turns out to be too subtle.
 - Open: zero values in general, and in particular what `[]int xs` with no
   initializer holds. Allocating an empty list is cheap (a bump) and matches
   Python, which has no null lists. Treating null as the same as an empty
