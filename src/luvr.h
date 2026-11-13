@@ -132,7 +132,7 @@ typedef struct Token Token;
 #if BUILD_DEBUG
 #  define ASSERT(x) CHECK(x)
 #else
-#  define ASSERT(x) (void)(x)
+#  define ASSERT(x)
 #endif
 
 typedef uint8_t u8;

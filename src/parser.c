@@ -675,38 +675,84 @@ static void for_targets(Parser* p, Targets* t) {
   }
 }
 
-// '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
+// Lexes past the first element of a list literal, without parsing it. Stops at
+// a 'for' or ',' in the list itself, or at its ']'. Returns whether it stopped
+// at a 'for'.
+static bool skim_to_for(Parser* p, u16 depth) {
+  for (;;) {
+    TokenKind k = T(p);
+    if (p->ls.bracket_depth < depth || k == TK_EOS) {
+      return false;
+    }
+    if (p->ls.bracket_depth == depth && (k == TK_FOR || k == TK_COMMA)) {
+      return k == TK_FOR;
+    }
+    next(p);
+  }
+}
+
+// comprehension -> 'for' for_targets 'in' expr { 'for' ... | 'if' expr }
 //
-// This is LL(1) because a `for` after the first element means it's a
-// comprehension. Single pass code generation will need the element to be
-// re-parsed after the loop variables are bound.
-static void list_literal(Parser* p) {
-  u32 at = p->ls.t.offset;
-  next(p);
-  if (T(p) != TK_RSQUARE) {
-    expr(p);
-    if (T(p) == TK_FOR) {
-      // comprehension -> 'for' targets 'in' expr { 'for' ... | 'if' expr }
-      while (T(p) == TK_FOR || T(p) == TK_IF) {
-        if (optional(p, TK_FOR)) {
-          // The element is parsed before the loop variables, so they aren't
-          // bound yet.
-          Targets t;
-          for_targets(p, &t);
-          check(p, TK_IN);
-          expr(p);
-        } else {
-          next(p);
-          expr(p);
-        }
+// The element comes before the 'for' clauses that bind its names. The clauses
+// are parsed first, and then the lexer is rewound to parse the element with
+// the loop variables bound. Expressions can't declare new names, so there's
+// no parser state to be saved.
+static void comprehension(Parser* p, const LexState* elem, u32 at) {
+#if BUILD_DEBUG
+  LexState at_for;
+  lex_mark(&p->ls, &at_for);
+#endif
+  u32 base = p->num_locals;
+  while (T(p) == TK_FOR || T(p) == TK_IF) {
+    if (optional(p, TK_FOR)) {
+      Targets t;
+      for_targets(p, &t);
+      check(p, TK_IN);
+      expr(p);
+      // Loop variables are always new, so they shadow any outer name.
+      for (u32 i = 0; i < t.n; ++i) {
+        LocalKind kind = name_of(p, t.name[i])->is_const ? LK_CONST : LK_VAR;
+        declare_local(p, t.name[i], t.at[i], kind);
       }
     } else {
-      while (optional(p, TK_COMMA)) {
-        if (T(p) == TK_RSQUARE) {
-          break;  // trailing comma
-        }
-        expr(p);
+      next(p);
+      expr(p);
+    }
+  }
+  LexState end;
+  lex_mark(&p->ls, &end);
+  lex_rewind(&p->ls, elem);
+  expr(p);
+  if (T(p) != TK_FOR) {
+    check_match(p, TK_RSQUARE, TK_LSQUARE, at);
+  }
+  // Both lexed the same text from elem, so a difference means some lexer state
+  // isn't restored by lex_rewind().
+  ASSERT(lex_same_state_for_testing(&p->ls, &at_for));
+  lex_rewind(&p->ls, &end);
+  pop_locals(p, base);
+  check_match(p, TK_RSQUARE, TK_LSQUARE, at);
+}
+
+// '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
+static void list_literal(Parser* p) {
+  u32 at = p->ls.t.offset;
+  u16 depth = p->ls.bracket_depth;
+  next(p);
+  if (T(p) != TK_RSQUARE) {
+    LexState elem;
+    lex_mark(&p->ls, &elem);
+    if (skim_to_for(p, depth)) {
+      comprehension(p, &elem, at);
+      return;
+    }
+    lex_rewind(&p->ls, &elem);
+    expr(p);
+    while (optional(p, TK_COMMA)) {
+      if (T(p) == TK_RSQUARE) {
+        break;  // trailing comma
       }
+      expr(p);
     }
   }
   check_match(p, TK_RSQUARE, TK_LSQUARE, at);
