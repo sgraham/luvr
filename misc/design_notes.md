@@ -481,6 +481,42 @@ toward this). (a) remains the fallback if (b) turns out fiddly in practice.
 Section 4 shows (b) is the only non-LL(1) mechanism in the design, and it's
 local to `[`/`{`.
 
+**Implementation (2026-11-12).**
+
+- A checkpoint is a copy of `LexState`. All lexer state (cursor, indent,
+  pending dedents, bracket depth, the interpolation stack, the current
+  token) must stay in `LexState`, so that the copy is complete. `lex_mark()`
+  and `lex_rewind()` in lex.c are the only way to make and use one.
+- The lexer also writes to tables in `Ctx`. Interning is idempotent, so
+  re-lexing a name gives the same `NameId`. An escaped string is decoded
+  into `Ctx.strs`/`Ctx.strbytes` each time it's lexed, so re-lexing appends
+  a duplicate with a new index. These aren't truncated on rewind: the
+  `for` clauses are lexed after checkpoint E and may hold string indices
+  past it, so reusing those slots for the element would overwrite them.
+  The duplicates are bounded by the size of the first element.
+- The skim calls `lex_next()` until a `for` or `,` at the literal's own
+  `bracket_depth`, until the depth drops below it (the `]`), or until end of
+  file. The lexer already tracks the depth, including through `"\(...)"`.
+  The skim never reports parse errors. If it stops anywhere unexpected, the
+  parser rewinds and parses normally, so the error is the usual one. Lexer
+  errors are reported during the skim, but they would be reported at the
+  same place by the normal parse.
+- A comprehension opens a scope (a saved `num_locals`). Each loop variable
+  is declared as a new local even if the name is already bound, so it
+  shadows an outer `x` (`compr_shadow.luv`). `pop_locals()` closes the
+  scope after the jump to R.
+- Between E and R, no parser state is saved or restored. When the element is
+  parsed, the loop variables are bound and nothing else has changed, which
+  is the state it needs. Nothing inside an expression declares a name.
+  Nested comprehensions keep their checkpoints on the C stack.
+- Errors in the `for` clauses are reported before errors in the element,
+  so `[undefined_a for x in undefined_b]` reports `undefined_b`. A test
+  records this order.
+- In debug builds, the skim saves the lexer state at the `for` it stopped
+  at, and it's compared with the state when the element parse reaches the
+  same `for`. Both lexed the same text from E, so they should be equal,
+  and lexer state added outside `LexState` is caught when it's first used.
+
 Dict comprehensions (`{k: v for ...}`) would use the same mechanism with
 `{`/`}`.
 
@@ -762,6 +798,36 @@ use. The body is parsed once at the definition without emitting anything, so
 syntax errors are reported at the definition. Each instantiation then rewinds
 the lexer to the body and re-parses it with the type parameters bound, using
 the same rewind as D10.
+
+**When instantiation happens (2026-11-12, not implemented).** Re-parsing a
+body where it's first used, in the middle of another function, would see
+that function's locals through `Name.binding`, and its `func_depth`,
+`type_params` and return type state. Saving and restoring all of that
+means a full parser snapshot, and any field later added to `Parser` could
+break it. Instead, instantiations are queued (the body's offset and the
+type arguments) and done after the current top-level item ends. The parser
+state is then nearly empty (no locals, `func_depth` 0, `type_params` 0), so
+an instantiation needs a lexer checkpoint, the type parameters bound to the
+arguments, and a flag so the function isn't declared a second time. The
+call site already knows the return type from the signature, so the call
+can be emitted before the body. Instantiations found while instantiating
+are added to the queue. A `static_assert` on `sizeof(Parser)` next to this
+code would force a decision about each new parser field. The parser doesn't
+need any of this until there's type checking or codegen.
+
+Open: this isn't enough for a generic defined in another module. The
+imported module is finished before the importer starts, so its globals
+are no longer bound (`Name.global` is per file and cleared in
+`parse_end()`). Re-parsing its body in the importer would resolve names
+against the importer's globals: a private helper of the defining module
+would be undefined, and a name both modules define would bind to the wrong
+one. The body needs the defining module's global scope. Either the
+definition parse records what each non-local name resolved to and the
+instantiation uses that, or globals become per-module tables that can be
+switched to, which ties in with replacing `Name.global` with real global
+records. Within one module, deferring is enough: globals can't be
+redefined, and a name defined after the generic but before the
+instantiation was already reported as undefined by the definition parse.
 
 **Decided (2026-11-08, provisional): `{}`.** The user expects to revisit it
 after writing code that uses generics.
