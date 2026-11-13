@@ -442,10 +442,10 @@ struct StrRef {
 // interpolation stack. A checkpoint is a copy of it.
 struct LexPos {
   const u8* p;  // cursor
-  u16 indent;   // current block level, in units of 4 spaces
-  u16 pending_dedents;
-  u16 bracket_depth;  // > 0: newlines are whitespace
   Token t;
+  u32 indent;  // current block level, in units of 4 spaces
+  u32 pending_dedents;
+  u32 bracket_depth;  // > 0: newlines are whitespace
 };
 
 struct LexState {
@@ -456,7 +456,7 @@ struct LexState {
   // bracket_depth at each open \(. These aren't in LexPos, so a checkpoint has
   // to be restored at the same depth of interpolation that it was made at.
   u8 interp_sp;
-  u16 interp_stack[LEX_MAX_INTERP];
+  u32 interp_stack[LEX_MAX_INTERP];
   LexPos pos;
 };
 

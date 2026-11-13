@@ -678,7 +678,7 @@ static void for_targets(Parser* p, Targets* t) {
 // Lexes past the first element of a list literal, without parsing it. Stops at
 // a 'for' or ',' in the list itself, or at its ']'. Returns whether it stopped
 // at a 'for'.
-static bool skim_to_for(Parser* p, u16 depth) {
+static bool skim_to_for(Parser* p, u32 depth) {
   for (;;) {
     TokenKind k = T(p);
     if (p->ls.pos.bracket_depth < depth || k == TK_EOS) {
@@ -737,7 +737,7 @@ static void comprehension(Parser* p, const LexPos* elem, u32 at) {
 // '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
 static void list_literal(Parser* p) {
   u32 at = p->ls.pos.t.offset;
-  u16 depth = p->ls.pos.bracket_depth;
+  u32 depth = p->ls.pos.bracket_depth;
   next(p);
   if (T(p) != TK_RSQUARE) {
     LexPos elem;

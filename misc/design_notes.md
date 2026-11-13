@@ -483,10 +483,16 @@ local to `[`/`{`.
 
 **Implementation (2026-11-12).**
 
-- A checkpoint is a copy of `LexState`. All lexer state (cursor, indent,
-  pending dedents, bracket depth, the interpolation stack, the current
-  token) must stay in `LexState`, so that the copy is complete. `lex_mark()`
-  and `lex_rewind()` in lex.c are the only way to make and use one.
+- A checkpoint is a copy of `LexPos`, the part of `LexState` that changes
+  as the lexer advances: the cursor, the current token, indent, pending
+  dedents and bracket depth. The interpolation stack (`interp_sp`,
+  `interp_stack`) isn't saved, so a checkpoint has to be restored at the
+  same depth of interpolation that it was made at. That's true for
+  comprehensions, because the mark and both rewinds are inside the same
+  `[`. The exception is a file that ends inside an open `\(`, where the
+  skim stops at EOF one level deeper, but that can never parse, and it
+  gives the same error. `lex_mark()` and `lex_rewind()` in lex.c are the
+  only way to make and use one.
 - The lexer also writes to tables in `Ctx`. Interning is idempotent, so
   re-lexing a name gives the same `NameId`. An escaped string is decoded
   into `Ctx.strs`/`Ctx.strbytes` each time it's lexed, so re-lexing appends
@@ -515,7 +521,10 @@ local to `[`/`{`.
 - In debug builds, the skim saves the lexer state at the `for` it stopped
   at, and it's compared with the state when the element parse reaches the
   same `for`. Both lexed the same text from E, so they should be equal,
-  and lexer state added outside `LexState` is caught when it's first used.
+  and lexer state added outside `LexPos` is caught when it's first used.
+  `lexdump -r` (run by `./m test`) does the same check at every `(`, `[`
+  and `{` in the tests: it lexes past the close, rewinds, lexes again and
+  compares.
 
 Dict comprehensions (`{k: v for ...}`) would use the same mechanism with
 `{`/`}`.
@@ -1755,6 +1764,27 @@ Each step is measurable on its own.
 6. **Profile and tune:** `perf`/Instruments on the step 2–4 drivers. Try the
    `newline_before` flag variant (D3), hash choice (D15), and removing the
    lookahead slot.
+   - **Measured 2026-11-13** (desktop, `parsecheck`): where the hot lexer
+     state lands in a cache line changes the whole parse by 5–8%. `LexPos`
+     as `p, t, u32 ×3` was 9% faster on dumbbench than `p, u16 ×3, t`, but
+     because of where it put `pos`, not because of the field widths. u16,
+     u32 and u64 made no difference by themselves. `Parser` comes from
+     `malloc` (32 mod 64 with glibc), and `pos` at 8 mod 64 was fast, while
+     at 32 or 40 it was slow, so it seems to matter whether all 40 bytes of
+     `LexPos` are in one line. Forcing `Parser` to be 64-byte aligned gave
+     mixed results. This depends on allocations made before `parse_file()`,
+     so it's fragile, and not worth tuning until there's more code.
+   - Inlining into the recursive `primary()`/`subexpr()` shows up too.
+     Adding the D10 skim made dumbbench, which has no list literals, 1–2%
+     slower, and making `list_literal()` noinline undid that.
+   - The D10 skim and rewind cost about 7% on a generated file that's
+     nothing but small list literals, compared to before they existed.
+   - To check later: `Parser.locals` is a large array (`MAX_LOCALS`
+     entries) between `ls` and the rest of the parser's fields, which may
+     put warm data in more lines than it needs. Try moving it out of line.
+     Get hardware counters (L1 misses, split loads) on the desktop, which
+     needs `perf_event_paranoid` lowered. Try LTO and PGO, and noinline on
+     cold parser paths.
 7. **Real code generator** behind the interface: luv60's IR, sqbe, or a
    bytecode interpreter in the spirit of `rewrite.txt`'s reference
    implementation.

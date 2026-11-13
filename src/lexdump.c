@@ -96,7 +96,7 @@ static void dump_token(const LexState* ls, u32 line, u32 col) {
   putchar('\n');
 }
 
-static void lex_past_close(LexState* ls, u16 depth) {
+static void lex_past_close(LexState* ls, u32 depth) {
   for (;;) {
     lex_next(ls);
     if (ls->pos.bracket_depth < depth || ls->pos.t.kind == TK_EOS) {
@@ -108,7 +108,7 @@ static void lex_past_close(LexState* ls, u16 depth) {
 // ls has just opened a bracket. It's rewound to there afterwards so that the
 // brackets nested inside are also checked.
 static void check_rewind(LexState* ls) {
-  u16 depth = ls->pos.bracket_depth;
+  u32 depth = ls->pos.bracket_depth;
   LexPos mark, first;
   lex_mark(ls, &mark);
   lex_past_close(ls, depth);

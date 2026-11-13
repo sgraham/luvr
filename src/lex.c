@@ -274,7 +274,7 @@ static void lex_eof(LexState* ls, Token* t) {
   t->offset = (u32)(ls->end - ls->buf);
   ls->pos.p = ls->end;
   if (ls->pos.indent) {
-    ls->pos.pending_dedents = (u16)(ls->pos.indent - 1);
+    ls->pos.pending_dedents = ls->pos.indent - 1;
     ls->pos.indent = 0;
     t->kind = TK_DEDENT;
   } else {
@@ -303,14 +303,14 @@ static void lex_layout(LexState* ls, Token* t, const u8* nl) {
     t->kind = TK_NEWLINE;
     t->offset = (u32)(nl - ls->buf);
   } else if (level == ls->pos.indent + 1u) {
-    ls->pos.indent = (u16)level;
+    ls->pos.indent = level;
     t->kind = TK_INDENT;
     t->offset = (u32)(q - ls->buf);
   } else if (level > ls->pos.indent) {
     lex_error(ls, q, "Unexpected indent of more than one level.");
   } else {
-    ls->pos.pending_dedents = (u16)(ls->pos.indent - level - 1);
-    ls->pos.indent = (u16)level;
+    ls->pos.pending_dedents = ls->pos.indent - level - 1;
+    ls->pos.indent = level;
     t->kind = TK_DEDENT;
     t->offset = (u32)(q - ls->buf);
   }
@@ -637,11 +637,10 @@ void lex_init(LexState* ls, Ctx* ctx, const char* filename, const u8* buf, size_
     return;                         \
   } while (0)
 
-#define OPEN(k)                                            \
-  do {                                                     \
-    if (++ls->pos.bracket_depth == 0)                      \
-      lex_error(ls, p, "Brackets are nested too deeply."); \
-    TOK(k, 1);                                             \
+#define OPEN(k)              \
+  do {                       \
+    ++ls->pos.bracket_depth; \
+    TOK(k, 1);               \
   } while (0)
 
 #define CLOSE(k)               \
@@ -852,7 +851,7 @@ void lex_rewind(LexState* ls, const LexPos* mark) {
 }
 
 // Fields added to LexPos also need to be compared below.
-static_assert(sizeof(LexPos) == 32, "unexpected LexPos size");
+static_assert(sizeof(LexPos) == 40, "unexpected LexPos size");
 
 bool lex_same_pos_for_testing(const LexState* ls, const LexPos* a, const LexPos* b) {
   if (a->p != b->p || a->indent != b->indent || a->pending_dedents != b->pending_dedents ||
