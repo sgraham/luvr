@@ -57,8 +57,6 @@ def is_imported(path):
 # test/*.luv and test/errors/todo/*.luv must parse. The todo/ tests are semantic
 # errors that the parser doesn't detect yet. test/syntax/*.luv and
 # test/errors/*.luv must fail with the error given in their CERR header.
-# test/todo/*.luv aren't run, because they use features that the parser doesn't
-# handle yet, such as comprehension loop variables used before their 'for'.
 # Files that start with '# IMPORTED' are only imported by other tests, so they
 # aren't run on their own.
 def run_tests():

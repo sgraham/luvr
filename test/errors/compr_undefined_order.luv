@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:35:    stuff = [undefined_a for x in undefined_b]
+# CERR: {ssss}                                        ^ error: Undefined reference to 'undefined_b'.
+def int main():
+    stuff = [undefined_a for x in undefined_b]
+    return 0
