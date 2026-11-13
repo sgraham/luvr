@@ -18,13 +18,16 @@ List{int} global_list = List{int}(.data=null, .len=0)
 on Pair{A, B} def A get_first(self):
     return self.first
 
-on List{T} def U map_len{U}(self, U seed):
-    return seed
-
 on List{T} foreign int raw_len(self)
 
 on List{E} def List{E} new(int cap):
     return List{E}(.data=null, .len=0)
+
+# A nested function sees its method's receiver type parameters.
+on List{T} def int count_nested(self):
+    def int g(T x, List{T} xs):
+        return xs.len
+    return g(self.data[0], self)
 
 # Builtin receivers are only valid in the module that defines builtin types.
 on []T def T first(self):
@@ -36,28 +39,15 @@ on {K}V def int count(self):
 on str def int byte_len(self):
     return len(self)
 
-def T max{T}(T a, T b):
-    if a > b:
-        return a
-    return b
-
-def swap{T}(*T a, *T b):
-    T tmp = a[0]
-    a[0] = b[0]
-    b[0] = tmp
-
-def List{T} make{T}(int n):
-    return List{T}(.data=null, .len=n)
-
-def mod.Box{T} boxed{T}(mod.Box{T} b, mod.Opt{List{T}} o):
+on List{T} def mod.Box{T} boxed(self, mod.Box{T} b, mod.Opt{List{T}} o):
     return b
 
 def main():
-    List{int} xs = make{int}(0)
+    List{int} xs = List{int}.new(0)
     *List{int} q = null
     x = 1
     y = 2
-    List{List{int}} xss = make{List{int}}(4)
+    List{List{int}} xss = List{List{int}}.new(4)
     Pair{int, str} p = Pair{int, str}(.first=1, .second="x")
     mod.Map{str, int} m = mod.new_map{str, int}()
     n = max(1, 2)
@@ -78,4 +68,3 @@ def main():
         2)
     if x < y:
         pass
-    swap{int}(&n, &k)

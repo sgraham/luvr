@@ -1,7 +1,0 @@
-# CRET: 1
-# CERR: {self}:7:27:on MyList{T} foreign int g{U}(self)
-# CERR: {ssss}                                ^ error: Foreign functions can't be generic.
-struct MyList{T}:
-    *T data
-
-on MyList{T} foreign int g{U}(self)

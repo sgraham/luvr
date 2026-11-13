@@ -1,5 +1,8 @@
 # CRET: 1
-# CERR: {self}:4:5:def U max{T}(T a):
-# CERR: {ssss}         ^ error: Undefined type parameter 'U'.
-def U max{T}(T a):
-    return a
+# CERR: {self}:7:18:on MyList{T} def U f(self):
+# CERR: {ssss}                       ^ error: Undefined type parameter 'U'.
+struct MyList{T}:
+    *T data
+
+on MyList{T} def U f(self):
+    pass

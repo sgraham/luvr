@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:29:on MyList{T} def int map_len{U}(self, U seed):
+# CERR: {ssss}                                  ^ error: Functions can't have type parameters, only structs.
+struct MyList{T}:
+    *T data
+
+on MyList{T} def int map_len{U}(self, U seed):
+    return 0

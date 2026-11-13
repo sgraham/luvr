@@ -60,15 +60,9 @@ struct Parser {
   // Names declared as globals by this file, so that Name.global can be
   // cleared at the end.
   VEC(NameId) globals;
-  // Bit c - 'A' is set for each type parameter declared by an enclosing
-  // {...} list.
+  // Bit c - 'A' is set for each type parameter declared by the current
+  // struct's list or method's receiver.
   u32 type_params;
-  // A function's return type comes before its type parameter list, so the
-  // type parameters it uses are recorded, along with where each was first
-  // used, and checked after the list.
-  bool in_return_type;
-  u32 return_type_params;
-  u32 return_type_param_at[26];
 };
 
 // The syntactical shape of parsing an expression. Used to decide whether
@@ -306,7 +300,7 @@ static void type_param(Parser* p) {
   next(p);
 }
 
-// type_params -> '{' TypeName {',' TypeName} '}'
+// type_params -> '{' TypeParam {',' TypeParam} '}'
 static void type_params(Parser* p) {
   u32 at = p->ls.pos.t.offset;
   next(p);  // '{'
@@ -333,34 +327,9 @@ static void qualified_type_rest(Parser* p) {
 static void check_type_param(Parser* p) {
   const Name* n = name_of(p, p->ls.pos.t.v.name);
   u32 i = (u32)(n->str[0] - 'A');
-  u32 bit = 1u << i;
-  if (p->in_return_type) {
-    if (!(p->return_type_params & bit)) {
-      p->return_type_params |= bit;
-      p->return_type_param_at[i] = p->ls.pos.t.offset;
-    }
-  } else if (!(p->type_params & bit)) {
+  if (!(p->type_params & (1u << i))) {
     error_at(p, p->ls.pos.t.offset, "Undefined type parameter '%c'.", 'A' + i);
   }
-}
-
-// Reports the first undeclared type parameter in the return type, in source
-// order.
-static void check_return_type_params(Parser* p) {
-  u32 undeclared = p->return_type_params & ~p->type_params;
-  p->return_type_params = 0;
-  if (!undeclared) {
-    return;
-  }
-  u32 first = 0;
-  u32 at = UINT32_MAX;
-  for (u32 i = 0; i < 26; ++i) {
-    if ((undeclared & (1u << i)) && p->return_type_param_at[i] < at) {
-      first = i;
-      at = p->return_type_param_at[i];
-    }
-  }
-  error_at(p, at, "Undefined type parameter '%c'.", 'A' + first);
 }
 
 static void check_type_name(Parser* p) {
@@ -1166,7 +1135,7 @@ static void suite(Parser* p) {
   }
 }
 
-// funcsig -> [type] name [type_params] '(' [param {',' param}] ')'
+// funcsig -> [type] name '(' [param {',' param}] ')'
 // param   -> type name | name    (bare name: a method's first parameter)
 //
 // The return type is optional, so after `def` a NAME is either the function
@@ -1177,10 +1146,9 @@ static void suite(Parser* p) {
 // A top-level function's name is a global, and a nested function's name is a
 // local of the enclosing function. The new function's scope is opened after
 // the name, and the return value is for func_close().
-static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
+static u32 funcsig(Parser* p, bool is_method) {
   NameId name = p->ls.pos.t.v.name;
   u32 at = p->ls.pos.t.offset;
-  p->in_return_type = true;
   if (T(p) == TK_NAME) {
     next(p);
     if (optional(p, TK_DOT)) {  // module.Type return type
@@ -1193,7 +1161,6 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
     }
     name = expect_name(p, "function name", &at);
   }
-  p->in_return_type = false;
   if (!is_method) {
     if (p->func_depth == 0) {
       declare_definition(p, name, at, GK_FUNC);
@@ -1201,14 +1168,10 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
       declare_if_new(p, name, at);
     }
   }
-  u32 outer = func_open(p);
   if (T(p) == TK_LBRACE) {
-    if (is_foreign) {
-      error_at(p, p->ls.pos.t.offset, "Foreign functions can't be generic.");
-    }
-    type_params(p);
+    error_at(p, p->ls.pos.t.offset, "Functions can't have type parameters, only structs.");
   }
-  check_return_type_params(p);
+  u32 outer = func_open(p);
 
   u32 lparen = p->ls.pos.t.offset;
   check(p, TK_LPAREN);
@@ -1242,13 +1205,10 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
 
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, bool is_method) {
-  // A nested function's type parameters are only in scope in its own body.
-  u32 type_params = p->type_params;
-  u32 outer = funcsig(p, is_method, /*is_foreign=*/false);
+  u32 outer = funcsig(p, is_method);
   check(p, TK_COLON);
   suite(p);
   func_close(p, outer);
-  p->type_params = type_params;
 }
 
 // stat -> 'if' expr ':' suite {'elif' expr ':' suite} ['else' ':' suite]
@@ -1409,7 +1369,7 @@ static void toplevel_stat(Parser* p) {
       next(p);
       receiver(p);
       if (optional(p, TK_FOREIGN)) {
-        func_close(p, funcsig(p, /*is_method=*/true, /*is_foreign=*/true));
+        func_close(p, funcsig(p, /*is_method=*/true));
         end_of_stat(p);
       } else {
         check(p, TK_DEF);
@@ -1431,7 +1391,7 @@ static void toplevel_stat(Parser* p) {
       return;
     case TK_FOREIGN:
       next(p);
-      func_close(p, funcsig(p, /*is_method=*/false, /*is_foreign=*/true));
+      func_close(p, funcsig(p, /*is_method=*/false));
       end_of_stat(p);
       return;
     case TK_IMPORT:

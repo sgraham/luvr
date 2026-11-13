@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:4:12:def int max{T}(T a, T b):
+# CERR: {ssss}                 ^ error: Functions can't have type parameters, only structs.
+def int max{T}(T a, T b):
+    return 0

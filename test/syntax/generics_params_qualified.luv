@@ -1,5 +1,5 @@
 # CRET: 1
-# CERR: {self}:4:11:def T max{mod.T}(T a):
-# CERR: {ssss}                ^ error: Expected type parameter (A-Z), found 'mod'.
-def T max{mod.T}(T a):
-    pass
+# CERR: {self}:4:12:struct Box{mod.T}:
+# CERR: {ssss}                 ^ error: Expected type parameter (A-Z), found 'mod'.
+struct Box{mod.T}:
+    int x

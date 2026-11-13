@@ -102,8 +102,8 @@ grammar is LL(1). The rest are local.
 | D18 | n/a | Guidance for future syntax, nothing to decide now. |
 | D19 | **decided** 2026-11-07 | D19a: trailing commas **only in list/dict literals** (not calls, params, or compound literals). D19b: **no** adjacent string concatenation. Section 9 rules 1–5 remain constraints on everything else. |
 | D20 | open | **Looping constructs.** No `while` keyword (removed from the lexer). Investigate a general `for` that covers `while`-style loops (e.g. `for cond:` vs. `for x in xs:`). Interesting for LL(1): after `for`, telling `NAME [, NAME] in` from a condition expression needs care, since a condition can also start with `NAME`. Options include parse-then-decide on `in`, as with D5's expdesc dispatch. |
-| D21 | **decided** 2026-11-08 (provisional), **revised** 2026-11-12 | Generics use `{}`: `List{int}`, `struct Pair{A, B}`, `def T max{T}(...)`, explicit `max{u64}(...)`, inferred by default. Monomorphized by re-parsing the body per instantiation. Revised: type parameters are exactly one capital letter (`[A-Z]`), and a single capital letter is always a type parameter, never a struct name. `{...}` lists are still required and give the order of explicit type arguments. A return type that uses parameters before `{T}` is checked afterwards with a 26-bit mask, so binding stays single-pass. Options explored (`<>`, `[]`, `'`, `!`, parameter placement, `$T`, alphabetical order) are recorded in D21, since the user may revisit this after writing generic code. |
-| D22 | **decided** 2026-11-08 | Methods (`on`): keyed on (generic type, name), no specialization, no methods on pointers, methods only in the receiver type's own module (builtin types: the prelude, D22a open), no free-function overloading. Static methods (`List{int}.new()`) and dunders as operator spellings. |
+| D21 | **decided** 2026-11-08 (provisional), **revised** 2026-11-12 | Generics use `{}`: `List{int}`, `struct Pair{A, B}`, `def T max{T}(...)`, explicit `max{u64}(...)`, inferred by default. Monomorphized by re-parsing the body per instantiation. Revised: type parameters are exactly one capital letter (`[A-Z]`), and a single capital letter is always a type parameter, never a struct name. `{...}` lists are still required and give the order of explicit type arguments. A return type that uses parameters before `{T}` is checked afterwards with a 26-bit mask, so binding stays single-pass. Options explored (`<>`, `[]`, `'`, `!`, parameter placement, `$T`, alphabetical order) are recorded in D21, since the user may revisit this after writing generic code. **Revised 2026-11-13:** no free generic functions. Type parameters only come from a struct's list or a method's receiver, so type arguments are never inferred from function arguments. Free generics can be added later without breaking anything. |
+| D22 | **decided** 2026-11-08 | Methods (`on`): keyed on (generic type, name), no specialization, no methods on pointers, methods only in the receiver type's own module (builtin types: the prelude, D22a open), no free-function overloading. Static methods (`List{int}.new()`) and dunders as operator spellings. A method is a free function with nicer syntax and a namespace: `xyz.f(5)` is `Xyz.f(&xyz, 5)`. |
 | D23 | **open** 2026-11-12, option B preferred | Arrays, lists and slices, and how their memory is managed. What `a = [1, 2, 3]` is, what `a[1:]` is, what a comprehension produces, and what the user has to do to free each of them. This affects literal typing, comprehensions (D10), `[]T`/`{K}V` (D21, D22a) and likely more syntax, so it's settled before further type work. Option A: lists in locals own a region, a current pool, copying results out of scratch blocks. **Option B (preferred):** one dynamically scoped current arena that every allocation goes into, `with Arena():` and `into a:` blocks, and opt-in storage annotations. Under B: literals are lists, slicing copies, comprehensions produce lists, views are deferred to a later `View{T}`/`Slice{T}` type. Strings are immutable `{ptr, len}` with a builder, structs are values, `[]T` is `*List{T}`, and `&Stuff(...)` allocates in the current arena. |
 
 ### D1 ★ Single-pass emit vs. building an AST
@@ -800,8 +800,8 @@ grammar:
 
 ### D21 Generics
 
-Scope: template-style generics only. Functions and structs can take type
-parameters. No constraints, no value parameters (`Array{int, 4}`), no
+Scope: template-style generics only. Structs take type parameters, and
+methods use their receiver's (see the 2026-11-13 revision). No constraints, no value parameters (`Array{int, 4}`), no
 specialization. Each distinct instantiation is monomorphized once, on first
 use. The body is parsed once at the definition without emitting anything, so
 syntax errors are reported at the definition. Each instantiation then rewinds
@@ -846,16 +846,13 @@ struct Pair{A, B}:
     A first
     B second
 
-def T max{T}(T a, T b):
-    ...
-
 List{[]int} xs = ...
 p = Pair{int, str}(.first=1, .second="x")
-n = max(a, b)               # type arguments inferred from the arguments
-n = max{u64}(a, b)          # explicit, e.g. a u32 and a u64 argument
-f = max{int}                # function value
 on Pair{A, B} def A first(self): ...
 ```
+
+Generic functions (`def T max{T}(...)`, `max{u64}(a, b)`, `f = max{int}`)
+were in the original decision, and were removed on 2026-11-13.
 
 Why it's LL(1): a `{` can't otherwise follow a name, a field or a type,
 because dict literals and the `{K}V` dict type only appear at the start of an
@@ -896,7 +893,49 @@ letter is always a type parameter. Struct names need at least two letters
 - Single capitals are currently `TK_TYPENAME`, not constants, so no constant
   spellings are lost. No test here or in luv60 has a single-letter struct.
 
-Rules in the prototype:
+**Revised (2026-11-13): no free generic functions.** A method is a free
+function with nicer syntax and a namespace, nothing more: `xyz.f(5)` is
+`Xyz.f(&xyz, 5)`, and `Xyz{int}.f` is a nicer spelling of a mangled
+`Xyz$int$_f`. So a method on a generic struct already is a generic
+function, and instantiating its body is the same work as instantiating a
+free generic function. What this revision restricts is where type
+arguments come from.
+
+- Type parameters are only declared by a struct's list
+  (`struct Pair{A, B}`) or a method's receiver (`on List{T}`). Functions
+  and methods have no list of their own. A method's type parameters are
+  exactly its receiver's: `on List{T} def append{T}(...)` would be a
+  redundant second list, and `on List{T} def map{U}(...)` adds a parameter
+  the receiver can't supply, which makes it a free generic function again.
+- So type arguments are never inferred from function arguments. In
+  `xs.append(1)`, `T` is read off the declared type of `xs` (`List{int}`,
+  or `*List{int}` for `[]int`), which is a one-sided structural match. In
+  `List{int}.new(5)` they're written on the type. This removes inference
+  across arguments, literals taking their type from the other arguments
+  (`max(x, 1)`), and the error for mismatched concrete types.
+- Type arguments only follow a type: `{` after a name or a value in
+  `postfix()` is an error, so `max{u64}(...)` and `f = max{int}` are gone.
+- A method's return type comes after its receiver, so type parameters are
+  always declared before they're used, and the 26-bit return type mask
+  described above isn't needed.
+- Instantiation is unchanged: method bodies are still re-parsed per
+  instantiation, queued to the end of the current top-level item, and the
+  cross-module problem is still open. It matters early, because the most
+  used generic methods are in the prelude (`[]T` is `*List{T}`).
+- Lost: functions with no natural receiver. `max`/`min` can be builtins,
+  or methods on the builtin types in the prelude (`a.min(b)`, D22a).
+  `sort(xs)` becomes `xs.sort()`, `make{T}(n)` becomes `List{T}.new(n)`,
+  and comprehensions cover most of `map`/`filter`. `swap{T}(*T, *T)` and
+  helpers that span two generic types (`zip` over `List{A}` and `List{B}`)
+  have no good form, and need concrete versions.
+- Adding free generic functions back later doesn't break any code. The
+  next step would be free generic functions that always take explicit type
+  arguments (`swap{int}(&a, &b)`), which still needs no inference, but
+  brings back `{` after a name in `postfix()`. Inference would come after
+  that, if it's needed.
+
+Rules in the prototype (the parts about function lists, the return type
+mask and call-site inference are superseded by the 2026-11-13 revision):
 
 - Type parameters (`struct Pair{A, B}`, `def T max{T}`) must be single
   capital letters (see the revision above). Builtins, longer type names and
@@ -916,7 +955,8 @@ Rules in the prototype:
   Pair{int, int}` (specialization) is allowed, and whether a type argument
   can be inferred from the expected type (`List{int} xs = make()`), which a
   single pass does know first.
-- Open (2026-11-12): an error for unused type parameters. In a function's
+- Open (2026-11-12, mostly moot since 2026-11-13, when functions lost
+  their own lists): an error for unused type parameters. In a function's
   own list (`def f{T}()` with no `T` in the return type, parameters or
   body), every instantiation is the same code and `T` can't be inferred, so
   it's probably a leftover. It would be checked at `func_close()` with a
@@ -1030,14 +1070,15 @@ Decided (2026-11-08):
   therefore also only defined with the type, so a module can't change how
   another module's type prints. `memfn_on_basic_type.luv` (a method on
   `int` in user code) was removed.
-- **No free-function overloading.** Generic functions cover "same code, many
-  types", methods cover "different code per type". Method names don't enter
+- **No free-function overloading.** Methods on a generic struct cover
+  "same code, many types", and methods on different types cover "different
+  code per type". Method names don't enter
   module scope, so a free `free` and a method `Stuff.free` coexist
   (`memfn_shadow_foreign_name.luv`).
 - **Static methods**: a method whose first parameter isn't a bare name has no
   `self`. `on List{T} def List{T} new(int cap)` is called as
-  `List{int}.new(4)`. This is also how a generic function whose type
-  arguments can't be inferred gets called.
+  `List{int}.new(4)`. This is how a function that would have been a free
+  generic function is written (D21, 2026-11-13).
 - **Operators** on structs map to dunder methods (`<` to `__lt__`) through
   the same lookup. That's a spelling for `<` on that type, not overloading.
 - **Errors inside instantiations** must stay readable. Report the error in
@@ -1071,6 +1112,12 @@ either, and provide free functions instead. If `[]T` and `{K}V` are later
 replaced by generic structs (`List{T}`, `Dict{K, V}`, see D21), those become
 ordinary structs defined in the prelude, and only true primitives (`int`,
 `str`, ...) are left needing the special case.
+
+Methods on primitives are one definition per type, because `on T` isn't a
+receiver: `on int def int min(self, int b)`, `on u64 def u64 min(...)` and
+so on, in the prelude. `a.min(b)` and `(3).min(b)` parse already. The
+static form `int.min(a, b)` doesn't, because a builtin type can't start an
+expression.
 
 ### D23 Arrays, lists and slices (open)
 
@@ -1501,7 +1548,7 @@ toplevel_stat -> funcdef
                | simple_stat end                 # global decls / `X = const`
 
 funcdef       -> DEF funcsig ':' suite
-funcsig       -> [ type ] NAME [ type_params ] '(' [ param { ',' param } ] ')'
+funcsig       -> [ type ] NAME '(' [ param { ',' param } ] ')'
                  # [type] is decided by TYPESTART vs NAME: LL(1) via D4
 param         -> type NAME | NAME                # bare NAME: `self` only
 field         -> type NAME [ '=' expr ] end
@@ -1538,7 +1585,7 @@ type          -> '*' type
                | TYPENAME [ type_args ] | NAME '.' TYPENAME [ type_args ]
                | TYPEOF '(' expr ')'
 type_args     -> '{' type { ',' type } '}'       # D21
-type_params   -> '{' TYPENAME { ',' TYPENAME } '}'
+type_params   -> '{' TYPEPARAM { ',' TYPEPARAM } '}'
 
 expr          -> subexpr(-1)                    # Lua 4 precedence climbing, D8
 primary       -> NUMBER | string | TRUE | FALSE | NULL
@@ -1552,7 +1599,7 @@ primary       -> NUMBER | string | TRUE | FALSE | NULL
 string        -> STRING
                | STRING_BEGIN expr { STRING_MID expr } STRING_END   # D13 \( )
 postfix       -> { '.' NAME | '.' TYPENAME | '[' slice_or_index ']' | '(' args ')'
-                 | type_args }                  # after a name, lvalue or type (D21)
+                 | type_args }                  # only after a type (D21)
 args          -> [ arg { ',' arg } ]
 arg           -> '.' NAME '=' expr | expr       # designator, D9
 ```

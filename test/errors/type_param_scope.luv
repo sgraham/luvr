@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:8:5:    T x
+# CERR: {ssss}         ^ error: Undefined type parameter 'T'.
+struct MyList{T}:
+    *T data
+
+def f():
+    T x

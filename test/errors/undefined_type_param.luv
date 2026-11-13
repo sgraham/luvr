@@ -1,5 +1,8 @@
 # CRET: 1
-# CERR: {self}:4:10:def f{T}(U x):
-# CERR: {ssss}               ^ error: Undefined type parameter 'U'.
-def f{T}(U x):
+# CERR: {self}:7:26:on MyList{T} def f(self, U x):
+# CERR: {ssss}                               ^ error: Undefined type parameter 'U'.
+struct MyList{T}:
+    *T data
+
+on MyList{T} def f(self, U x):
     pass
