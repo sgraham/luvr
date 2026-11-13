@@ -63,9 +63,12 @@ struct Parser {
   // Bit c - 'A' is set for each type parameter declared by an enclosing
   // {...} list.
   u32 type_params;
-  // A function's return type comes before its type parameter list, so it
-  // can't be checked where it's parsed.
+  // A function's return type comes before its type parameter list, so the
+  // type parameters it uses are recorded, along with where each was first
+  // used, and checked after the list.
   bool in_return_type;
+  u32 return_type_params;
+  u32 return_type_param_at[26];
 };
 
 // The syntactical shape of parsing an expression. Used to decide whether
@@ -329,14 +332,38 @@ static void qualified_type_rest(Parser* p) {
 // A type name that's a single capital letter is a type parameter.
 static void check_type_param(Parser* p) {
   const Name* n = name_of(p, p->ls.t.v.name);
-  // TODO: check the return type's parameters after the list.
-  if (n->len != 1 || p->in_return_type) {
+  if (n->len != 1) {
     return;
   }
-  if (!(p->type_params & (1u << (n->str[0] - 'A')))) {
-    error_at(p, p->ls.t.offset, "Undefined type parameter '%.*s'.", (int)n->len,
-             (const char*)n->str);
+  u32 i = (u32)(n->str[0] - 'A');
+  u32 bit = 1u << i;
+  if (p->in_return_type) {
+    if (!(p->return_type_params & bit)) {
+      p->return_type_params |= bit;
+      p->return_type_param_at[i] = p->ls.t.offset;
+    }
+  } else if (!(p->type_params & bit)) {
+    error_at(p, p->ls.t.offset, "Undefined type parameter '%c'.", 'A' + i);
   }
+}
+
+// Reports the first undeclared type parameter in the return type, in source
+// order.
+static void check_return_type_params(Parser* p) {
+  u32 undeclared = p->return_type_params & ~p->type_params;
+  p->return_type_params = 0;
+  if (!undeclared) {
+    return;
+  }
+  u32 first = 0;
+  u32 at = UINT32_MAX;
+  for (u32 i = 0; i < 26; ++i) {
+    if ((undeclared & (1u << i)) && p->return_type_param_at[i] < at) {
+      first = i;
+      at = p->return_type_param_at[i];
+    }
+  }
+  error_at(p, at, "Undefined type parameter '%c'.", 'A' + first);
 }
 
 static void type(Parser* p) {
@@ -1119,6 +1146,7 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
     }
     type_params(p);
   }
+  check_return_type_params(p);
 
   u32 lparen = p->ls.t.offset;
   check(p, TK_LPAREN);

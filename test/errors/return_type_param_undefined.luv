@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:4:5:def U max{T}(T a):
+# CERR: {ssss}         ^ error: Undefined type parameter 'U'.
+def U max{T}(T a):
+    return a

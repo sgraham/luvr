@@ -841,6 +841,17 @@ Rules in the prototype:
   Pair{int, int}` (specialization) is allowed, and whether a type argument
   can be inferred from the expected type (`List{int} xs = make()`), which a
   single pass does know first.
+- Open (2026-11-12): an error for unused type parameters. In a function's
+  own list (`def f{T}()` with no `T` in the return type, parameters or
+  body), every instantiation is the same code and `T` can't be inferred, so
+  it's probably a leftover. It would be checked at `func_close()` with a
+  mask of the parameters used, next to the declared mask. A use in a nested
+  function counts for the enclosing one, and a use only in the return type
+  (`def List{T} make{T}(int n)`) counts. A method's receiver list is exempt,
+  because it mirrors the struct's and most methods don't need every
+  parameter. A struct's list is exempt too, because an unused parameter
+  makes a tag type: `struct Id{T}: int value` gives `Id{User}` and
+  `Id{Order}` as distinct types with the same layout.
 
 Known wart: braces now mean both generics and dicts. `{K}V` inside type
 arguments reads badly: `List{{str}int}`. The user's inclination is to later
