@@ -1,5 +1,8 @@
 # CRET: 1
-# CERR: {self}:4:9:on List{int} def int f(self):
-# CERR: {ssss}             ^ error: Methods can't be defined for specific type arguments.
-on List{int} def int f(self):
+# CERR: {self}:7:11:on MyList{int} def int f(self):
+# CERR: {ssss}                ^ error: Methods can't be defined for specific type arguments.
+struct MyList{T}:
+    *T data
+
+on MyList{int} def int f(self):
     return 0

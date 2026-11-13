@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:4:4:on Blorp def int f(self):
+# CERR: {ssss}        ^ error: Undefined type 'Blorp'.
+on Blorp def int f(self):
+    return 1

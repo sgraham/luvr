@@ -1302,6 +1302,7 @@ static void receiver(Parser* p) {
   u32 at = p->ls.t.offset;
   switch (T(p)) {
     case TK_TYPENAME:
+      check_type_name(p);
       next(p);
       if (T(p) == TK_LBRACE) {
         u32 brace = p->ls.t.offset;
