@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:12:    x = max{int}(a, b)
+# CERR: {ssss}                 ^ error: Type arguments can only follow a type name.
+def f(int a, int b):
+    x = max{int}(a, b)

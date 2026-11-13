@@ -1,5 +1,5 @@
 # CRET: 1
-# CERR: {self}:5:13:    x = [a {1: 2}]
-# CERR: {ssss}                  ^ error: Expected type, found number.
+# CERR: {self}:5:12:    x = [a {1: 2}]
+# CERR: {ssss}                 ^ error: Type arguments can only follow a type name.
 def f(int a):
     x = [a {1: 2}]

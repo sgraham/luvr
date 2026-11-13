@@ -820,9 +820,9 @@ static void index_or_slice(Parser* p, Shape* sh) {
 //            | type_args }
 //
 // A '{' can't otherwise follow a name or type, because a dict literal can only
-// be at the start of an expression. So it always opens type arguments, both
-// for a generic type (Pair{int, str}) and for explicitly instantiating a
-// generic function (max{u64}).
+// be at the start of an expression. So after a type it opens type arguments
+// (Pair{int, str}). Only structs have type parameters, so after a name it's an
+// error.
 static void postfix(Parser* p, Shape* sh) {
   for (;;) {
     switch (T(p)) {
@@ -853,13 +853,14 @@ static void postfix(Parser* p, Shape* sh) {
         break;
       }
       case TK_LBRACE:
-        if (*sh != SH_TYPE && *sh != SH_NAME && *sh != SH_LVALUE) {
+        if (*sh == SH_NAME || *sh == SH_LVALUE) {
+          error_at(p, p->ls.pos.t.offset, "Type arguments can only follow a type name.");
+        }
+        if (*sh != SH_TYPE) {
           return;
         }
         type_args(p);
-        if (*sh != SH_TYPE) {
-          *sh = SH_VALUE;
-        } else if (T(p) == TK_LBRACE) {
+        if (T(p) == TK_LBRACE) {
           error_at(p, p->ls.pos.t.offset, "Type arguments were given twice.");
         }
         break;

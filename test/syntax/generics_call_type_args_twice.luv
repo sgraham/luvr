@@ -1,5 +1,0 @@
-# CRET: 1
-# CERR: {self}:5:17:    x = max{int}{int}(1)
-# CERR: {ssss}                      ^ error: Expected end of line, found '{'.
-def f():
-    x = max{int}{int}(1)

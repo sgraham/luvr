@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:8:    a.b{int}(0)
+# CERR: {ssss}            ^ error: Type arguments can only follow a type name.
+def f(int a):
+    a.b{int}(0)
