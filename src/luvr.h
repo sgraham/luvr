@@ -176,6 +176,7 @@ void* vec_grow_(Ctx* ctx, void* v, u32* cap, size_t need, size_t elem_size);
   X(DEDENT, "<dedent>")             \
   X(NAME, "<name>")                 \
   X(TYPENAME, "<typename>")         \
+  X(TYPEPARAM, "<typeparam>")       \
   X(INTLIT, "<int>")                \
   X(FLOATLIT, "<float>")            \
   X(STRING, "<string>")             \
@@ -406,7 +407,7 @@ struct Token {
   union {
     u64 i;        // kind=INTLIT (always unsigned, sign comes from unary minus)
     double f;     // kind=FLOATLIT
-    NameId name;  // kind=NAME/TYPENAME/keywords
+    NameId name;  // kind=NAME/TYPENAME/TYPEPARAM/keywords
     u32 len;      // kind=STRING* and flags !TF_ESCAPED: byte length of content slice
     u32 str;      // kind=STRING* and flags TF_ESCAPED: index into Ctx.strs
   } v;
@@ -420,7 +421,7 @@ static_assert(sizeof(Token) == 16, "unexpected Token size");
 struct Name {
   const u8* str;  // points into a source buffer (or static, for keywords)
   u32 len;
-  u8 kind;          // TK_NAME, TK_TYPENAME, or a keyword kind
+  u8 kind;          // TK_NAME, TK_TYPENAME, TK_TYPEPARAM, or a keyword kind
   bool is_const;    // kind=TK_NAME: an ALL_CAPS constant
   u8 global;        // parser: kind of global in the file being parsed, or 0
   bool is_builtin;  // kind=TK_NAME: a builtin function such as len

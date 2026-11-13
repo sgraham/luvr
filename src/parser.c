@@ -104,6 +104,9 @@ static void next(Parser* p) {
 static const char* describe(Parser* p, char* buf, size_t size) {
   const Token* t = &p->ls.t;
   switch (t->kind) {
+    case TK_TYPEPARAM:
+      snprintf(buf, size, "type parameter '%c'", lex_name(p->ls.ctx, t->v.name)->str[0]);
+      return buf;
     case TK_NAME:
     case TK_TYPENAME: {
       const Name* n = lex_name(p->ls.ctx, t->v.name);
@@ -254,8 +257,8 @@ static bool is_builtin_type(TokenKind kind) {
 // can start a type too (module.Type), but that case is handled by parsing the
 // postfix chain first.
 static bool is_type_start(TokenKind kind) {
-  return is_builtin_type(kind) || kind == TK_TYPENAME || kind == TK_STAR || kind == TK_LSQUARE ||
-         kind == TK_LBRACE || kind == TK_TYPEOF;
+  return is_builtin_type(kind) || kind == TK_TYPENAME || kind == TK_TYPEPARAM || kind == TK_STAR ||
+         kind == TK_LSQUARE || kind == TK_LBRACE || kind == TK_TYPEOF;
 }
 
 // A simple statement ends at a NEWLINE, which it consumes, or at a DEDENT or
@@ -295,7 +298,7 @@ static void type_args(Parser* p) {
 }
 
 static void type_param(Parser* p) {
-  if (T(p) != TK_TYPENAME || name_of(p, p->ls.t.v.name)->len != 1) {
+  if (T(p) != TK_TYPEPARAM) {
     error_expected(p, "type parameter (A-Z)");
   }
   p->type_params |= 1u << (name_of(p, p->ls.t.v.name)->str[0] - 'A');
@@ -326,12 +329,8 @@ static void qualified_type_rest(Parser* p) {
   }
 }
 
-// A type name that's a single capital letter is a type parameter.
 static void check_type_param(Parser* p) {
   const Name* n = name_of(p, p->ls.t.v.name);
-  if (n->len != 1) {
-    return;
-  }
   u32 i = (u32)(n->str[0] - 'A');
   u32 bit = 1u << i;
   if (p->in_return_type) {
@@ -384,8 +383,11 @@ static void type(Parser* p) {
       check_match(p, TK_RBRACE, TK_LBRACE, at);
       type(p);
       return;
-    case TK_TYPENAME:
+    case TK_TYPEPARAM:
       check_type_param(p);
+      next(p);
+      return;
+    case TK_TYPENAME:
       next(p);
       if (T(p) == TK_LBRACE) {
         type_args(p);
@@ -733,7 +735,7 @@ static void sizeof_operand(Parser* p) {
   TokenKind k = T(p);
   if (is_builtin_type(k) || k == TK_STAR || k == TK_LSQUARE || k == TK_LBRACE || k == TK_TYPEOF) {
     type(p);
-  } else if (k == TK_NAME || k == TK_TYPENAME) {
+  } else if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
     Shape sh;
     primary(p, &sh);
     if (sh != SH_TYPE) {
@@ -871,8 +873,12 @@ static void primary(Parser* p, Shape* sh) {
       *sh = SH_NAME;
       break;
     }
-    case TK_TYPENAME:
+    case TK_TYPEPARAM:
       check_type_param(p);
+      next(p);
+      *sh = SH_TYPE;
+      break;
+    case TK_TYPENAME:
       next(p);
       *sh = SH_TYPE;
       break;
@@ -950,7 +956,7 @@ static bool is_augassign(TokenKind kind) {
 static void decl_or_expr_stat(Parser* p, bool toplevel) {
   TokenKind k = T(p);
   u32 at = p->ls.t.offset;
-  if (k == TK_NAME || k == TK_TYPENAME) {
+  if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
     NameId name = p->ls.t.v.name;
     Shape sh;
     primary(p, &sh);
@@ -1277,7 +1283,7 @@ static void struct_body(Parser* p) {
 // no methods on pointers, because '.' auto-dereferences, and so p.f() would be
 // ambiguous.
 static void receiver_param(Parser* p) {
-  if (is_type_start(T(p)) && T(p) != TK_TYPENAME) {
+  if (is_type_start(T(p)) && T(p) != TK_TYPEPARAM) {
     error_at(p, p->ls.t.offset, "Methods can't be defined for specific type arguments.");
   }
   type_param(p);
@@ -1354,10 +1360,6 @@ static void toplevel_stat(Parser* p) {
       next(p);
       if (T(p) != TK_TYPENAME) {
         error_expected(p, "struct name (a TypeName)");
-      }
-      if (name_of(p, p->ls.t.v.name)->len == 1) {
-        error_at(p, p->ls.t.offset, "Expected struct name, found type parameter '%c'.",
-                 name_of(p, p->ls.t.v.name)->str[0]);
       }
       declare_definition(p, p->ls.t.v.name, p->ls.t.offset, GK_TYPE);
       next(p);

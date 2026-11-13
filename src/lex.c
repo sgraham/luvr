@@ -80,13 +80,17 @@ static u64 hash_ident_safe(const char* s, u32 len) {
 }
 
 // Types are recognized lexically, so the parser never needs a symbol table
-// to tell `Stuff s` from `stuff(s)`. After any leading underscores, an
-// identifier is a type if it's a single capital letter, or starts with a
-// capital and contains a lowercase letter. Everything else (lowercase first
-// letter, ALL_CAPS constants, only underscores) is a name. The kind is stored
-// in the Name, so this is only done once per distinct identifier.
+// to tell `Stuff s` from `stuff(s)`. A single capital letter is a type
+// parameter. Otherwise, after any leading underscores, an identifier is a type
+// if it's a single capital letter, or starts with a capital and contains a
+// lowercase letter. Everything else (lowercase first letter, ALL_CAPS
+// constants, only underscores) is a name. The kind is stored in the Name, so
+// this is only done once per distinct identifier.
 static TokenKind classify_ident(const u8* s, u32 len, bool* is_const) {
   *is_const = false;
+  if (len == 1 && IS(s[0], C_UPPER)) {
+    return TK_TYPEPARAM;
+  }
   u32 i = 0;
   while (i < len && s[i] == '_') {
     ++i;

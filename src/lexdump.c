@@ -63,7 +63,8 @@ static void dump_token(const LexState* ls, u32 line, u32 col) {
   printf("%u:%u\t%s", line, col, tok_kind_name(t->kind));
   switch (t->kind) {
     case TK_NAME:
-    case TK_TYPENAME: {
+    case TK_TYPENAME:
+    case TK_TYPEPARAM: {
       const Name* n = lex_name(ls->ctx, t->v.name);
       printf("\t%.*s", (int)n->len, (const char*)n->str);
       break;
