@@ -1355,6 +1355,10 @@ static void toplevel_stat(Parser* p) {
       if (T(p) != TK_TYPENAME) {
         error_expected(p, "struct name (a TypeName)");
       }
+      if (name_of(p, p->ls.t.v.name)->len == 1) {
+        error_at(p, p->ls.t.offset, "Expected struct name, found type parameter '%c'.",
+                 name_of(p, p->ls.t.v.name)->str[0]);
+      }
       declare_definition(p, p->ls.t.v.name, p->ls.t.offset, GK_TYPE);
       next(p);
       if (T(p) == TK_LBRACE) {

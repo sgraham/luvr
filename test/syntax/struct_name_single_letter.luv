@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:4:8:struct T:
+# CERR: {ssss}            ^ error: Expected struct name, found type parameter 'T'.
+struct T:
+    int x
