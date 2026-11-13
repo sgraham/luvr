@@ -49,20 +49,29 @@ def expected_error(path):
     return f"{path}:{loc.group(1)}:{loc.group(2)}: {msg.group(1)}"
 
 
+def is_imported(path):
+    with open(path, encoding="utf-8") as f:
+        return f.readline().startswith("# IMPORTED")
+
+
 # test/*.luv and test/errors/todo/*.luv must parse. The todo/ tests are semantic
 # errors that the parser doesn't detect yet. test/syntax/*.luv and
 # test/errors/*.luv must fail with the error given in their CERR header.
 # test/todo/*.luv aren't run, because they use features that the parser doesn't
 # handle yet, such as comprehension loop variables used before their 'for'.
+# Files that start with '# IMPORTED' are only imported by other tests, so they
+# aren't run on their own.
 def run_tests():
     exe = os.path.join("out", "parsecheck.exe" if sys.platform == "win32" else "parsecheck")
     failures = []
     paths = sorted(glob.glob("test/*.luv") + glob.glob("test/errors/todo/*.luv"))
+    paths = [p for p in paths if not is_imported(p)]
     for path in paths:
         r = subprocess.run([exe, "-q", path], capture_output=True, text=True)
         if r.returncode != 0:
             failures.append(f"{path}: expected to parse\n  got: {r.stderr.strip()}")
     syntax = sorted(glob.glob("test/syntax/*.luv") + glob.glob("test/errors/*.luv"))
+    syntax = [p for p in syntax if not is_imported(p)]
     for path in syntax:
         want = expected_error(path)
         if want is None:
