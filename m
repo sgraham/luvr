@@ -83,6 +83,13 @@ def run_tests():
             failures.append(f"{path}: expected an error, but it parsed\n  want: {want}")
         elif got != want:
             failures.append(f"{path}: wrong error\n  want: {want}\n   got: {got}")
+    # Rewinding the lexer and lexing again must reach the same state. All of the
+    # test files lex without error, including those in todo/.
+    lexdump = os.path.join("out", "lexdump.exe" if sys.platform == "win32" else "lexdump")
+    rewind = sorted(glob.glob("test/**/*.luv", recursive=True))
+    r = subprocess.run([lexdump, "-r"] + rewind, capture_output=True, text=True)
+    if r.returncode != 0:
+        failures.append(f"lexdump -r: rewind check failed\n  got: {r.stderr.strip()}")
     for f in failures:
         print(f)
     total = len(paths) + len(syntax)
@@ -109,6 +116,11 @@ def main():
     rc = subprocess.call(cmd, cwd=cwd)
     if rc:
         sys.exit(rc)
+    if args.action == "test":
+        cmd, cwd = commands(args, "lexdump")
+        rc = subprocess.call(cmd, cwd=cwd)
+        if rc:
+            sys.exit(rc)
     if args.action == "test" and not run_tests():
         sys.exit(1)
 

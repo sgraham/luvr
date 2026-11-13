@@ -1,5 +1,7 @@
 // Driver for lex.c.
 //   lexdump -d file...   dump tokens (line:col kind payload)
+//   lexdump -r file...   check that rewinding the lexer at each open bracket
+//                        and lexing again reaches the same state
 //   lexdump file...      count tokens and time lexing (no dump)
 
 #include "luvr.h"
@@ -94,9 +96,41 @@ static void dump_token(const LexState* ls, u32 line, u32 col) {
   putchar('\n');
 }
 
+static void lex_past_close(LexState* ls, u16 depth) {
+  for (;;) {
+    lex_next(ls);
+    if (ls->bracket_depth < depth || ls->t.kind == TK_EOS) {
+      break;
+    }
+  }
+}
+
+// ls has just opened a bracket. It's rewound to there afterwards so that the
+// brackets nested inside are also checked.
+static void check_rewind(LexState* ls) {
+  u16 depth = ls->bracket_depth;
+  LexState mark, first;
+  lex_mark(ls, &mark);
+  lex_past_close(ls, depth);
+  lex_mark(ls, &first);
+  lex_rewind(ls, &mark);
+  lex_past_close(ls, depth);
+  if (!lex_same_state_for_testing(ls, &first)) {
+    ctx_error(ls->ctx, ls->filename, ls->buf, mark.t.offset,
+              "Lexing again after rewinding gave a different state.");
+  }
+  lex_rewind(ls, &mark);
+}
+
+typedef enum Mode {
+  MODE_TIME,
+  MODE_DUMP,
+  MODE_REWIND,
+} Mode;
+
 static int run_file(Ctx* ctx,
                     const char* path,
-                    bool dump,
+                    Mode mode,
                     u64* total_tokens,
                     size_t* total_bytes,
                     double* total_time) {
@@ -120,7 +154,7 @@ static int run_file(Ctx* ctx,
   }
   double t0 = now_sec();
   lex_init(&ls, ctx, path, buf, len);
-  if (dump) {
+  if (mode == MODE_DUMP) {
     // Token offsets only increase, so line and column are tracked
     // incrementally.
     u32 line = 1, last = 0;
@@ -137,6 +171,18 @@ static int run_file(Ctx* ctx,
       dump_token(&ls, line, (u32)(buf + ls.t.offset - bol) + 1);
       if (ls.t.kind == TK_EOS) {
         break;
+      }
+    }
+  } else if (mode == MODE_REWIND) {
+    for (;;) {
+      u16 depth = ls.bracket_depth;
+      lex_next(&ls);
+      ++ntok;
+      if (ls.t.kind == TK_EOS) {
+        break;
+      }
+      if (ls.bracket_depth > depth) {
+        check_rewind(&ls);
       }
     }
   } else {
@@ -157,14 +203,17 @@ static int run_file(Ctx* ctx,
 }
 
 int main(int argc, char** argv) {
-  bool dump = false;
+  Mode mode = MODE_TIME;
   int first = 1;
   if (argc > 1 && strcmp(argv[1], "-d") == 0) {
-    dump = true;
+    mode = MODE_DUMP;
+    first = 2;
+  } else if (argc > 1 && strcmp(argv[1], "-r") == 0) {
+    mode = MODE_REWIND;
     first = 2;
   }
   if (first >= argc) {
-    fprintf(stderr, "usage: lexdump [-d] file...\n");
+    fprintf(stderr, "usage: lexdump [-d|-r] file...\n");
     return 2;
   }
   Ctx ctx;
@@ -177,9 +226,9 @@ int main(int argc, char** argv) {
   double secs = 0;
   int failures = 0;
   for (int i = first; i < argc; ++i) {
-    failures += run_file(&ctx, argv[i], dump, &ntok, &nbytes, &secs);
+    failures += run_file(&ctx, argv[i], mode, &ntok, &nbytes, &secs);
   }
-  if (!dump) {
+  if (mode != MODE_DUMP) {
     fprintf(stderr, "%llu tokens, %.1f MB, %u names, %.3f s (%.0f MB/s, %.1f Mtok/s)\n",
             (unsigned long long)ntok, (double)nbytes / 1e6, ctx.names.num, secs,
             secs > 0 ? (double)nbytes / 1e6 / secs : 0.0,

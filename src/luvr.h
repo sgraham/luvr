@@ -168,7 +168,8 @@ void* vec_grow_(Ctx* ctx, void* v, u32* cap, size_t need, size_t elem_size);
 // - TY(name, spelling) for builtin type keywords
 //
 // Note: builtin types are [TK_FIRST_TYPE..TK_LAST_TYPE] (so have to be
-// contiguous) for comparisons in the parser.
+// contiguous) for comparisons in the parser. Keywords and builtin types are
+// last, starting at TK_FIRST_KEYWORD.
 #define LEX_TOKENS(X, KW, TY)       \
   X(EOS, "<eof>")                   \
   X(NEWLINE, "<newline>")           \
@@ -281,6 +282,7 @@ typedef enum TokenKind {
   LEX_TOKENS(LEX_ENUM_, LEX_ENUM_, LEX_ENUM_)
 #undef LEX_ENUM_
   TK_NUM_KINDS,
+  TK_FIRST_KEYWORD = TK_ALIGNOF,
   TK_FIRST_TYPE = TK_BOOL,
   TK_LAST_TYPE = TK_UINT,
 } TokenKind;
@@ -455,6 +457,17 @@ struct LexState {
 void lex_init(LexState* ls, Ctx* ctx, const char* filename, const u8* buf, size_t len);
 
 void lex_next(LexState* ls);
+
+// A checkpoint is a copy of the whole LexState, so all lexer state must be in
+// LexState. The tables in Ctx that the lexer adds to aren't restored. Re-lexing
+// a name gives the same NameId, but re-lexing an escaped string adds a
+// duplicate to Ctx.strs.
+void lex_mark(const LexState* ls, LexState* mark);
+void lex_rewind(LexState* ls, const LexState* mark);
+
+// Whether a and b are at the same place with the same current token. Escaped
+// strings are compared by content, because re-lexing one gives it a new index.
+bool lex_same_state_for_testing(const LexState* a, const LexState* b);
 
 const char* tok_kind_name(TokenKind kind);
 

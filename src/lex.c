@@ -840,3 +840,54 @@ void lex_next(LexState* ls) {
     }
   }
 }
+
+// Checkpoints
+
+void lex_mark(const LexState* ls, LexState* mark) {
+  *mark = *ls;
+}
+
+void lex_rewind(LexState* ls, const LexState* mark) {
+  *ls = *mark;
+}
+
+// Only the union member that the kind uses is compared, because the rest is
+// left over from earlier tokens.
+static bool same_token_for_testing(const LexState* a, const LexState* b) {
+  const Token* ta = &a->t;
+  const Token* tb = &b->t;
+  if (ta->kind != tb->kind || ta->flags != tb->flags || ta->offset != tb->offset) {
+    return false;
+  }
+  switch (ta->kind) {
+    case TK_NAME:
+    case TK_TYPENAME:
+    case TK_TYPEPARAM:
+      return ta->v.name.idx == tb->v.name.idx;
+    case TK_INTLIT:
+    case TK_FLOATLIT:
+      return ta->v.i == tb->v.i;
+    case TK_STRING:
+    case TK_STRING_BEGIN:
+    case TK_STRING_MID:
+    case TK_STRING_END: {
+      u32 alen, blen;
+      const u8* as = lex_str(a, ta, &alen);
+      const u8* bs = lex_str(b, tb, &blen);
+      return alen == blen && memcmp(as, bs, alen) == 0;
+    }
+    default:
+      return ta->kind < TK_FIRST_KEYWORD || ta->v.name.idx == tb->v.name.idx;
+  }
+}
+
+// Fields added to LexState also need to be compared below.
+static_assert(sizeof(LexState) == 96, "unexpected LexState size");
+
+bool lex_same_state_for_testing(const LexState* a, const LexState* b) {
+  return a->ctx == b->ctx && a->filename == b->filename && a->buf == b->buf && a->end == b->end &&
+         a->p == b->p && a->indent == b->indent && a->pending_dedents == b->pending_dedents &&
+         a->bracket_depth == b->bracket_depth && a->interp_sp == b->interp_sp &&
+         memcmp(a->interp_stack, b->interp_stack, a->interp_sp * sizeof(a->interp_stack[0])) == 0 &&
+         same_token_for_testing(a, b);
+}
