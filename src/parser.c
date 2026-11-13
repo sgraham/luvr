@@ -848,6 +848,7 @@ static void primary(Parser* p, Shape* sh) {
       break;
     }
     case TK_TYPENAME:
+      check_type_param(p);
       next(p);
       *sh = SH_TYPE;
       break;
@@ -1151,10 +1152,13 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
 
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, bool is_method) {
+  // A nested function's type parameters are only in scope in its own body.
+  u32 type_params = p->type_params;
   u32 outer = funcsig(p, is_method, /*is_foreign=*/false);
   check(p, TK_COLON);
   suite(p);
   func_close(p, outer);
+  p->type_params = type_params;
 }
 
 // stat -> 'if' expr ':' suite {'elif' expr ':' suite} ['else' ':' suite]

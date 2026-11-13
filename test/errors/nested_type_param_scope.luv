@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:7:5:    U y
+# CERR: {ssss}         ^ error: Undefined type parameter 'U'.
+def f{T}():
+    def g{U}(U x):
+        pass
+    U y

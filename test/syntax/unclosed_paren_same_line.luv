@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:6:16:    return g(1 2)
-# CERR: {ssss}                    ^ error: Expected ')', found number.
+# CERR: {ssss}                     ^ error: Expected ')', found number.
 def int g(int a, int b): return a + b
 def int f():
     return g(1 2)
