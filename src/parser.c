@@ -60,6 +60,12 @@ struct Parser {
   // Names declared as globals by this file, so that Name.global can be
   // cleared at the end.
   VEC(NameId) globals;
+  // Bit c - 'A' is set for each type parameter declared by an enclosing
+  // {...} list.
+  u32 type_params;
+  // A function's return type comes before its type parameter list, so it
+  // can't be checked where it's parsed.
+  bool in_return_type;
 };
 
 // The syntactical shape of parsing an expression. Used to decide whether
@@ -289,6 +295,10 @@ static void type_param(Parser* p) {
   if (T(p) != TK_TYPENAME) {
     error_expected(p, "type parameter name");
   }
+  const Name* n = name_of(p, p->ls.t.v.name);
+  if (n->len == 1) {
+    p->type_params |= 1u << (n->str[0] - 'A');
+  }
   next(p);
 }
 
@@ -316,6 +326,19 @@ static void qualified_type_rest(Parser* p) {
   }
 }
 
+// A type name that's a single capital letter is a type parameter.
+static void check_type_param(Parser* p) {
+  const Name* n = name_of(p, p->ls.t.v.name);
+  // TODO: check the return type's parameters after the list.
+  if (n->len != 1 || p->in_return_type) {
+    return;
+  }
+  if (!(p->type_params & (1u << (n->str[0] - 'A')))) {
+    error_at(p, p->ls.t.offset, "Undefined type parameter '%.*s'.", (int)n->len,
+             (const char*)n->str);
+  }
+}
+
 static void type(Parser* p) {
   u32 at = p->ls.t.offset;
   switch (T(p)) {
@@ -338,6 +361,7 @@ static void type(Parser* p) {
       type(p);
       return;
     case TK_TYPENAME:
+      check_type_param(p);
       next(p);
       if (T(p) == TK_LBRACE) {
         type_args(p);
@@ -1066,6 +1090,7 @@ static void suite(Parser* p) {
 static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
   NameId name = p->ls.t.v.name;
   u32 at = p->ls.t.offset;
+  p->in_return_type = true;
   if (T(p) == TK_NAME) {
     next(p);
     if (optional(p, TK_DOT)) {  // module.Type return type
@@ -1078,6 +1103,7 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
     }
     name = expect_name(p, "function name", &at);
   }
+  p->in_return_type = false;
   if (!is_method) {
     if (p->func_depth == 0) {
       declare_definition(p, name, at, GK_FUNC);
@@ -1278,6 +1304,7 @@ static void receiver(Parser* p) {
 //                | 'foreign' funcsig end
 //                | decl_or_expr_stat end    (declarations and assignments)
 static void toplevel_stat(Parser* p) {
+  p->type_params = 0;
   switch (T(p)) {
     case TK_DEF:
       next(p);
