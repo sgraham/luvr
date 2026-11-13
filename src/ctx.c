@@ -56,12 +56,12 @@ void ctx_error_unclosed(const LexState* ls,
                         const char* found) {
   u32 who_line, cur_line, col;
   src_location(ls->buf, who_offset, &who_line, &col);
-  src_location(ls->buf, ls->t.offset, &cur_line, &col);
+  src_location(ls->buf, ls->pos.t.offset, &cur_line, &col);
   if (who_line == cur_line) {
-    ctx_error(ls->ctx, ls->filename, ls->buf, ls->t.offset, "Expected '%s', found %s.",
+    ctx_error(ls->ctx, ls->filename, ls->buf, ls->pos.t.offset, "Expected '%s', found %s.",
               tok_kind_name(what), found);
   }
-  ctx_error(ls->ctx, ls->filename, ls->buf, ls->t.offset,
+  ctx_error(ls->ctx, ls->filename, ls->buf, ls->pos.t.offset,
             "Expected '%s' (to close '%s' at line %u), found %s.", tok_kind_name(what),
             tok_kind_name(who), who_line, found);
 }

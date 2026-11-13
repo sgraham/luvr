@@ -61,7 +61,7 @@ static void print_escaped(const u8* s, u32 len) {
 }
 
 static void dump_token(const LexState* ls, u32 line, u32 col) {
-  const Token* t = &ls->t;
+  const Token* t = &ls->pos.t;
   printf("%u:%u\t%s", line, col, tok_kind_name(t->kind));
   switch (t->kind) {
     case TK_NAME:
@@ -99,7 +99,7 @@ static void dump_token(const LexState* ls, u32 line, u32 col) {
 static void lex_past_close(LexState* ls, u16 depth) {
   for (;;) {
     lex_next(ls);
-    if (ls->bracket_depth < depth || ls->t.kind == TK_EOS) {
+    if (ls->pos.bracket_depth < depth || ls->pos.t.kind == TK_EOS) {
       break;
     }
   }
@@ -108,14 +108,14 @@ static void lex_past_close(LexState* ls, u16 depth) {
 // ls has just opened a bracket. It's rewound to there afterwards so that the
 // brackets nested inside are also checked.
 static void check_rewind(LexState* ls) {
-  u16 depth = ls->bracket_depth;
-  LexState mark, first;
+  u16 depth = ls->pos.bracket_depth;
+  LexPos mark, first;
   lex_mark(ls, &mark);
   lex_past_close(ls, depth);
   lex_mark(ls, &first);
   lex_rewind(ls, &mark);
   lex_past_close(ls, depth);
-  if (!lex_same_state_for_testing(ls, &first)) {
+  if (!lex_same_pos_for_testing(ls, &first, &ls->pos)) {
     ctx_error(ls->ctx, ls->filename, ls->buf, mark.t.offset,
               "Lexing again after rewinding gave a different state.");
   }
@@ -162,26 +162,28 @@ static int run_file(Ctx* ctx,
     for (;;) {
       lex_next(&ls);
       ++ntok;
-      for (; last < ls.t.offset && last < len; ++last) {
+      for (; last < ls.pos.t.offset && last < len; ++last) {
         if (buf[last] == '\n') {
           ++line;
           bol = buf + last + 1;
         }
       }
-      dump_token(&ls, line, (u32)(buf + ls.t.offset - bol) + 1);
-      if (ls.t.kind == TK_EOS) {
+      dump_token(&ls, line, (u32)(buf + ls.pos.t.offset - bol) + 1);
+      if (ls.pos.t.kind == TK_EOS) {
         break;
       }
     }
   } else if (mode == MODE_REWIND) {
     for (;;) {
-      u16 depth = ls.bracket_depth;
       lex_next(&ls);
       ++ntok;
-      if (ls.t.kind == TK_EOS) {
+      TokenKind k = ls.pos.t.kind;
+      if (k == TK_EOS) {
         break;
       }
-      if (ls.bracket_depth > depth) {
+      // Not at a \(, because lexing past its ')' closes the interpolation,
+      // and a checkpoint can't be restored after that.
+      if (k == TK_LPAREN || k == TK_LSQUARE || k == TK_LBRACE) {
         check_rewind(&ls);
       }
     }
@@ -189,7 +191,7 @@ static int run_file(Ctx* ctx,
     for (;;) {
       lex_next(&ls);
       ++ntok;
-      if (ls.t.kind == TK_EOS) {
+      if (ls.pos.t.kind == TK_EOS) {
         break;
       }
     }

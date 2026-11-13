@@ -92,7 +92,7 @@ static void suite(Parser* p);
 
 // Token helpers
 
-#define T(p) ((p)->ls.t.kind)
+#define T(p) ((p)->ls.pos.t.kind)
 
 static void next(Parser* p) {
   lex_next(&p->ls);
@@ -103,7 +103,7 @@ static void next(Parser* p) {
 
 // Describes the current token for error messages.
 static const char* describe(Parser* p, char* buf, size_t size) {
-  const Token* t = &p->ls.t;
+  const Token* t = &p->ls.pos.t;
   switch (t->kind) {
     case TK_TYPEPARAM:
       snprintf(buf, size, "type parameter '%c'", lex_name(p->ls.ctx, t->v.name)->str[0]);
@@ -136,7 +136,7 @@ static const char* describe(Parser* p, char* buf, size_t size) {
 
 NORETURN static void error_expected(Parser* p, const char* what) {
   char buf[64];
-  error_at(p, p->ls.t.offset, "Expected %s, found %s.", what, describe(p, buf, sizeof(buf)));
+  error_at(p, p->ls.pos.t.offset, "Expected %s, found %s.", what, describe(p, buf, sizeof(buf)));
 }
 
 static void check(Parser* p, TokenKind kind) {
@@ -179,8 +179,8 @@ static NameId expect_name(Parser* p, const char* what, u32* at) {
   if (T(p) != TK_NAME) {
     error_expected(p, what);
   }
-  NameId name = p->ls.t.v.name;
-  *at = p->ls.t.offset;
+  NameId name = p->ls.pos.t.v.name;
+  *at = p->ls.pos.t.offset;
   next(p);
   return name;
 }
@@ -287,7 +287,7 @@ static void end_of_stat(Parser* p) {
 
 // type_args -> '{' type {',' type} '}'
 static void type_args(Parser* p) {
-  u32 at = p->ls.t.offset;
+  u32 at = p->ls.pos.t.offset;
   next(p);  // '{'
   for (;;) {
     type(p);
@@ -302,13 +302,13 @@ static void type_param(Parser* p) {
   if (T(p) != TK_TYPEPARAM) {
     error_expected(p, "type parameter (A-Z)");
   }
-  p->type_params |= 1u << (name_of(p, p->ls.t.v.name)->str[0] - 'A');
+  p->type_params |= 1u << (name_of(p, p->ls.pos.t.v.name)->str[0] - 'A');
   next(p);
 }
 
 // type_params -> '{' TypeName {',' TypeName} '}'
 static void type_params(Parser* p) {
-  u32 at = p->ls.t.offset;
+  u32 at = p->ls.pos.t.offset;
   next(p);  // '{'
   for (;;) {
     type_param(p);
@@ -331,16 +331,16 @@ static void qualified_type_rest(Parser* p) {
 }
 
 static void check_type_param(Parser* p) {
-  const Name* n = name_of(p, p->ls.t.v.name);
+  const Name* n = name_of(p, p->ls.pos.t.v.name);
   u32 i = (u32)(n->str[0] - 'A');
   u32 bit = 1u << i;
   if (p->in_return_type) {
     if (!(p->return_type_params & bit)) {
       p->return_type_params |= bit;
-      p->return_type_param_at[i] = p->ls.t.offset;
+      p->return_type_param_at[i] = p->ls.pos.t.offset;
     }
   } else if (!(p->type_params & bit)) {
-    error_at(p, p->ls.t.offset, "Undefined type parameter '%c'.", 'A' + i);
+    error_at(p, p->ls.pos.t.offset, "Undefined type parameter '%c'.", 'A' + i);
   }
 }
 
@@ -364,14 +364,14 @@ static void check_return_type_params(Parser* p) {
 }
 
 static void check_type_name(Parser* p) {
-  const Name* n = name_of(p, p->ls.t.v.name);
+  const Name* n = name_of(p, p->ls.pos.t.v.name);
   if (n->global != GK_TYPE) {
-    error_at(p, p->ls.t.offset, "Undefined type '%.*s'.", (int)n->len, (const char*)n->str);
+    error_at(p, p->ls.pos.t.offset, "Undefined type '%.*s'.", (int)n->len, (const char*)n->str);
   }
 }
 
 static void type(Parser* p) {
-  u32 at = p->ls.t.offset;
+  u32 at = p->ls.pos.t.offset;
   switch (T(p)) {
     case TK_STAR:
       next(p);
@@ -409,7 +409,7 @@ static void type(Parser* p) {
       return;
     case TK_TYPEOF:
       next(p);
-      at = p->ls.t.offset;
+      at = p->ls.pos.t.offset;
       check(p, TK_LPAREN);
       expr(p);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
@@ -528,7 +528,7 @@ static void subexpr(Parser* p, int limit, Shape* sh) {
   switch (T(p)) {
     case TK_NOT:
       if (limit >= PRIORITY_NOT) {
-        error_at(p, p->ls.t.offset, "'not' needs parentheses here.");
+        error_at(p, p->ls.pos.t.offset, "'not' needs parentheses here.");
       }
       next(p);
       subexpr(p, PRIORITY_NOT, sh);
@@ -542,9 +542,9 @@ static void subexpr(Parser* p, int limit, Shape* sh) {
       break;
     case TK_AMP: {
       next(p);
-      u32 at = p->ls.t.offset;
+      u32 at = p->ls.pos.t.offset;
       // Only valid if the operand turns out to be a bare name.
-      NameId name = p->ls.t.v.name;
+      NameId name = p->ls.pos.t.v.name;
       subexpr(p, PRIORITY_UNARY, sh);
       const Local* l = *sh == SH_NAME ? lookup(p, name) : NULL;
       if ((*sh != SH_NAME && *sh != SH_LVALUE && *sh != SH_STRUCT_LITERAL) ||
@@ -567,7 +567,7 @@ static void subexpr(Parser* p, int limit, Shape* sh) {
 static void binop_rest(Parser* p, int limit, Shape* sh) {
   BinOpr op = getbinopr(T(p));
   while (op != OPR_NONE && priority[op] > limit) {
-    u32 at = p->ls.t.offset;
+    u32 at = p->ls.pos.t.offset;
     next(p);
     if (op == OPR_NOTIN) {
       check(p, TK_IN);
@@ -663,10 +663,10 @@ static void for_targets(Parser* p, Targets* t) {
       error_expected(p, "loop variable name");
     }
     if (t->n == MAX_TARGETS) {
-      error_at(p, p->ls.t.offset, "Too many loop variables.");
+      error_at(p, p->ls.pos.t.offset, "Too many loop variables.");
     }
-    t->name[t->n] = p->ls.t.v.name;
-    t->at[t->n] = p->ls.t.offset;
+    t->name[t->n] = p->ls.pos.t.v.name;
+    t->at[t->n] = p->ls.pos.t.offset;
     ++t->n;
     next(p);
     if (!optional(p, TK_COMMA)) {
@@ -681,10 +681,10 @@ static void for_targets(Parser* p, Targets* t) {
 static bool skim_to_for(Parser* p, u16 depth) {
   for (;;) {
     TokenKind k = T(p);
-    if (p->ls.bracket_depth < depth || k == TK_EOS) {
+    if (p->ls.pos.bracket_depth < depth || k == TK_EOS) {
       return false;
     }
-    if (p->ls.bracket_depth == depth && (k == TK_FOR || k == TK_COMMA)) {
+    if (p->ls.pos.bracket_depth == depth && (k == TK_FOR || k == TK_COMMA)) {
       return k == TK_FOR;
     }
     next(p);
@@ -697,9 +697,9 @@ static bool skim_to_for(Parser* p, u16 depth) {
 // are parsed first, and then the lexer is rewound to parse the element with
 // the loop variables bound. Expressions can't declare new names, so there's
 // no parser state to be saved.
-static void comprehension(Parser* p, const LexState* elem, u32 at) {
+static void comprehension(Parser* p, const LexPos* elem, u32 at) {
 #if BUILD_DEBUG
-  LexState at_for;
+  LexPos at_for;
   lex_mark(&p->ls, &at_for);
 #endif
   u32 base = p->num_locals;
@@ -719,7 +719,7 @@ static void comprehension(Parser* p, const LexState* elem, u32 at) {
       expr(p);
     }
   }
-  LexState end;
+  LexPos end;
   lex_mark(&p->ls, &end);
   lex_rewind(&p->ls, elem);
   expr(p);
@@ -728,7 +728,7 @@ static void comprehension(Parser* p, const LexState* elem, u32 at) {
   }
   // Both lexed the same text from elem, so a difference means some lexer state
   // isn't restored by lex_rewind().
-  ASSERT(lex_same_state_for_testing(&p->ls, &at_for));
+  ASSERT(lex_same_pos_for_testing(&p->ls, &at_for, &p->ls.pos));
   lex_rewind(&p->ls, &end);
   pop_locals(p, base);
   check_match(p, TK_RSQUARE, TK_LSQUARE, at);
@@ -736,11 +736,11 @@ static void comprehension(Parser* p, const LexState* elem, u32 at) {
 
 // '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
 static void list_literal(Parser* p) {
-  u32 at = p->ls.t.offset;
-  u16 depth = p->ls.bracket_depth;
+  u32 at = p->ls.pos.t.offset;
+  u16 depth = p->ls.pos.bracket_depth;
   next(p);
   if (T(p) != TK_RSQUARE) {
-    LexState elem;
+    LexPos elem;
     lex_mark(&p->ls, &elem);
     if (skim_to_for(p, depth)) {
       comprehension(p, &elem, at);
@@ -760,14 +760,14 @@ static void list_literal(Parser* p) {
 
 // '{' '}' | '{' expr ':' expr {',' expr ':' expr} [','] '}'
 static void dict_literal(Parser* p) {
-  u32 at = p->ls.t.offset;
+  u32 at = p->ls.pos.t.offset;
   next(p);
   if (T(p) != TK_RBRACE) {
     expr(p);
     check(p, TK_COLON);
     expr(p);
     if (T(p) == TK_FOR) {
-      error_at(p, p->ls.t.offset, "Dict comprehensions aren't supported yet.");
+      error_at(p, p->ls.pos.t.offset, "Dict comprehensions aren't supported yet.");
     }
     while (optional(p, TK_COMMA)) {
       if (T(p) == TK_RBRACE) {
@@ -805,16 +805,17 @@ static void sizeof_operand(Parser* p) {
 // `.field=` designators are only allowed in struct literals
 // (`Stuff(.a=1, true)`) because functions don't have named parameters.
 static void call_args(Parser* p, bool is_struct_literal) {
-  u32 at = p->ls.t.offset;
+  u32 at = p->ls.pos.t.offset;
   next(p);  // '('
   if (T(p) != TK_RPAREN) {
     for (;;) {
       if (T(p) == TK_RPAREN) {
-        error_at(p, p->ls.t.offset, "Trailing commas aren't allowed in calls.");
+        error_at(p, p->ls.pos.t.offset, "Trailing commas aren't allowed in calls.");
       }
       if (T(p) == TK_DOT) {
         if (!is_struct_literal) {
-          error_at(p, p->ls.t.offset, "'.name=' arguments are only allowed in struct literals.");
+          error_at(p, p->ls.pos.t.offset,
+                   "'.name=' arguments are only allowed in struct literals.");
         }
         next(p);
         check_name(p, "field name");
@@ -831,7 +832,7 @@ static void call_args(Parser* p, bool is_struct_literal) {
 
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice)
 static void index_or_slice(Parser* p, Shape* sh) {
-  u32 at = p->ls.t.offset;
+  u32 at = p->ls.pos.t.offset;
   next(p);  // '['
   *sh = SH_LVALUE;
   if (T(p) != TK_COLON) {
@@ -862,7 +863,7 @@ static void postfix(Parser* p, Shape* sh) {
           *sh = SH_LVALUE;
         } else if (T(p) == TK_TYPENAME) {
           if (*sh != SH_NAME) {
-            error_at(p, p->ls.t.offset, "Unexpected type name after '.'.");
+            error_at(p, p->ls.pos.t.offset, "Unexpected type name after '.'.");
           }
           *sh = SH_TYPE;  // module.TypeName
         } else {
@@ -872,7 +873,7 @@ static void postfix(Parser* p, Shape* sh) {
         break;
       case TK_LSQUARE:
         if (*sh == SH_TYPE) {
-          error_at(p, p->ls.t.offset, "A type can't be indexed.");
+          error_at(p, p->ls.pos.t.offset, "A type can't be indexed.");
         }
         index_or_slice(p, sh);
         break;
@@ -890,7 +891,7 @@ static void postfix(Parser* p, Shape* sh) {
         if (*sh != SH_TYPE) {
           *sh = SH_VALUE;
         } else if (T(p) == TK_LBRACE) {
-          error_at(p, p->ls.t.offset, "Type arguments were given twice.");
+          error_at(p, p->ls.pos.t.offset, "Type arguments were given twice.");
         }
         break;
       default:
@@ -903,7 +904,7 @@ static void postfix(Parser* p, Shape* sh) {
 //          | list | dict | sizeof | alignof | offsetof | cast
 //          followed by postfix
 static void primary(Parser* p, Shape* sh) {
-  u32 at = p->ls.t.offset;
+  u32 at = p->ls.pos.t.offset;
   *sh = SH_VALUE;
   switch (T(p)) {
     case TK_INTLIT:
@@ -918,7 +919,7 @@ static void primary(Parser* p, Shape* sh) {
       interpolated_string(p);
       break;
     case TK_NAME: {
-      const Name* n = name_of(p, p->ls.t.v.name);
+      const Name* n = name_of(p, p->ls.pos.t.v.name);
       bool defined = n->binding || n->global || n->is_builtin;
       next(p);
       // A name followed by '=' is an assignment target, which declares the name
@@ -953,14 +954,14 @@ static void primary(Parser* p, Shape* sh) {
     case TK_SIZEOF:
     case TK_ALIGNOF:
       next(p);
-      at = p->ls.t.offset;
+      at = p->ls.pos.t.offset;
       check(p, TK_LPAREN);
       sizeof_operand(p);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
       break;
     case TK_OFFSETOF:
       next(p);
-      at = p->ls.t.offset;
+      at = p->ls.pos.t.offset;
       check(p, TK_LPAREN);
       type(p);
       check(p, TK_COMMA);
@@ -970,7 +971,7 @@ static void primary(Parser* p, Shape* sh) {
     case TK_CAST:  // cast T(expr)
       next(p);
       type(p);
-      at = p->ls.t.offset;
+      at = p->ls.pos.t.offset;
       check(p, TK_LPAREN);
       expr(p);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
@@ -988,7 +989,7 @@ static void decl_rest(Parser* p, bool toplevel) {
   u32 at;
   NameId name = expect_name(p, "variable name", &at);
   if (toplevel) {
-    check_not_global(p, name, T(p) == TK_EQ ? p->ls.t.offset : at);
+    check_not_global(p, name, T(p) == TK_EQ ? p->ls.pos.t.offset : at);
   }
   if (optional(p, TK_EQ)) {
     expr(p);
@@ -1012,9 +1013,9 @@ static bool is_augassign(TokenKind kind) {
 //   call   -> postfix chain ending in a call
 static void decl_or_expr_stat(Parser* p, bool toplevel) {
   TokenKind k = T(p);
-  u32 at = p->ls.t.offset;
+  u32 at = p->ls.pos.t.offset;
   if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
-    NameId name = p->ls.t.v.name;
+    NameId name = p->ls.pos.t.v.name;
     Shape sh;
     primary(p, &sh);
     if (sh == SH_TYPE) {
@@ -1026,11 +1027,11 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         error_at(p, at, "Can't assign to this expression.");
       }
       if (toplevel && T(p) != TK_EQ) {
-        error_at(p, p->ls.t.offset, "Augmented assignment isn't allowed at top level.");
+        error_at(p, p->ls.pos.t.offset, "Augmented assignment isn't allowed at top level.");
       }
       if (sh == SH_NAME) {
         if (toplevel) {
-          check_not_global(p, name, p->ls.t.offset);
+          check_not_global(p, name, p->ls.pos.t.offset);
         }
         Local* l = lookup(p, name);
         // An enclosing function's 'global' doesn't apply to this function, so
@@ -1039,13 +1040,13 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           l = NULL;
         }
         if (l && l < &p->locals[p->func_base]) {
-          error_at(p, p->ls.t.offset, "Upvalues are immutable.");
+          error_at(p, p->ls.pos.t.offset, "Upvalues are immutable.");
         }
         if (l && l->kind == LK_PARAM) {
-          error_at(p, p->ls.t.offset, "Function parameters are immutable.");
+          error_at(p, p->ls.pos.t.offset, "Function parameters are immutable.");
         }
         if (l && (l->kind == LK_CONST || (l->kind == LK_GLOBAL && name_of(p, name)->is_const))) {
-          error_at(p, p->ls.t.offset, "Cannot assign a new value to a constant.");
+          error_at(p, p->ls.pos.t.offset, "Cannot assign a new value to a constant.");
         }
       }
       bool declares = sh == SH_NAME && T(p) == TK_EQ;
@@ -1128,7 +1129,8 @@ static void simple_stat(Parser* p) {
     case TK_FOR:
     case TK_WITH:
     case TK_DEF:
-      error_at(p, p->ls.t.offset, "'%s' can't follow ':' on the same line.", tok_kind_name(T(p)));
+      error_at(p, p->ls.pos.t.offset, "'%s' can't follow ':' on the same line.",
+               tok_kind_name(T(p)));
     default:
       decl_or_expr_stat(p, /*toplevel=*/false);
       return;
@@ -1176,8 +1178,8 @@ static void suite(Parser* p) {
 // local of the enclosing function. The new function's scope is opened after
 // the name, and the return value is for func_close().
 static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
-  NameId name = p->ls.t.v.name;
-  u32 at = p->ls.t.offset;
+  NameId name = p->ls.pos.t.v.name;
+  u32 at = p->ls.pos.t.offset;
   p->in_return_type = true;
   if (T(p) == TK_NAME) {
     next(p);
@@ -1202,26 +1204,26 @@ static u32 funcsig(Parser* p, bool is_method, bool is_foreign) {
   u32 outer = func_open(p);
   if (T(p) == TK_LBRACE) {
     if (is_foreign) {
-      error_at(p, p->ls.t.offset, "Foreign functions can't be generic.");
+      error_at(p, p->ls.pos.t.offset, "Foreign functions can't be generic.");
     }
     type_params(p);
   }
   check_return_type_params(p);
 
-  u32 lparen = p->ls.t.offset;
+  u32 lparen = p->ls.pos.t.offset;
   check(p, TK_LPAREN);
   if (T(p) != TK_RPAREN) {
     bool first = true;
     for (;;) {
-      name = p->ls.t.v.name;
-      at = p->ls.t.offset;
+      name = p->ls.pos.t.v.name;
+      at = p->ls.pos.t.offset;
       if (T(p) == TK_NAME) {
         next(p);
         if (optional(p, TK_DOT)) {  // module.Type param
           qualified_type_rest(p);
           name = expect_name(p, "parameter name", &at);
         } else if (!(is_method && first)) {
-          error_at(p, p->ls.t.offset, "Parameter needs a type.");
+          error_at(p, p->ls.pos.t.offset, "Parameter needs a type.");
         }
       } else {
         type(p);
@@ -1341,19 +1343,19 @@ static void struct_body(Parser* p) {
 // ambiguous.
 static void receiver_param(Parser* p) {
   if (is_type_start(T(p)) && T(p) != TK_TYPEPARAM) {
-    error_at(p, p->ls.t.offset, "Methods can't be defined for specific type arguments.");
+    error_at(p, p->ls.pos.t.offset, "Methods can't be defined for specific type arguments.");
   }
   type_param(p);
 }
 
 static void receiver(Parser* p) {
-  u32 at = p->ls.t.offset;
+  u32 at = p->ls.pos.t.offset;
   switch (T(p)) {
     case TK_TYPENAME:
       check_type_name(p);
       next(p);
       if (T(p) == TK_LBRACE) {
-        u32 brace = p->ls.t.offset;
+        u32 brace = p->ls.pos.t.offset;
         next(p);
         for (;;) {
           receiver_param(p);
@@ -1419,7 +1421,7 @@ static void toplevel_stat(Parser* p) {
       if (T(p) != TK_TYPENAME) {
         error_expected(p, "struct name (a TypeName)");
       }
-      declare_definition(p, p->ls.t.v.name, p->ls.t.offset, GK_TYPE);
+      declare_definition(p, p->ls.pos.t.v.name, p->ls.pos.t.offset, GK_TYPE);
       next(p);
       if (T(p) == TK_LBRACE) {
         type_params(p);
@@ -1433,7 +1435,7 @@ static void toplevel_stat(Parser* p) {
       end_of_stat(p);
       return;
     case TK_IMPORT:
-      error_at(p, p->ls.t.offset, "Imports must come before other declarations.");
+      error_at(p, p->ls.pos.t.offset, "Imports must come before other declarations.");
     default:
       decl_or_expr_stat(p, /*toplevel=*/true);
       end_of_stat(p);
@@ -1448,11 +1450,11 @@ static void parse_module(Parser* p) {
   while (optional(p, TK_IMPORT)) {
     // Escaped strings are decoded into Ctx.strbytes, which isn't padded for
     // lex_intern(), and a module name has no reason to contain escapes.
-    if (T(p) != TK_STRING || (p->ls.t.flags & TF_ESCAPED)) {
+    if (T(p) != TK_STRING || (p->ls.pos.t.flags & TF_ESCAPED)) {
       error_expected(p, "quoted module name");
     }
     u32 len;
-    const u8* s = lex_str(&p->ls, &p->ls.t, &len);
+    const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
     NameId name = lex_intern(p->ls.ctx, s, len);
     next(p);
     if (optional(p, TK_AS)) {

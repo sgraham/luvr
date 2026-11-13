@@ -1,6 +1,7 @@
 #pragma once
 
 typedef struct Ctx Ctx;
+typedef struct LexPos LexPos;
 typedef struct LexState LexState;
 typedef struct Name Name;
 typedef struct NameId NameId;
@@ -356,7 +357,7 @@ void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len);
 // Lexer
 //
 // The lexer is pull-style. The parser calls lex_next() to get a token into
-// ls->t. There is no token buffer and no "peek". The grammar was finessed (and
+// ls->pos.t. There is no token buffer and no "peek". The grammar was finessed (and
 // occasionally slightly hacked) so that the parser never needs to see more
 // than a single token.
 
@@ -437,18 +438,26 @@ struct StrRef {
   u32 len;
 };
 
+// The part of LexState that changes as the lexer advances, other than the
+// interpolation stack. A checkpoint is a copy of it.
+struct LexPos {
+  const u8* p;  // cursor
+  u16 indent;   // current block level, in units of 4 spaces
+  u16 pending_dedents;
+  u16 bracket_depth;  // > 0: newlines are whitespace
+  Token t;
+};
+
 struct LexState {
   Ctx* ctx;
   const char* filename;
   const u8* buf;  // start of source, followed by LEX_PADDING zero bytes
   const u8* end;  // buf + len
-  const u8* p;    // cursor
-  u16 indent;     // current block level, in units of 4 spaces
-  u16 pending_dedents;
-  u16 bracket_depth;  // > 0: newlines are whitespace
+  // bracket_depth at each open \(. These aren't in LexPos, so a checkpoint has
+  // to be restored at the same depth of interpolation that it was made at.
   u8 interp_sp;
-  u16 interp_stack[LEX_MAX_INTERP];  // bracket_depth at each open \(
-  Token t;
+  u16 interp_stack[LEX_MAX_INTERP];
+  LexPos pos;
 };
 
 // buf must have LEX_PADDING zero bytes after len, and must outlive ctx because
@@ -458,16 +467,15 @@ void lex_init(LexState* ls, Ctx* ctx, const char* filename, const u8* buf, size_
 
 void lex_next(LexState* ls);
 
-// A checkpoint is a copy of the whole LexState, so all lexer state must be in
-// LexState. The tables in Ctx that the lexer adds to aren't restored. Re-lexing
-// a name gives the same NameId, but re-lexing an escaped string adds a
-// duplicate to Ctx.strs.
-void lex_mark(const LexState* ls, LexState* mark);
-void lex_rewind(LexState* ls, const LexState* mark);
+// The tables in Ctx that the lexer adds to aren't restored by lex_rewind().
+// Re-lexing a name gives the same NameId, but re-lexing an escaped string adds
+// a duplicate to Ctx.strs.
+void lex_mark(const LexState* ls, LexPos* mark);
+void lex_rewind(LexState* ls, const LexPos* mark);
 
 // Whether a and b are at the same place with the same current token. Escaped
 // strings are compared by content, because re-lexing one gives it a new index.
-bool lex_same_state_for_testing(const LexState* a, const LexState* b);
+bool lex_same_pos_for_testing(const LexState* ls, const LexPos* a, const LexPos* b);
 
 const char* tok_kind_name(TokenKind kind);
 

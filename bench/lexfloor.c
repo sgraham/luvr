@@ -88,7 +88,7 @@ static u64 pass_lex(void) {
   do {
     lex_next(&ls);
     ++n;
-  } while (ls.t.kind != TK_EOS);
+  } while (ls.pos.t.kind != TK_EOS);
   ctx_free(&ctx);
   return n;
 }

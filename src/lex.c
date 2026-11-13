@@ -272,10 +272,10 @@ static const u8* next_content_line(LexState* ls, const u8* p, const u8** bol) {
 
 static void lex_eof(LexState* ls, Token* t) {
   t->offset = (u32)(ls->end - ls->buf);
-  ls->p = ls->end;
-  if (ls->indent) {
-    ls->pending_dedents = (u16)(ls->indent - 1);
-    ls->indent = 0;
+  ls->pos.p = ls->end;
+  if (ls->pos.indent) {
+    ls->pos.pending_dedents = (u16)(ls->pos.indent - 1);
+    ls->pos.indent = 0;
     t->kind = TK_DEDENT;
   } else {
     t->kind = TK_EOS;
@@ -298,19 +298,19 @@ static void lex_layout(LexState* ls, Token* t, const u8* nl) {
     lex_error(ls, q, "Indentation must be a multiple of 4 spaces.");
   }
   u32 level = n >> 2;
-  ls->p = q;
-  if (level == ls->indent) {
+  ls->pos.p = q;
+  if (level == ls->pos.indent) {
     t->kind = TK_NEWLINE;
     t->offset = (u32)(nl - ls->buf);
-  } else if (level == ls->indent + 1u) {
-    ls->indent = (u16)level;
+  } else if (level == ls->pos.indent + 1u) {
+    ls->pos.indent = (u16)level;
     t->kind = TK_INDENT;
     t->offset = (u32)(q - ls->buf);
-  } else if (level > ls->indent) {
+  } else if (level > ls->pos.indent) {
     lex_error(ls, q, "Unexpected indent of more than one level.");
   } else {
-    ls->pending_dedents = (u16)(ls->indent - level - 1);
-    ls->indent = (u16)level;
+    ls->pos.pending_dedents = (u16)(ls->pos.indent - level - 1);
+    ls->pos.indent = (u16)level;
     t->kind = TK_DEDENT;
     t->offset = (u32)(q - ls->buf);
   }
@@ -604,8 +604,8 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, bool cont) 
   if (ls->interp_sp == LEX_MAX_INTERP) {
     lex_error(ls, q, "String interpolation is nested too deeply.");
   }
-  ls->interp_stack[ls->interp_sp++] = ls->bracket_depth;
-  ++ls->bracket_depth;
+  ls->interp_stack[ls->interp_sp++] = ls->pos.bracket_depth;
+  ++ls->pos.bracket_depth;
   t->kind = cont ? TK_STRING_MID : TK_STRING_BEGIN;
   return q + 2;
 }
@@ -626,40 +626,40 @@ void lex_init(LexState* ls, Ctx* ctx, const char* filename, const u8* buf, size_
   if (q < ls->end && q != bol) {
     lex_error(ls, q, "Unexpected indent on the first line.");
   }
-  ls->p = q;
+  ls->pos.p = q;
 }
 
 #define TOK(k, n)                   \
   do {                              \
     t->kind = (k);                  \
     t->offset = (u32)(p - ls->buf); \
-    ls->p = p + (n);                \
+    ls->pos.p = p + (n);            \
     return;                         \
   } while (0)
 
 #define OPEN(k)                                            \
   do {                                                     \
-    if (++ls->bracket_depth == 0)                          \
+    if (++ls->pos.bracket_depth == 0)                      \
       lex_error(ls, p, "Brackets are nested too deeply."); \
     TOK(k, 1);                                             \
   } while (0)
 
-#define CLOSE(k)           \
-  do {                     \
-    if (ls->bracket_depth) \
-      --ls->bracket_depth; \
-    TOK(k, 1);             \
+#define CLOSE(k)               \
+  do {                         \
+    if (ls->pos.bracket_depth) \
+      --ls->pos.bracket_depth; \
+    TOK(k, 1);                 \
   } while (0)
 
 void lex_next(LexState* ls) {
-  Token* t = &ls->t;
+  Token* t = &ls->pos.t;
   t->flags = 0;
-  if (ls->pending_dedents) {
-    --ls->pending_dedents;
+  if (ls->pos.pending_dedents) {
+    --ls->pos.pending_dedents;
     t->kind = TK_DEDENT;
     return;
   }
-  const u8* p = ls->p;
+  const u8* p = ls->pos.p;
   for (;;) {
     switch (*p) {
       case ' ':
@@ -681,7 +681,7 @@ void lex_next(LexState* ls) {
         if (ls->interp_sp) {
           lex_error(ls, p, "Newlines aren't allowed inside string interpolation.");
         }
-        if (ls->bracket_depth) {
+        if (ls->pos.bracket_depth) {
           ++p;
           continue;
         }
@@ -706,10 +706,10 @@ void lex_next(LexState* ls) {
       case '}':
         CLOSE(TK_RBRACE);
       case ')':
-        if (ls->interp_sp && ls->bracket_depth == ls->interp_stack[ls->interp_sp - 1] + 1u) {
-          --ls->bracket_depth;
+        if (ls->interp_sp && ls->pos.bracket_depth == ls->interp_stack[ls->interp_sp - 1] + 1u) {
+          --ls->pos.bracket_depth;
           --ls->interp_sp;
-          ls->p = lex_string(ls, t, p, /*cont=*/true);
+          ls->pos.p = lex_string(ls, t, p, /*cont=*/true);
           return;
         }
         CLOSE(TK_RPAREN);
@@ -800,7 +800,7 @@ void lex_next(LexState* ls) {
         TOK(TK_GT, 1);
 
       case '"':
-        ls->p = lex_string(ls, t, p, /*cont=*/false);
+        ls->pos.p = lex_string(ls, t, p, /*cont=*/false);
         return;
 
       case '0':
@@ -813,7 +813,7 @@ void lex_next(LexState* ls) {
       case '7':
       case '8':
       case '9':
-        ls->p = lex_number(ls, t, p);
+        ls->pos.p = lex_number(ls, t, p);
         return;
 
       default:
@@ -830,7 +830,7 @@ void lex_next(LexState* ls) {
           t->kind = ls->ctx->names.v[idx].kind;
           t->offset = (u32)(s - ls->buf);
           t->v.name = (NameId){idx};
-          ls->p = p;
+          ls->pos.p = p;
           return;
         }
         if (*p >= 0x20 && *p < 0x7f) {
@@ -843,22 +843,29 @@ void lex_next(LexState* ls) {
 
 // Checkpoints
 
-void lex_mark(const LexState* ls, LexState* mark) {
-  *mark = *ls;
+void lex_mark(const LexState* ls, LexPos* mark) {
+  *mark = ls->pos;
 }
 
-void lex_rewind(LexState* ls, const LexState* mark) {
-  *ls = *mark;
+void lex_rewind(LexState* ls, const LexPos* mark) {
+  ls->pos = *mark;
 }
 
-// Only the union member that the kind uses is compared, because the rest is
-// left over from earlier tokens.
-static bool same_token_for_testing(const LexState* a, const LexState* b) {
+// Fields added to LexPos also need to be compared below.
+static_assert(sizeof(LexPos) == 32, "unexpected LexPos size");
+
+bool lex_same_pos_for_testing(const LexState* ls, const LexPos* a, const LexPos* b) {
+  if (a->p != b->p || a->indent != b->indent || a->pending_dedents != b->pending_dedents ||
+      a->bracket_depth != b->bracket_depth) {
+    return false;
+  }
   const Token* ta = &a->t;
   const Token* tb = &b->t;
   if (ta->kind != tb->kind || ta->flags != tb->flags || ta->offset != tb->offset) {
     return false;
   }
+  // Only the union member that the kind uses is compared, because the rest is
+  // left over from earlier tokens.
   switch (ta->kind) {
     case TK_NAME:
     case TK_TYPENAME:
@@ -872,22 +879,11 @@ static bool same_token_for_testing(const LexState* a, const LexState* b) {
     case TK_STRING_MID:
     case TK_STRING_END: {
       u32 alen, blen;
-      const u8* as = lex_str(a, ta, &alen);
-      const u8* bs = lex_str(b, tb, &blen);
+      const u8* as = lex_str(ls, ta, &alen);
+      const u8* bs = lex_str(ls, tb, &blen);
       return alen == blen && memcmp(as, bs, alen) == 0;
     }
     default:
       return ta->kind < TK_FIRST_KEYWORD || ta->v.name.idx == tb->v.name.idx;
   }
-}
-
-// Fields added to LexState also need to be compared below.
-static_assert(sizeof(LexState) == 96, "unexpected LexState size");
-
-bool lex_same_state_for_testing(const LexState* a, const LexState* b) {
-  return a->ctx == b->ctx && a->filename == b->filename && a->buf == b->buf && a->end == b->end &&
-         a->p == b->p && a->indent == b->indent && a->pending_dedents == b->pending_dedents &&
-         a->bracket_depth == b->bracket_depth && a->interp_sp == b->interp_sp &&
-         memcmp(a->interp_stack, b->interp_stack, a->interp_sp * sizeof(a->interp_stack[0])) == 0 &&
-         same_token_for_testing(a, b);
 }
