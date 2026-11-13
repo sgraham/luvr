@@ -1,5 +1,5 @@
 # CRET: 1
 # CERR: {self}:4:13:struct Pair{}:
-# CERR: {ssss}                  ^ error: Expected type parameter name, found '}'.
+# CERR: {ssss}                  ^ error: Expected type parameter (A-Z), found '}'.
 struct Pair{}:
     int a

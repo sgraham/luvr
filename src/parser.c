@@ -295,13 +295,10 @@ static void type_args(Parser* p) {
 }
 
 static void type_param(Parser* p) {
-  if (T(p) != TK_TYPENAME) {
-    error_expected(p, "type parameter name");
+  if (T(p) != TK_TYPENAME || name_of(p, p->ls.t.v.name)->len != 1) {
+    error_expected(p, "type parameter (A-Z)");
   }
-  const Name* n = name_of(p, p->ls.t.v.name);
-  if (n->len == 1) {
-    p->type_params |= 1u << (n->str[0] - 'A');
-  }
+  p->type_params |= 1u << (name_of(p, p->ls.t.v.name)->str[0] - 'A');
   next(p);
 }
 
