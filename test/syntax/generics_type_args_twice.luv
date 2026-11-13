@@ -1,4 +1,7 @@
 # CRET: 1
-# CERR: {self}:4:10:List{int}{str} x = 1
-# CERR: {ssss}               ^ error: Type arguments were given twice.
-List{int}{str} x = 1
+# CERR: {self}:7:12:MyList{int}{str} x = 1
+# CERR: {ssss}                 ^ error: Type arguments were given twice.
+struct MyList{T}:
+    *T data
+
+MyList{int}{str} x = 1

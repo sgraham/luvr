@@ -1,5 +1,5 @@
 # CRET: 1
 # CERR: {self}:4:5:def Blorp myfunc():
-# CERR: {ssss}         ^ error: Undefined type Blorp.
+# CERR: {ssss}         ^ error: Undefined type 'Blorp'.
 def Blorp myfunc():
     pass

@@ -1,4 +1,7 @@
 # CRET: 1
-# CERR: {self}:4:10:List{int,} x = 1
-# CERR: {ssss}               ^ error: Expected type, found '}'.
-List{int,} x = 1
+# CERR: {self}:7:12:MyList{int,} x = 1
+# CERR: {ssss}                 ^ error: Expected type, found '}'.
+struct MyList{T}:
+    *T data
+
+MyList{int,} x = 1

@@ -1,5 +1,8 @@
 # CRET: 1
-# CERR: {self}:5:15:    x = List{x}(1)
-# CERR: {ssss}                    ^ error: Expected '.', found '}'.
+# CERR: {self}:8:17:    x = MyList{x}(1)
+# CERR: {ssss}                      ^ error: Expected '.', found '}'.
+struct MyList{T}:
+    *T data
+
 def f():
-    x = List{x}(1)
+    x = MyList{x}(1)

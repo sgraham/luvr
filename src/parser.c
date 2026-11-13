@@ -362,6 +362,13 @@ static void check_return_type_params(Parser* p) {
   error_at(p, at, "Undefined type parameter '%c'.", 'A' + first);
 }
 
+static void check_type_name(Parser* p) {
+  const Name* n = name_of(p, p->ls.t.v.name);
+  if (n->global != GK_TYPE) {
+    error_at(p, p->ls.t.offset, "Undefined type '%.*s'.", (int)n->len, (const char*)n->str);
+  }
+}
+
 static void type(Parser* p) {
   u32 at = p->ls.t.offset;
   switch (T(p)) {
@@ -388,6 +395,7 @@ static void type(Parser* p) {
       next(p);
       return;
     case TK_TYPENAME:
+      check_type_name(p);
       next(p);
       if (T(p) == TK_LBRACE) {
         type_args(p);
@@ -879,6 +887,7 @@ static void primary(Parser* p, Shape* sh) {
       *sh = SH_TYPE;
       break;
     case TK_TYPENAME:
+      check_type_name(p);
       next(p);
       *sh = SH_TYPE;
       break;

@@ -852,6 +852,12 @@ Rules in the prototype:
   parameter. A struct's list is exempt too, because an unused parameter
   makes a tag type: `struct Id{T}: int value` gives `Id{User}` and
   `Id{Order}` as distinct types with the same layout.
+- Not covered by tests yet (2026-11-12), since type parameters became their
+  own token (`TK_TYPEPARAM`): `mod.T` is rejected ("Expected type name after
+  module name, found type parameter 'T'."). `T{int}` as a type is an error,
+  but `T{int}(...)` in an expression is still accepted by postfix.
+  `on List{Elem}` reports "Methods can't be defined for specific type
+  arguments."
 
 Known wart: braces now mean both generics and dicts. `{K}V` inside type
 arguments reads badly: `List{{str}int}`. The user's inclination is to later
