@@ -349,6 +349,10 @@ typedef enum TokenKind {
 // lexer can read without bounds checking.
 #define LEX_PADDING 16
 
+// Reads the file at path into a malloc()ed buffer followed by LEX_PADDING zero
+// bytes, which the Ctx frees. Returns NULL if the file can't be read.
+typedef u8* (*LoadFileFn)(const char* path, size_t* len);
+
 // Compiler context, which owns all allocations. There's one per compilation,
 // and it can't be shared between threads.
 struct Ctx {
@@ -374,6 +378,9 @@ struct Ctx {
   // Every module that's been loaded, and the index of each by canonical name.
   VEC(Module*) modules;
   NameMap module_ids;
+
+  // Reads imported files. Imports fail if it's NULL.
+  LoadFileFn load_file;
 };
 
 bool ctx_init(Ctx* ctx);
@@ -506,6 +513,9 @@ struct Module {
   // A padded copy of the canonical name, which the Name may point into.
   u8* name_buf;
   FileBuf src;
+  // Whether src.filename and src.buf are freed with the Ctx. The root's
+  // belong to the caller.
+  bool owns_src;
   NameMap globals;  // NameId -> GlobalKind
 };
 

@@ -63,6 +63,7 @@ int main(int argc, char** argv) {
       fprintf(stderr, "out of memory\n");
       return 1;
     }
+    ctx.load_file = load_file;
     jmp_buf jb;
     ctx.on_error = &jb;
     double t0 = now_sec();

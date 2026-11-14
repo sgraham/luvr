@@ -1403,59 +1403,45 @@ static void toplevel_stat(Parser* p) {
   }
 }
 
-// module -> {import} {toplevel_stat} EOS
-// import -> 'import' STRING ['as' name] end
-static void parse_module(Parser* p) {
-  next(p);
-  while (optional(p, TK_IMPORT)) {
-    // Escaped strings are decoded into Ctx.strbytes, which isn't padded for
-    // lex_intern(), and a module name has no reason to contain escapes. This
-    // also means that a path can't contain '\', so it always uses '/'.
-    if (T(p) != TK_STRING || (p->ls.pos.t.flags & TF_ESCAPED)) {
-      error_expected(p, "quoted module name");
-    }
-    u32 len;
-    const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-    NameId name = lex_intern(p->ls.ctx, s, len);
-    next(p);
-    if (optional(p, TK_AS)) {
-      u32 at;
-      name = expect_name(p, "module alias", &at);
-    }
-    declare_global(p, name, GK_MODULE);
-    end_of_stat(p);
+// Modules
+
+// Returns len zero bytes followed by LEX_PADDING more, for a name that will be
+// interned, because lex_intern() reads past the end.
+static u8* name_buf_new(Ctx* ctx, u32 len) {
+  u8* buf = (u8*)calloc(len + LEX_PADDING, 1);
+  if (!buf) {
+    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
   }
-  while (T(p) != TK_EOS) {
-    toplevel_stat(p);
-  }
+  return buf;
 }
 
-// Adds a module named name[0..len) for src to ctx.
-static Module* module_new(Ctx* ctx, const char* name, u32 len, const FileBuf* src) {
-  vec_reserve(ctx, &ctx->modules, 1);
+// Adds a module to ctx, which takes ownership of name_buf. Its source isn't
+// set yet.
+static Module* module_new(Ctx* ctx, u8* name_buf, NameId name) {
   Module* m = (Module*)calloc(1, sizeof(Module));
   if (!m) {
-    ctx_error(ctx, src->filename, NULL, 0, "Out of memory.");
+    free(name_buf);
+    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
   }
-  ctx->modules.v[ctx->modules.num++] = m;
-  m->src = *src;
+  *vec_push(ctx, &ctx->modules) = m;
+  m->name = name;
+  m->name_buf = name_buf;
+  namemap_set(ctx, &ctx->module_ids, name, ctx->modules.num - 1);
+  return m;
+}
+
+static void module_init_globals(Ctx* ctx, Module* m) {
   // Most of the cost of growing a large table is page faults, so it starts
   // with room for a global every 64 bytes of source. A large calloc() gets
   // pages that the OS has already zeroed, so the pages that are never used
   // aren't touched.
   u32 cap = MIN_GLOBALS;
-  while (cap < (size_t)(src->end - src->buf) / 32) {
+  while (cap < (size_t)(m->src.end - m->src.buf) / 32) {
     cap *= 2;
   }
-  // lex_intern() reads past the end of the name.
-  m->name_buf = (u8*)calloc(len + LEX_PADDING, 1);
-  if (!m->name_buf || !namemap_init(&m->globals, cap)) {
-    ctx_error(ctx, src->filename, NULL, 0, "Out of memory.");
+  if (!namemap_init(&m->globals, cap)) {
+    ctx_error(ctx, m->src.filename, NULL, 0, "Out of memory.");
   }
-  memcpy(m->name_buf, name, len);
-  m->name = lex_intern(ctx, m->name_buf, len);
-  namemap_set(ctx, &ctx->module_ids, m->name, ctx->modules.num - 1);
-  return m;
 }
 
 // The root module's canonical name is its file name, without the directory or
@@ -1476,6 +1462,84 @@ static const char* root_name(const char* filename, u32* len) {
   }
   *len = (u32)n;
   return name;
+}
+
+// Returns the module that path[0..len) names, relative to the current
+// module's directory, and loads it if it's new. at is the path's offset, for
+// errors.
+static Module* import_module(Parser* p, const u8* path, u32 len, u32 at) {
+  Ctx* ctx = p->ls.ctx;
+  // TODO: Collapse "." and "..", so that each module has only one canonical
+  // name.
+  const Name* from = lex_name(ctx, p->mod->name);
+  u32 dir = from->len;
+  while (dir > 0 && from->str[dir - 1] != '/') {
+    --dir;
+  }
+  u32 name_len = dir + len;
+  u8* name_buf = name_buf_new(ctx, name_len);
+  memcpy(name_buf, from->str, dir);
+  memcpy(name_buf + dir, path, len);
+  NameId name = lex_intern(ctx, name_buf, name_len);
+  const u32* idx = namemap_find(&ctx->module_ids, name);
+  if (idx) {
+    // The module's name was already interned when it was added, so the Name
+    // doesn't point into name_buf.
+    free(name_buf);
+    return ctx->modules.v[*idx];
+  }
+  Module* m = module_new(ctx, name_buf, name);
+  // Files are found relative to the root module's directory.
+  const char* root = ctx->modules.v[0]->src.filename;
+  u32 unused;
+  u32 root_dir = (u32)(root_name(root, &unused) - root);
+  char* filename = (char*)malloc(root_dir + name_len + sizeof(".luv"));
+  if (!filename) {
+    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+  }
+  memcpy(filename, root, root_dir);
+  memcpy(filename + root_dir, name_buf, name_len);
+  memcpy(filename + root_dir + name_len, ".luv", sizeof(".luv"));
+  m->owns_src = true;
+  m->src.filename = filename;
+  size_t size;
+  u8* buf = ctx->load_file ? ctx->load_file(filename, &size) : NULL;
+  if (!buf) {
+    error_at(p, at, "Couldn't open import, looking for '%s'.", filename);
+  }
+  m->src.buf = buf;
+  m->src.end = buf + size;
+  module_init_globals(ctx, m);
+  return m;
+}
+
+// module -> {import} {toplevel_stat} EOS
+// import -> 'import' STRING ['as' name] end
+static void parse_module(Parser* p) {
+  next(p);
+  while (optional(p, TK_IMPORT)) {
+    // Escaped strings are decoded into Ctx.strbytes, which isn't padded for
+    // lex_intern(), and a module name has no reason to contain escapes. This
+    // also means that a path can't contain '\', so it always uses '/'.
+    if (T(p) != TK_STRING || (p->ls.pos.t.flags & TF_ESCAPED)) {
+      error_expected(p, "quoted module name");
+    }
+    u32 len;
+    const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
+    // TODO: Parse the module.
+    import_module(p, s, len, p->ls.pos.t.offset);
+    NameId name = lex_intern(p->ls.ctx, s, len);
+    next(p);
+    if (optional(p, TK_AS)) {
+      u32 at;
+      name = expect_name(p, "module alias", &at);
+    }
+    declare_global(p, name, GK_MODULE);
+    end_of_stat(p);
+  }
+  while (T(p) != TK_EOS) {
+    toplevel_stat(p);
+  }
 }
 
 // Undoes the file's bindings and frees the Parser.
@@ -1506,7 +1570,11 @@ void parse_file(Ctx* ctx, const FileBuf* src) {
   }
   u32 len;
   const char* name = root_name(src->filename, &len);
-  p->mod = module_new(ctx, name, len, src);
+  u8* name_buf = name_buf_new(ctx, len);
+  memcpy(name_buf, name, len);
+  p->mod = module_new(ctx, name_buf, lex_intern(ctx, name_buf, len));
+  p->mod->src = *src;
+  module_init_globals(ctx, p->mod);
   lex_init(&p->ls, ctx, src);
   parse_module(p);
   parse_end(p);

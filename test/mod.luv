@@ -1,0 +1,16 @@
+# IMPORTED
+
+struct Map{K, V}:
+    *K keys
+    *V vals
+    int len
+
+struct Box{T}:
+    T value
+
+struct Opt{T}:
+    T value
+    bool has
+
+struct Thing{T}:
+    T x
