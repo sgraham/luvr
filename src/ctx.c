@@ -2,7 +2,7 @@
 
 bool ctx_init(Ctx* ctx) {
   memset(ctx, 0, sizeof(*ctx));
-  if (!lex_intern_init(ctx)) {
+  if (!lex_intern_init(ctx) || !namemap_init(&ctx->module_ids, 16)) {
     ctx_free(ctx);
     return false;
   }
@@ -14,6 +14,14 @@ void ctx_free(Ctx* ctx) {
   free(ctx->names.v);
   free(ctx->strs.v);
   free(ctx->strbytes.v);
+  for (u32 i = 0; i < ctx->modules.num; ++i) {
+    Module* m = ctx->modules.v[i];
+    namemap_free(&m->globals);
+    free(m->name_buf);
+    free(m);
+  }
+  free(ctx->modules.v);
+  namemap_free(&ctx->module_ids);
   memset(ctx, 0, sizeof(*ctx));
 }
 

@@ -46,22 +46,22 @@ int main(int argc, char** argv) {
     fprintf(stderr, "usage: parsecheck [-q] file...\n");
     return 2;
   }
-  Ctx ctx;
-  if (!ctx_init(&ctx)) {
-    fprintf(stderr, "out of memory\n");
-    return 1;
-  }
   int failures = 0;
   size_t nbytes = 0;
   double secs = 0;
   for (int i = first; i < argc; ++i) {
     size_t len;
-    // Not freed because interned names point into it.
     u8* buf = load_file(argv[i], &len);
     if (!buf) {
       fprintf(stderr, "%s: cannot read\n", argv[i]);
       ++failures;
       continue;
+    }
+    // Each file is a separate program, so it has its own Ctx.
+    Ctx ctx;
+    if (!ctx_init(&ctx)) {
+      fprintf(stderr, "out of memory\n");
+      return 1;
     }
     jmp_buf jb;
     ctx.on_error = &jb;
@@ -72,18 +72,22 @@ int main(int argc, char** argv) {
       fprintf(stderr, "%s:%u:%u: error: %s\n", ctx.err_file ? ctx.err_file : argv[i], line, col,
               ctx.err_msg);
       ++failures;
+      // Interned names point into buf, so it's freed after ctx.
+      ctx_free(&ctx);
+      free(buf);
       continue;
     }
     FileBuf src = {argv[i], buf, buf + len};
     parse_file(&ctx, &src);
     secs += now_sec() - t0;
     nbytes += len;
+    ctx_free(&ctx);
+    free(buf);
   }
   if (!quiet) {
     int nfiles = argc - first;
     fprintf(stderr, "%d/%d files ok, %.1f MB parsed in %.3f s (%.0f MB/s)\n", nfiles - failures,
             nfiles, (double)nbytes / 1e6, secs, secs > 0 ? (double)nbytes / 1e6 / secs : 0.0);
   }
-  ctx_free(&ctx);
   return failures ? 1 : 0;
 }

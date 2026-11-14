@@ -18,7 +18,6 @@
 #include "luvr.h"
 
 typedef struct Local Local;
-typedef struct Module Module;
 typedef struct Parser Parser;
 typedef struct Targets Targets;
 
@@ -54,11 +53,6 @@ typedef enum GlobalKind {
 
 // Minimum size of Module.globals. It must be a power of 2.
 #define MIN_GLOBALS 64
-
-struct Module {
-  FileBuf src;
-  NameMap globals;  // NameId -> GlobalKind
-};
 
 struct Parser {
   LexState ls;
@@ -1415,7 +1409,8 @@ static void parse_module(Parser* p) {
   next(p);
   while (optional(p, TK_IMPORT)) {
     // Escaped strings are decoded into Ctx.strbytes, which isn't padded for
-    // lex_intern(), and a module name has no reason to contain escapes.
+    // lex_intern(), and a module name has no reason to contain escapes. This
+    // also means that a path can't contain '\', so it always uses '/'.
     if (T(p) != TK_STRING || (p->ls.pos.t.flags & TF_ESCAPED)) {
       error_expected(p, "quoted module name");
     }
@@ -1435,19 +1430,15 @@ static void parse_module(Parser* p) {
   }
 }
 
-// Undoes the file's bindings and frees the Parser and Module.
-static void parse_end(Parser* p) {
-  pop_locals(p, 0);
-  namemap_free(&p->mod->globals);
-  free(p->mod);
-  free(p);
-}
-
-void parse_file(Ctx* ctx, const FileBuf* src) {
-  // The Parser isn't a local, so that it's still valid after a longjmp.
-  // TODO: Freeing on error needs its own setjmp here. Ctx already grows its
-  // tables with vec_push(), so it'd be better to settle on one owner for
-  // allocations that error paths can clean up.
+// Adds a module named name[0..len) for src to ctx.
+static Module* module_new(Ctx* ctx, const char* name, u32 len, const FileBuf* src) {
+  vec_reserve(ctx, &ctx->modules, 1);
+  Module* m = (Module*)calloc(1, sizeof(Module));
+  if (!m) {
+    ctx_error(ctx, src->filename, NULL, 0, "Out of memory.");
+  }
+  ctx->modules.v[ctx->modules.num++] = m;
+  m->src = *src;
   // Most of the cost of growing a large table is page faults, so it starts
   // with room for a global every 64 bytes of source. A large calloc() gets
   // pages that the OS has already zeroed, so the pages that are never used
@@ -1456,15 +1447,50 @@ void parse_file(Ctx* ctx, const FileBuf* src) {
   while (cap < (size_t)(src->end - src->buf) / 32) {
     cap *= 2;
   }
-  Parser* p = (Parser*)malloc(sizeof(Parser));
-  Module* m = (Module*)malloc(sizeof(Module));
-  if (!p || !m || !namemap_init(&m->globals, cap)) {
-    free(p);
-    free(m);
+  // lex_intern() reads past the end of the name.
+  m->name_buf = (u8*)calloc(len + LEX_PADDING, 1);
+  if (!m->name_buf || !namemap_init(&m->globals, cap)) {
     ctx_error(ctx, src->filename, NULL, 0, "Out of memory.");
   }
-  m->src = *src;
-  p->mod = m;
+  memcpy(m->name_buf, name, len);
+  m->name = lex_intern(ctx, m->name_buf, len);
+  namemap_set(ctx, &ctx->module_ids, m->name, ctx->modules.num - 1);
+  return m;
+}
+
+// The root module's canonical name is its file name, without the directory or
+// .luv.
+static const char* root_name(const char* filename, u32* len) {
+  // Import paths can only use '/', so the root's path has to as well, or its
+  // canonical name could include a directory.
+  ASSERT(!strchr(filename, '\\'));
+  const char* name = filename;
+  for (const char* c = filename; *c; ++c) {
+    if (*c == '/') {
+      name = c + 1;
+    }
+  }
+  size_t n = strlen(name);
+  if (n > 4 && memcmp(name + n - 4, ".luv", 4) == 0) {
+    n -= 4;
+  }
+  *len = (u32)n;
+  return name;
+}
+
+// Undoes the file's bindings and frees the Parser.
+static void parse_end(Parser* p) {
+  pop_locals(p, 0);
+  free(p);
+}
+
+void parse_file(Ctx* ctx, const FileBuf* src) {
+  ASSERT(ctx->modules.num == 0);
+  // The Parser isn't a local, so that it's still valid after a longjmp.
+  Parser* p = (Parser*)malloc(sizeof(Parser));
+  if (!p) {
+    ctx_error(ctx, src->filename, NULL, 0, "Out of memory.");
+  }
   p->num_locals = 0;
   p->func_base = 0;
   p->func_depth = 0;
@@ -1478,6 +1504,9 @@ void parse_file(Ctx* ctx, const FileBuf* src) {
     ctx->on_error = outer;
     longjmp(*outer, 1);
   }
+  u32 len;
+  const char* name = root_name(src->filename, &len);
+  p->mod = module_new(ctx, name, len, src);
   lex_init(&p->ls, ctx, src);
   parse_module(p);
   parse_end(p);
