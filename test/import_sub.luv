@@ -1,0 +1,9 @@
+# OUT: 3, 7
+import "impsub"
+import "sub/subimp"
+
+def int main():
+    t = subimp.make()
+    u = impsub.Thing(3, 4)
+    print "\(t.x + t.y), \(u.x + u.y)"
+    return 0

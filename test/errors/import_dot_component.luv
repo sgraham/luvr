@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:4:8:import "./impsub"
+# CERR: {ssss}            ^ error: An import path can't have a '.' component.
+import "./impsub"
+
+def int main():
+    return 0

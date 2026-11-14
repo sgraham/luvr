@@ -1,0 +1,5 @@
+# IMPORTED
+import "../impsub"
+
+def impsub.Thing make():
+    return impsub.Thing(1, 2)

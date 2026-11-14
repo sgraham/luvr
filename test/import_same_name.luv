@@ -1,0 +1,11 @@
+# OUT: 5, 3
+import "impsub"
+
+struct Thing:
+    int z
+
+def int main():
+    t = Thing(5)
+    u = impsub.Thing(1, 2)
+    print "\(t.z), \(u.x + u.y)"
+    return 0

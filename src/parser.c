@@ -1485,6 +1485,45 @@ static const char* root_name(const char* filename, u32* len) {
   return name;
 }
 
+// Whether the last component of path[0..len) is "..".
+static bool ends_with_dotdot(const u8* path, u32 len) {
+  return len >= 2 && path[len - 1] == '.' && path[len - 2] == '.' &&
+         (len == 2 || path[len - 3] == '/');
+}
+
+// Removes empty components from path[0..len), and each ".." along with the
+// component before it, in place. Returns the new length. A ".." with
+// nothing before it to remove is kept, so a path above the root is still a
+// consistent name.
+static u32 normalize_path(u8* path, u32 len) {
+  u32 out_len = 0;
+  u32 start = 0;
+  while (start < len) {
+    u32 end = start;
+    while (end < len && path[end] != '/') {
+      ++end;
+    }
+    u32 part_len = end - start;
+    bool dotdot = part_len == 2 && path[start] == '.' && path[start + 1] == '.';
+    if (dotdot && out_len > 0 && !ends_with_dotdot(path, out_len)) {
+      while (out_len > 0 && path[out_len - 1] != '/') {
+        --out_len;
+      }
+      if (out_len > 0) {
+        --out_len;
+      }
+    } else if (part_len > 0) {
+      if (out_len > 0) {
+        path[out_len++] = '/';
+      }
+      memmove(path + out_len, path + start, part_len);
+      out_len += part_len;
+    }
+    start = end + 1;
+  }
+  return out_len;
+}
+
 // Parses m, and then returns p to where it was. Imports are before anything
 // else in a file, so p has no other state that could be seen or changed by
 // parsing m.
@@ -1506,8 +1545,13 @@ static void parse_import(Parser* p, Module* m) {
 // offset, for errors.
 static Module* import_module(Parser* p, const u8* path, u32 len, u32 at) {
   Ctx* ctx = p->ls.ctx;
-  // TODO: Collapse "." and "..", so that each module has only one canonical
-  // name.
+  // A '.' component never changes which module a path names, so it would
+  // only be another way to write the same import.
+  for (u32 i = 0; i < len; ++i) {
+    if (path[i] == '.' && (i == 0 || path[i - 1] == '/') && (i + 1 == len || path[i + 1] == '/')) {
+      error_at(p, at, "An import path can't have a '.' component.");
+    }
+  }
   const Name* from = lex_name(ctx, p->mod->name);
   u32 dir = from->len;
   while (dir > 0 && from->str[dir - 1] != '/') {
@@ -1517,6 +1561,9 @@ static Module* import_module(Parser* p, const u8* path, u32 len, u32 at) {
   u8* name_buf = name_buf_new(ctx, name_len);
   memcpy(name_buf, from->str, dir);
   memcpy(name_buf + dir, path, len);
+  u32 joined_len = name_len;
+  name_len = normalize_path(name_buf, name_len);
+  memset(name_buf + name_len, 0, joined_len - name_len);
   NameId name = lex_intern(ctx, name_buf, name_len);
   const u32* idx = namemap_find(&ctx->module_ids, name);
   if (idx) {
@@ -1555,7 +1602,12 @@ static void parse_module(Parser* p) {
     u32 len;
     const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
     import_module(p, s, len, p->ls.pos.t.offset);
-    NameId name = lex_intern(p->ls.ctx, s, len);
+    // The module is bound to the last component of its path.
+    u32 base = len;
+    while (base > 0 && s[base - 1] != '/') {
+      --base;
+    }
+    NameId name = lex_intern(p->ls.ctx, s + base, len - base);
     next(p);
     if (optional(p, TK_AS)) {
       u32 at;
