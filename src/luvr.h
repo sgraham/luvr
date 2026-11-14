@@ -534,6 +534,8 @@ struct Module {
   u8* name_buf;
   FileBuf src;      // filename and buf are freed with the Ctx
   NameMap globals;  // NameId -> GlobalKind
+  // The name that each import is bound to -> index in Ctx.modules.
+  NameMap imports;
 };
 
 // The part of LexState that changes as the lexer advances, other than the

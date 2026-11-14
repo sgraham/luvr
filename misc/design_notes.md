@@ -1635,6 +1635,14 @@ because locals are bound through `Name.binding`, and in the middle of a
 function the body would see that function's locals. If the `Name.binding`
 cache for globals is added, switching modules also has to rebind them.
 
+**Open: can a local reuse an import's name?** (2026-11-14) Inside a
+function, a name that's bound by an import has to be followed by `.`, so
+`someimp = 5` is an error ("Expecting '.' after module name.") rather than
+declaring a local. It's nice that module names become semi-reserved, but
+adding an import to old code could make an unrelated local invalid. To be
+revisited: either keep it, or let an assignment declare a local that shadows
+the import, as a local already shadows any other global.
+
 **Steps.**
 
 1. Split `Module` out of `Parser`, with `parse_file()` creating it, and

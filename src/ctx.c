@@ -17,6 +17,7 @@ void ctx_free(Ctx* ctx) {
   for (u32 i = 0; i < ctx->modules.num; ++i) {
     Module* m = ctx->modules.v[i];
     namemap_free(&m->globals);
+    namemap_free(&m->imports);
     free(m->name_buf);
     free((void*)m->src.filename);
     free((void*)m->src.buf);

@@ -183,9 +183,13 @@ static NameId expect_name(Parser* p, const char* what, u32* at) {
 
 // Global table
 
-static GlobalKind global_kind(Parser* p, NameId name) {
-  const u32* kind = namemap_find(&p->mod->globals, name);
+static GlobalKind module_global_kind(const Module* m, NameId name) {
+  const u32* kind = namemap_find(&m->globals, name);
   return kind ? (GlobalKind)*kind : GK_NONE;
+}
+
+static GlobalKind global_kind(Parser* p, NameId name) {
+  return module_global_kind(p->mod, name);
 }
 
 static void declare_global(Parser* p, NameId name, GlobalKind kind) {
@@ -325,11 +329,46 @@ static void type_params(Parser* p) {
   check_match(p, TK_RBRACE, TK_LBRACE, at);
 }
 
-// The rest of a module.TypeName type, after the '.'.
-static void qualified_type_rest(Parser* p) {
+// Imported modules
+
+// The module that name is bound to by an import, or NULL if it isn't an
+// import or a local shadows it.
+static const Module* imported_module(Parser* p, NameId name) {
+  if (name_of(p, name)->binding) {
+    return NULL;
+  }
+  const u32* idx = namemap_find(&p->mod->imports, name);
+  return idx ? p->ls.ctx->modules.v[*idx] : NULL;
+}
+
+// Checks that the current token, which follows `mod.`, is a type or variable
+// that m defines.
+static void check_module_member(Parser* p, const Module* m, NameId mod) {
+  const Name* mn = name_of(p, mod);
+  const Name* n = name_of(p, p->ls.pos.t.v.name);
+  GlobalKind kind = module_global_kind(m, p->ls.pos.t.v.name);
+  if (T(p) == TK_TYPENAME && kind != GK_TYPE) {
+    error_at(p, p->ls.pos.t.offset, "Type '%.*s' not found in imported module '%.*s'.",
+             (int)n->len, (const char*)n->str, (int)mn->len, (const char*)mn->str);
+  }
+  if (T(p) == TK_NAME && kind != GK_VAR && kind != GK_FUNC) {
+    error_at(p, p->ls.pos.t.offset, "Variable '%.*s' not found in imported module '%.*s'.",
+             (int)n->len, (const char*)n->str, (int)mn->len, (const char*)mn->str);
+  }
+}
+
+// The rest of a module.TypeName type, after the '.'. mod is the module's name,
+// at offset at.
+static void qualified_type_rest(Parser* p, NameId mod, u32 at) {
+  const Module* m = imported_module(p, mod);
+  if (!m) {
+    const Name* n = name_of(p, mod);
+    error_at(p, at, "Undefined module '%.*s'.", (int)n->len, (const char*)n->str);
+  }
   if (T(p) != TK_TYPENAME) {
     error_expected(p, "type name after module name");
   }
+  check_module_member(p, m, mod);
   next(p);
   if (T(p) == TK_LBRACE) {
     type_args(p);
@@ -384,11 +423,13 @@ static void type(Parser* p) {
         type_args(p);
       }
       return;
-    case TK_NAME:
+    case TK_NAME: {
+      NameId mod = p->ls.pos.t.v.name;
       next(p);
       check(p, TK_DOT);
-      qualified_type_rest(p);
+      qualified_type_rest(p, mod, at);
       return;
+    }
     case TK_TYPEOF:
       next(p);
       at = p->ls.pos.t.offset;
@@ -830,10 +871,8 @@ static void postfix(Parser* p, Shape* sh) {
         if (T(p) == TK_NAME) {
           *sh = SH_LVALUE;
         } else if (T(p) == TK_TYPENAME) {
-          if (*sh != SH_NAME) {
-            error_at(p, p->ls.pos.t.offset, "Unexpected type name after '.'.");
-          }
-          *sh = SH_TYPE;  // module.TypeName
+          // module.TypeName is handled by primary().
+          error_at(p, p->ls.pos.t.offset, "Unexpected type name after '.'.");
         } else {
           error_expected(p, "field name");
         }
@@ -890,6 +929,21 @@ static void primary(Parser* p, Shape* sh) {
     case TK_NAME: {
       NameId name = p->ls.pos.t.v.name;
       const Name* n = name_of(p, name);
+      const Module* m = imported_module(p, name);
+      if (m) {
+        next(p);
+        if (T(p) != TK_DOT) {
+          error_at(p, p->ls.pos.t.offset, "Expecting '.' after module name.");
+        }
+        next(p);
+        if (T(p) != TK_NAME && T(p) != TK_TYPENAME) {
+          error_expected(p, "name after module name");
+        }
+        check_module_member(p, m, name);
+        *sh = T(p) == TK_TYPENAME ? SH_TYPE : SH_LVALUE;
+        next(p);
+        break;
+      }
       bool defined = n->binding || n->is_builtin || global_kind(p, name) != GK_NONE;
       next(p);
       // A name followed by '=' is an assignment target, which declares the name
@@ -1153,7 +1207,7 @@ static u32 funcsig(Parser* p, bool is_method) {
   if (T(p) == TK_NAME) {
     next(p);
     if (optional(p, TK_DOT)) {  // module.Type return type
-      qualified_type_rest(p);
+      qualified_type_rest(p, name, at);
       name = expect_name(p, "function name", &at);
     }
   } else {
@@ -1184,7 +1238,7 @@ static u32 funcsig(Parser* p, bool is_method) {
       if (T(p) == TK_NAME) {
         next(p);
         if (optional(p, TK_DOT)) {  // module.Type param
-          qualified_type_rest(p);
+          qualified_type_rest(p, name, at);
           name = expect_name(p, "parameter name", &at);
         } else if (!(is_method && first)) {
           error_at(p, p->ls.pos.t.offset, "Parameter needs a type.");
@@ -1427,6 +1481,9 @@ static Module* module_new(Ctx* ctx, u8* name_buf, NameId name) {
   *vec_push(ctx, &ctx->modules) = m;
   m->name = name;
   m->name_buf = name_buf;
+  if (!namemap_init(&m->imports, 16)) {
+    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+  }
   namemap_set(ctx, &ctx->module_ids, name, ctx->modules.num - 1);
   return m;
 }
@@ -1481,10 +1538,10 @@ static void parse_import(Parser* p, Module* m) {
   p->ls.pos = pos;
 }
 
-// Returns the module that path[0..len) names, relative to the current
-// module's directory, and loads and parses it if it's new. at is the path's
-// offset, for errors.
-static Module* import_module(Parser* p, const u8* path, u32 len, u32 at) {
+// Returns the index in Ctx.modules of the module that path[0..len) names,
+// relative to the current module's directory, and loads and parses it if it's
+// new. at is the path's offset, for errors.
+static u32 import_module(Parser* p, const u8* path, u32 len, u32 at) {
   Ctx* ctx = p->ls.ctx;
   const char* err = path_import_is_invalid(path, len);
   if (err) {
@@ -1505,9 +1562,11 @@ static Module* import_module(Parser* p, const u8* path, u32 len, u32 at) {
     // The module's name was already interned when it was added, so the Name
     // doesn't point into name_buf.
     free(name_buf);
-    return ctx->modules.v[*idx];
+    return *idx;
   }
   Module* m = module_new(ctx, name_buf, name);
+  // Modules that m imports are added after it.
+  u32 m_idx = ctx->modules.num - 1;
   // Files are found relative to the root module's directory.
   const char* root = ctx->modules.v[0]->src.filename;
   u32 root_dir = path_dir_len((const u8*)root, (u32)strlen(root));
@@ -1519,7 +1578,7 @@ static Module* import_module(Parser* p, const u8* path, u32 len, u32 at) {
     error_at(p, at, "Couldn't open import, looking for '%s'.", filename);
   }
   parse_import(p, m);
-  return m;
+  return m_idx;
 }
 
 // module -> {import} {toplevel_stat} EOS
@@ -1535,7 +1594,7 @@ static void parse_module(Parser* p) {
     }
     u32 len;
     const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-    import_module(p, s, len, p->ls.pos.t.offset);
+    u32 idx = import_module(p, s, len, p->ls.pos.t.offset);
     // The module is bound to the last component of its path.
     u32 base = path_dir_len(s, len);
     NameId name = lex_intern(p->ls.ctx, s + base, len - base);
@@ -1545,6 +1604,7 @@ static void parse_module(Parser* p) {
       name = expect_name(p, "module alias", &at);
     }
     declare_global(p, name, GK_MODULE);
+    namemap_set(p->ls.ctx, &p->mod->imports, name, idx);
     end_of_stat(p);
   }
   while (T(p) != TK_EOS) {
