@@ -84,6 +84,7 @@ static void primary(Parser* p, Shape* sh);
 static void type(Parser* p);
 static void stat(Parser* p);
 static void suite(Parser* p);
+static void parse_module(Parser* p);
 
 // Token helpers
 
@@ -1484,9 +1485,25 @@ static const char* root_name(const char* filename, u32* len) {
   return name;
 }
 
+// Parses m, and then returns p to where it was. Imports are before anything
+// else in a file, so p has no other state that could be seen or changed by
+// parsing m.
+static void parse_import(Parser* p, Module* m) {
+  ASSERT(p->num_locals == 0 && p->func_depth == 0 && p->type_params == 0 && p->ls.interp_sp == 0);
+  Module* mod = p->mod;
+  FileBuf src = p->ls.src;
+  LexPos pos = p->ls.pos;
+  p->mod = m;
+  lex_init(&p->ls, p->ls.ctx, &m->src);
+  parse_module(p);
+  p->mod = mod;
+  p->ls.src = src;
+  p->ls.pos = pos;
+}
+
 // Returns the module that path[0..len) names, relative to the current
-// module's directory, and loads it if it's new. at is the path's offset, for
-// errors.
+// module's directory, and loads and parses it if it's new. at is the path's
+// offset, for errors.
 static Module* import_module(Parser* p, const u8* path, u32 len, u32 at) {
   Ctx* ctx = p->ls.ctx;
   // TODO: Collapse "." and "..", so that each module has only one canonical
@@ -1520,6 +1537,7 @@ static Module* import_module(Parser* p, const u8* path, u32 len, u32 at) {
   if (!module_read(ctx, m, filename)) {
     error_at(p, at, "Couldn't open import, looking for '%s'.", filename);
   }
+  parse_import(p, m);
   return m;
 }
 
@@ -1536,7 +1554,6 @@ static void parse_module(Parser* p) {
     }
     u32 len;
     const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-    // TODO: Parse the module.
     import_module(p, s, len, p->ls.pos.t.offset);
     NameId name = lex_intern(p->ls.ctx, s, len);
     next(p);

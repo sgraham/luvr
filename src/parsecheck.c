@@ -63,8 +63,12 @@ int main(int argc, char** argv) {
     if (setjmp(jb)) {
       u32 line, col;
       ctx_error_location(&ctx, &line, &col);
-      fprintf(stderr, "%s:%u:%u: error: %s\n", ctx.err_file ? ctx.err_file : argv[i], line, col,
-              ctx.err_msg);
+      const char* file = ctx.err_file ? ctx.err_file : argv[i];
+      if (line) {
+        fprintf(stderr, "%s:%u:%u: error: %s\n", file, line, col, ctx.err_msg);
+      } else {
+        fprintf(stderr, "%s: error: %s\n", file, ctx.err_msg);
+      }
       ++failures;
       ctx_free(&ctx);
       continue;
