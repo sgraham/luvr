@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:4:8:import "import_self"
+# CERR: {ssss}            ^ error: Import cycle: import_self -> import_self.
+import "import_self"
+
+def int main():
+    return 0

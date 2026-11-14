@@ -348,8 +348,8 @@ static void check_module_member(Parser* p, const Module* m, NameId mod) {
   const Name* n = name_of(p, p->ls.pos.t.v.name);
   GlobalKind kind = module_global_kind(m, p->ls.pos.t.v.name);
   if (T(p) == TK_TYPENAME && kind != GK_TYPE) {
-    error_at(p, p->ls.pos.t.offset, "Type '%.*s' not found in imported module '%.*s'.",
-             (int)n->len, (const char*)n->str, (int)mn->len, (const char*)mn->str);
+    error_at(p, p->ls.pos.t.offset, "Type '%.*s' not found in imported module '%.*s'.", (int)n->len,
+             (const char*)n->str, (int)mn->len, (const char*)mn->str);
   }
   if (T(p) == TK_NAME && kind != GK_VAR && kind != GK_FUNC) {
     error_at(p, p->ls.pos.t.offset, "Variable '%.*s' not found in imported module '%.*s'.",
@@ -1481,6 +1481,7 @@ static Module* module_new(Ctx* ctx, u8* name_buf, NameId name) {
   *vec_push(ctx, &ctx->modules) = m;
   m->name = name;
   m->name_buf = name_buf;
+  m->loading = true;
   if (!namemap_init(&m->imports, 16)) {
     ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
   }
@@ -1533,9 +1534,29 @@ static void parse_import(Parser* p, Module* m) {
   p->mod = m;
   lex_init(&p->ls, p->ls.ctx, &m->src);
   parse_module(p);
+  m->loading = false;
   p->mod = mod;
   p->ls.src = src;
   p->ls.pos = pos;
+}
+
+// Reports an import of ctx->modules.v[idx], which is still loading.
+NORETURN static void error_import_cycle(Parser* p, u32 idx, u32 at) {
+  // The modules that are loading are the chain of imports that led here, and
+  // they're in Ctx.modules in the same order.
+  Ctx* ctx = p->ls.ctx;
+  char chain[1000];
+  size_t len = 0;
+  for (u32 i = idx; i < ctx->modules.num && len < sizeof(chain); ++i) {
+    const Module* m = ctx->modules.v[i];
+    if (m->loading) {
+      const Name* n = lex_name(ctx, m->name);
+      len += (size_t)snprintf(chain + len, sizeof(chain) - len, "%.*s -> ", (int)n->len,
+                              (const char*)n->str);
+    }
+  }
+  const Name* n = lex_name(ctx, ctx->modules.v[idx]->name);
+  error_at(p, at, "Import cycle: %s%.*s.", chain, (int)n->len, (const char*)n->str);
 }
 
 // Returns the index in Ctx.modules of the module that path[0..len) names,
@@ -1562,6 +1583,9 @@ static u32 import_module(Parser* p, const u8* path, u32 len, u32 at) {
     // The module's name was already interned when it was added, so the Name
     // doesn't point into name_buf.
     free(name_buf);
+    if (ctx->modules.v[*idx]->loading) {
+      error_import_cycle(p, *idx, at);
+    }
     return *idx;
   }
   Module* m = module_new(ctx, name_buf, name);
@@ -1653,6 +1677,7 @@ void parse_file(Ctx* ctx, const char* path) {
   }
   lex_init(&p->ls, ctx, &p->mod->src);
   parse_module(p);
+  p->mod->loading = false;
   parse_end(p);
   ctx->on_error = outer;
 }

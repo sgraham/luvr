@@ -41,13 +41,16 @@ def commands(args, name):
         return ["clang"] + flags + srcs + ["-o", f"out/{name}"], None
 
 
+# The location is either {self}, or {dir}/file for an error in another file
+# in the test's directory, such as a module that it imports.
 def expected_error(path):
     text = open(path, encoding="utf-8").read()
-    loc = re.search(r"^# CERR: \{self\}:(\d+):(\d+):", text, re.M)
+    loc = re.search(r"^# CERR: (\{self\}|\{dir\}/[^:]+):(\d+):(\d+):", text, re.M)
     msg = re.search(r"^# CERR: \{ssss\} *\^ (error: .*)$", text, re.M)
     if not loc or not msg:
         return None
-    return f"{path}:{loc.group(1)}:{loc.group(2)}: {msg.group(1)}"
+    where = path if loc.group(1) == "{self}" else os.path.dirname(path) + loc.group(1)[len("{dir}") :]
+    return f"{where}:{loc.group(2)}:{loc.group(3)}: {msg.group(1)}"
 
 
 def is_imported(path):

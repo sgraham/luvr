@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {dir}/import_cycle_b.luv:2:8:import "import_cycle_a"
+# CERR: {ssss}                              ^ error: Import cycle: import_cycle_a -> import_cycle_b -> import_cycle_a.
+import "import_cycle_a"
+
+def int main():
+    return 0

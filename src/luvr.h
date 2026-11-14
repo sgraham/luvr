@@ -532,7 +532,10 @@ struct Module {
   NameId name;
   // A padded copy of the canonical name, which the Name may point into.
   u8* name_buf;
-  FileBuf src;      // filename and buf are freed with the Ctx
+  FileBuf src;  // filename and buf are freed with the Ctx
+  // Until it's been parsed. Importing a module that's still loading is an
+  // import cycle.
+  bool loading;
   NameMap globals;  // NameId -> GlobalKind
   // The name that each import is bound to -> index in Ctx.modules.
   NameMap imports;
