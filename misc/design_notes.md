@@ -1652,6 +1652,33 @@ cache for globals is added, switching modules also has to rebind them.
      1% slower (83.8 vs. 83.1 ms).
 2. Probably: improve the table's performance (swisstable or other layouts),
    depending on what step 1 measures.
+   - **Measured 2026-11-14** (desktop, ms). `bench/gen_globals.py` makes
+     files that reference globals: gref_rand (300k functions, 4 lines each,
+     references to uniformly random earlier globals), gref_near (the same,
+     but 90% to the last 64 definitions) and gref_small (2000 globals, 800
+     lines each, so the table stays in cache).
+
+     | | dumbbench | gref_rand | gref_near | gref_small |
+     |---|---|---|---|---|
+     | HEAD (`Name.global`) | 695.7 | 388.3 | 286.5 | 216.8 |
+     | NameId as hash, 64 slots | 709.3 | 407.0 | 296.7 | 221.8 |
+     | NameId × 2^64 / phi | 787.4 | 441.8 | 321.3 | 228.4 |
+     | NameId as hash, presized | 695.0 | 404.9 | 290.1 | 220.3 |
+     | Verstable, default hash | 779.4 | 434.9 | 326.1 | 234.3 |
+     | Verstable, NameId as bucket | 710.0 | 411.6 | 305.2 | 226.5 |
+
+     The memory access pattern decides it, much more than the table's
+     code. Any hash that spreads NameIds out costs 8–13% on the large
+     files, and Verstable is 1–3% slower than the simple table even with
+     NameId buckets. Its strengths (deletion without tombstones, high load
+     factors, chains that stay short) don't matter for a table that's
+     insert-only, at most half full, and keyed by dense integers.
+     Presizing to the next power of 2 that's at least file length / 32
+     slots avoids regrowing, which was mostly page faults, and makes
+     dumbbench level with HEAD. What's left is about 1.5 ns per reference
+     (gref_small), where `Name.global` was a load from a Name the lexer had
+     just touched. That isn't worth the `Name.binding` cache for now.
+     Decided: keep the simple table, presized.
 3. The loader callback, the dict of modules by canonical name, and loading
    imports. Driven by `test/errors/todo/import_does_not_exist.luv`. The test
    runner skips files marked `# IMPORTED`.

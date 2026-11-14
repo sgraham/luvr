@@ -59,16 +59,15 @@ struct Global {
   GlobalKind kind;  // GK_NONE in an empty slot
 };
 
-// Initial size of Module.globals. It must be a power of 2.
+// Minimum size of Module.globals. It must be a power of 2.
 #define MIN_GLOBALS 64
 
 struct Module {
   FileBuf src;
-  // Open addressing with linear probing. It's kept at most half full, so a
-  // probe always reaches an empty slot.
-  Global* globals;
-  u32 globals_mask;
-  u32 num_globals;
+  // Open addressing with linear probing. cap is a power of 2, and it's kept
+  // at most half full, so a probe always reaches an empty slot. It's rehashed
+  // into a new buffer to grow, so it isn't grown with vec_reserve().
+  VEC(Global) globals;
 };
 
 struct Parser {
@@ -199,62 +198,65 @@ static NameId expect_name(Parser* p, const char* what, u32* at) {
 
 // Global table
 
-// NameIds are allocated in the order that names are first seen, so a
-// module's globals are usually close together. Using the id itself keeps
-// declarations that are near each other in the source in nearby slots, and on
-// a file with many globals that's much faster than spreading them out with a
-// hash.
+// A NameId is an index into Ctx.names, allocated in the order that names are
+// first interned, so ids are compact, and a module's globals are usually close
+// together. Using the id itself keeps declarations that are near each other in
+// the source in nearby slots, and on a file with many globals that's much
+// faster than spreading them out with a hash. An array indexed directly by the
+// id would avoid probing, but each module's array would have to cover every
+// name in the Ctx, and grow as more names are interned.
 static u32 global_hash(NameId name) {
   return name.idx;
 }
 
 static GlobalKind global_kind(Parser* p, NameId name) {
   const Module* m = p->mod;
-  u32 i = global_hash(name) & m->globals_mask;
+  u32 mask = m->globals.cap - 1;
+  u32 i = global_hash(name) & mask;
   for (;;) {
-    const Global* g = &m->globals[i];
+    const Global* g = &m->globals.v[i];
     if (g->kind == GK_NONE || g->name.idx == name.idx) {
       return g->kind;
     }
-    i = (i + 1) & m->globals_mask;
+    i = (i + 1) & mask;
   }
 }
 
 static void globals_grow(Parser* p) {
   Module* m = p->mod;
-  u32 size = (m->globals_mask + 1) * 2;
-  Global* globals = (Global*)calloc(size, sizeof(Global));
-  if (!globals) {
+  u32 cap = m->globals.cap * 2;
+  Global* v = (Global*)calloc(cap, sizeof(Global));
+  if (!v) {
     ctx_error(p->ls.ctx, NULL, NULL, 0, "Out of memory.");
   }
-  u32 mask = size - 1;
-  for (u32 j = 0; j <= m->globals_mask; ++j) {
-    const Global* g = &m->globals[j];
+  u32 mask = cap - 1;
+  for (u32 j = 0; j < m->globals.cap; ++j) {
+    const Global* g = &m->globals.v[j];
     if (g->kind == GK_NONE) {
       continue;
     }
     u32 i = global_hash(g->name) & mask;
-    while (globals[i].kind != GK_NONE) {
+    while (v[i].kind != GK_NONE) {
       i = (i + 1) & mask;
     }
-    globals[i] = *g;
+    v[i] = *g;
   }
-  free(m->globals);
-  m->globals = globals;
-  m->globals_mask = mask;
+  free(m->globals.v);
+  m->globals.v = v;
+  m->globals.cap = cap;
 }
 
 // Sets name's kind, adding it if it's new.
 static void declare_global(Parser* p, NameId name, GlobalKind kind) {
   Module* m = p->mod;
-  u32 i = global_hash(name) & m->globals_mask;
+  u32 mask = m->globals.cap - 1;
+  u32 i = global_hash(name) & mask;
   for (;;) {
-    Global* g = &m->globals[i];
+    Global* g = &m->globals.v[i];
     if (g->kind == GK_NONE) {
       g->name = name;
       g->kind = kind;
-      ++m->num_globals;
-      if (m->num_globals * 2 > m->globals_mask + 1) {
+      if (++m->globals.num * 2 > m->globals.cap) {
         globals_grow(p);
       }
       return;
@@ -263,15 +265,14 @@ static void declare_global(Parser* p, NameId name, GlobalKind kind) {
       g->kind = kind;
       return;
     }
-    i = (i + 1) & m->globals_mask;
+    i = (i + 1) & mask;
   }
 }
 
 // Locals
 //
 // Scope is the whole function: a local is declared by its first assignment
-// and is visible from there to the end of the function. Only locals are
-// resolved so far. Other names aren't looked up anywhere yet.
+// and is visible from there to the end of the function.
 
 static Name* name_of(Parser* p, NameId name) {
   return &p->ls.ctx->names.v[name.idx];
@@ -1509,7 +1510,7 @@ static void parse_module(Parser* p) {
 // Undoes the file's bindings and frees the Parser and Module.
 static void parse_end(Parser* p) {
   pop_locals(p, 0);
-  free(p->mod->globals);
+  free(p->mod->globals.v);
   free(p->mod);
   free(p);
 }
@@ -1519,9 +1520,17 @@ void parse_file(Ctx* ctx, const FileBuf* src) {
   // TODO: Freeing on error needs its own setjmp here. Ctx already grows its
   // tables with vec_push(), so it'd be better to settle on one owner for
   // allocations that error paths can clean up.
+  // Most of the cost of growing a large table is page faults, so it starts
+  // with room for a global every 64 bytes of source. A large calloc() gets
+  // pages that the OS has already zeroed, so the pages that are never used
+  // aren't touched.
+  u32 cap = MIN_GLOBALS;
+  while (cap < (size_t)(src->end - src->buf) / 32) {
+    cap *= 2;
+  }
   Parser* p = (Parser*)malloc(sizeof(Parser));
   Module* m = (Module*)malloc(sizeof(Module));
-  Global* globals = (Global*)calloc(MIN_GLOBALS, sizeof(Global));
+  Global* globals = (Global*)calloc(cap, sizeof(Global));
   if (!p || !m || !globals) {
     free(p);
     free(m);
@@ -1529,9 +1538,9 @@ void parse_file(Ctx* ctx, const FileBuf* src) {
     ctx_error(ctx, src->filename, NULL, 0, "Out of memory.");
   }
   m->src = *src;
-  m->globals = globals;
-  m->globals_mask = MIN_GLOBALS - 1;
-  m->num_globals = 0;
+  m->globals.v = globals;
+  m->globals.num = 0;
+  m->globals.cap = cap;
   p->mod = m;
   p->num_locals = 0;
   p->func_base = 0;
