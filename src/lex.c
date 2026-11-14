@@ -39,7 +39,7 @@ const char* tok_kind_name(TokenKind kind) {
 }
 
 #define lex_error(ls, at, ...) \
-  ctx_error((ls)->ctx, (ls)->filename, (ls)->buf, (u32)((at) - (ls)->buf), __VA_ARGS__)
+  ctx_error((ls)->ctx, (ls)->src.filename, (ls)->src.buf, (u32)((at) - (ls)->src.buf), __VA_ARGS__)
 
 // Interning. The table is intentionally simple so that it's a baseline to
 // benchmark alternatives against.
@@ -230,7 +230,7 @@ const u8* lex_str(const LexState* ls, const Token* t, u32* len) {
     return ls->ctx->strbytes.v + r->off;
   }
   *len = t->v.len;
-  return ls->buf + t->offset + 1;
+  return ls->src.buf + t->offset + 1;
 }
 
 // Layout. Each logical line boundary is a NEWLINE if the indent is unchanged,
@@ -257,10 +257,10 @@ static const u8* next_content_line(LexState* ls, const u8* p, const u8** bol) {
       continue;
     }
     if (*q == '#') {
-      const u8* nl = (const u8*)memchr(q, '\n', (size_t)(ls->end - q));
+      const u8* nl = (const u8*)memchr(q, '\n', (size_t)(ls->src.end - q));
       if (!nl) {
-        *bol = ls->end;
-        return ls->end;
+        *bol = ls->src.end;
+        return ls->src.end;
       }
       p = nl + 1;
       continue;
@@ -271,8 +271,8 @@ static const u8* next_content_line(LexState* ls, const u8* p, const u8** bol) {
 }
 
 static void lex_eof(LexState* ls, Token* t) {
-  t->offset = (u32)(ls->end - ls->buf);
-  ls->pos.p = ls->end;
+  t->offset = (u32)(ls->src.end - ls->src.buf);
+  ls->pos.p = ls->src.end;
   if (ls->pos.indent) {
     ls->pos.pending_dedents = ls->pos.indent - 1;
     ls->pos.indent = 0;
@@ -286,7 +286,7 @@ static void lex_eof(LexState* ls, Token* t) {
 static void lex_layout(LexState* ls, Token* t, const u8* nl) {
   const u8* bol;
   const u8* q = next_content_line(ls, nl + 1, &bol);
-  if (q >= ls->end) {
+  if (q >= ls->src.end) {
     lex_eof(ls, t);
     return;
   }
@@ -301,18 +301,18 @@ static void lex_layout(LexState* ls, Token* t, const u8* nl) {
   ls->pos.p = q;
   if (level == ls->pos.indent) {
     t->kind = TK_NEWLINE;
-    t->offset = (u32)(nl - ls->buf);
+    t->offset = (u32)(nl - ls->src.buf);
   } else if (level == ls->pos.indent + 1u) {
     ls->pos.indent = level;
     t->kind = TK_INDENT;
-    t->offset = (u32)(q - ls->buf);
+    t->offset = (u32)(q - ls->src.buf);
   } else if (level > ls->pos.indent) {
     lex_error(ls, q, "Unexpected indent of more than one level.");
   } else {
     ls->pos.pending_dedents = ls->pos.indent - level - 1;
     ls->pos.indent = level;
     t->kind = TK_DEDENT;
-    t->offset = (u32)(q - ls->buf);
+    t->offset = (u32)(q - ls->src.buf);
   }
 }
 
@@ -361,7 +361,7 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
   u64 v = 0;
   bool overflow = false;
   bool is_float = false;
-  t->offset = (u32)(p - ls->buf);
+  t->offset = (u32)(p - ls->src.buf);
 
   if (p[0] == '0' && (p[1] == 'x' || p[1] == 'o' || p[1] == 'b')) {
     u32 base = p[1] == 'x' ? 16 : p[1] == 'o' ? 8 : 2;
@@ -567,7 +567,7 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, bool cont) 
   const u8* run = s;  // start of not-yet-copied bytes (escaped mode)
   bool escaped = false;
   u32 bstart = 0;
-  t->offset = (u32)(delim - ls->buf);
+  t->offset = (u32)(delim - ls->src.buf);
   for (;;) {
     u8 c = *q;
     if (c == '"' || (c == '\\' && q[1] == '(')) {
@@ -583,7 +583,7 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, bool cont) 
       run = q;
       continue;
     }
-    if (c == '\n' || (c == 0 && q >= ls->end)) {
+    if (c == '\n' || (c == 0 && q >= ls->src.end)) {
       lex_error(ls, delim,
                 cont ? "Unterminated string after interpolation." : "Unterminated string.");
     }
@@ -612,29 +612,27 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, bool cont) 
 
 // Main lexer
 
-void lex_init(LexState* ls, Ctx* ctx, const char* filename, const u8* buf, size_t len) {
+void lex_init(LexState* ls, Ctx* ctx, const FileBuf* src) {
   memset(ls, 0, sizeof(*ls));
   ls->ctx = ctx;
-  ls->filename = filename;
-  ls->buf = buf;
-  ls->end = buf + len;
-  if (len >= 0xfffffff0u) {
-    ctx_error(ctx, filename, NULL, 0, "File is larger than the 4 GB limit.");
+  ls->src = *src;
+  if ((size_t)(src->end - src->buf) >= 0xfffffff0u) {
+    ctx_error(ctx, src->filename, NULL, 0, "File is larger than the 4 GB limit.");
   }
   const u8* bol;
-  const u8* q = next_content_line(ls, buf, &bol);
-  if (q < ls->end && q != bol) {
+  const u8* q = next_content_line(ls, src->buf, &bol);
+  if (q < ls->src.end && q != bol) {
     lex_error(ls, q, "Unexpected indent on the first line.");
   }
   ls->pos.p = q;
 }
 
-#define TOK(k, n)                   \
-  do {                              \
-    t->kind = (k);                  \
-    t->offset = (u32)(p - ls->buf); \
-    ls->pos.p = p + (n);            \
-    return;                         \
+#define TOK(k, n)                       \
+  do {                                  \
+    t->kind = (k);                      \
+    t->offset = (u32)(p - ls->src.buf); \
+    ls->pos.p = p + (n);                \
+    return;                             \
   } while (0)
 
 #define OPEN(k)              \
@@ -671,8 +669,8 @@ void lex_next(LexState* ls) {
 
       case '#': {
         // The '\n' isn't skipped so that it's still seen as a line boundary.
-        const u8* nl = (const u8*)memchr(p, '\n', (size_t)(ls->end - p));
-        p = nl ? nl : ls->end;
+        const u8* nl = (const u8*)memchr(p, '\n', (size_t)(ls->src.end - p));
+        p = nl ? nl : ls->src.end;
         continue;
       }
 
@@ -688,7 +686,7 @@ void lex_next(LexState* ls) {
         return;
 
       case 0:
-        if (p >= ls->end) {
+        if (p >= ls->src.end) {
           lex_eof(ls, t);
           return;
         }
@@ -827,7 +825,7 @@ void lex_next(LexState* ls) {
           u32 len = (u32)(p - s);
           u32 idx = intern(ls->ctx, s, len, hash_ident(s, len), 0);
           t->kind = ls->ctx->names.v[idx].kind;
-          t->offset = (u32)(s - ls->buf);
+          t->offset = (u32)(s - ls->src.buf);
           t->v.name = (NameId){idx};
           ls->pos.p = p;
           return;

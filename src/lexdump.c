@@ -116,7 +116,7 @@ static void check_rewind(LexState* ls) {
   lex_rewind(ls, &mark);
   lex_past_close(ls, depth);
   if (!lex_same_pos_for_testing(ls, &first, &ls->pos)) {
-    ctx_error(ls->ctx, ls->filename, ls->buf, mark.t.offset,
+    ctx_error(ls->ctx, ls->src.filename, ls->src.buf, mark.t.offset,
               "Lexing again after rewinding gave a different state.");
   }
   lex_rewind(ls, &mark);
@@ -153,7 +153,8 @@ static int run_file(Ctx* ctx,
     return 1;
   }
   double t0 = now_sec();
-  lex_init(&ls, ctx, path, buf, len);
+  FileBuf src = {path, buf, buf + len};
+  lex_init(&ls, ctx, &src);
   if (mode == MODE_DUMP) {
     // Token offsets only increase, so line and column are tracked
     // incrementally.

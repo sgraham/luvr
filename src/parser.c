@@ -93,7 +93,7 @@ static void next(Parser* p) {
 }
 
 #define error_at(p, offset, ...) \
-  ctx_error((p)->ls.ctx, (p)->ls.filename, (p)->ls.buf, (offset), __VA_ARGS__)
+  ctx_error((p)->ls.ctx, (p)->ls.src.filename, (p)->ls.src.buf, (offset), __VA_ARGS__)
 
 // Describes the current token for error messages.
 static const char* describe(Parser* p, char* buf, size_t size) {
@@ -1439,14 +1439,14 @@ static void parse_end(Parser* p) {
   free(p);
 }
 
-void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len) {
+void parse_file(Ctx* ctx, const FileBuf* src) {
   // The Parser isn't a local, so that it's still valid after a longjmp.
   // TODO: Freeing on error needs its own setjmp here. Ctx already grows its
   // tables with vec_push(), so it'd be better to settle on one owner for
   // allocations that error paths can clean up.
   Parser* p = (Parser*)malloc(sizeof(Parser));
   if (!p) {
-    ctx_error(ctx, filename, NULL, 0, "Out of memory.");
+    ctx_error(ctx, src->filename, NULL, 0, "Out of memory.");
   }
   p->num_locals = 0;
   p->func_base = 0;
@@ -1463,7 +1463,7 @@ void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len) {
     ctx->on_error = outer;
     longjmp(*outer, 1);
   }
-  lex_init(&p->ls, ctx, filename, buf, len);
+  lex_init(&p->ls, ctx, src);
   parse_module(p);
   parse_end(p);
   ctx->on_error = outer;

@@ -1,6 +1,7 @@
 #pragma once
 
 typedef struct Ctx Ctx;
+typedef struct FileBuf FileBuf;
 typedef struct LexPos LexPos;
 typedef struct LexState LexState;
 typedef struct Name Name;
@@ -349,10 +350,7 @@ NORETURN void ctx_error_unclosed(const LexState* ls,
 // Returns normally if the file is syntactically valid. On the first syntax
 // error, the message and location are stored in ctx (see
 // ctx_error_location()) and it longjmps to ctx->on_error.
-//
-// As with lex_init(), buf must have LEX_PADDING zero bytes after len and
-// must outlive ctx.
-void parse_file(Ctx* ctx, const char* filename, const u8* buf, size_t len);
+void parse_file(Ctx* ctx, const FileBuf* src);
 
 // Lexer
 //
@@ -438,6 +436,14 @@ struct StrRef {
   u32 len;
 };
 
+// A source file. buf is followed by LEX_PADDING zero bytes, and must outlive
+// the Ctx, because interned names point into it.
+struct FileBuf {
+  const char* filename;  // for errors
+  const u8* buf;
+  const u8* end;  // buf + len
+};
+
 // The part of LexState that changes as the lexer advances, other than the
 // interpolation stack. A checkpoint is a copy of it.
 struct LexPos {
@@ -450,9 +456,7 @@ struct LexPos {
 
 struct LexState {
   Ctx* ctx;
-  const char* filename;
-  const u8* buf;  // start of source, followed by LEX_PADDING zero bytes
-  const u8* end;  // buf + len
+  FileBuf src;
   // bracket_depth at each open \(. These aren't in LexPos, so a checkpoint has
   // to be restored at the same depth of interpolation that it was made at.
   u8 interp_sp;
@@ -460,10 +464,9 @@ struct LexState {
   LexPos pos;
 };
 
-// buf must have LEX_PADDING zero bytes after len, and must outlive ctx because
-// interned names point into it. It's an error for the first line with content
-// to be indented. The first token isn't read until lex_next() is called.
-void lex_init(LexState* ls, Ctx* ctx, const char* filename, const u8* buf, size_t len);
+// It's an error for the first line with content to be indented. The first
+// token isn't read until lex_next() is called.
+void lex_init(LexState* ls, Ctx* ctx, const FileBuf* src);
 
 void lex_next(LexState* ls);
 

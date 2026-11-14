@@ -105,6 +105,7 @@ grammar is LL(1). The rest are local.
 | D21 | **decided** 2026-11-08 (provisional), **revised** 2026-11-12 | Generics use `{}`: `List{int}`, `struct Pair{A, B}`, `def T max{T}(...)`, explicit `max{u64}(...)`, inferred by default. Monomorphized by re-parsing the body per instantiation. Revised: type parameters are exactly one capital letter (`[A-Z]`), and a single capital letter is always a type parameter, never a struct name. `{...}` lists are still required and give the order of explicit type arguments. A return type that uses parameters before `{T}` is checked afterwards with a 26-bit mask, so binding stays single-pass. Options explored (`<>`, `[]`, `'`, `!`, parameter placement, `$T`, alphabetical order) are recorded in D21, since the user may revisit this after writing generic code. **Revised 2026-11-13:** no free generic functions. Type parameters only come from a struct's list or a method's receiver, so type arguments are never inferred from function arguments. Free generics can be added later without breaking anything. |
 | D22 | **decided** 2026-11-08 | Methods (`on`): keyed on (generic type, name), no specialization, no methods on pointers, methods only in the receiver type's own module (builtin types: the prelude, D22a open), no free-function overloading. Static methods (`List{int}.new()`) and dunders as operator spellings. A method is a free function with nicer syntax and a namespace: `xyz.f(5)` is `Xyz.f(&xyz, 5)`. |
 | D23 | **open** 2026-11-12, option B preferred | Arrays, lists and slices, and how their memory is managed. What `a = [1, 2, 3]` is, what `a[1:]` is, what a comprehension produces, and what the user has to do to free each of them. This affects literal typing, comprehensions (D10), `[]T`/`{K}V` (D21, D22a) and likely more syntax, so it's settled before further type work. Option A: lists in locals own a region, a current pool, copying results out of scratch blocks. **Option B (preferred):** one dynamically scoped current arena that every allocation goes into, `with Arena():` and `into a:` blocks, and opt-in storage annotations. Under B: literals are lists, slicing copies, comprehensions produce lists, views are deferred to a later `View{T}`/`Slice{T}` type. Strings are immutable `{ptr, len}` with a builder, structs are values, `[]T` is `*List{T}`, and `&Stuff(...)` allocates in the current arena. |
+| D24 | **decided** 2026-11-13, not implemented | Modules and imports. A module's canonical name is its path relative to the root, normalized lexically, and keys a dict of `Module`s on Ctx, so each file is loaded and parsed once however it's imported. Files are loaded through a callback on Ctx. A `Module` (name, buffer, table of globals) lasts as long as the Ctx, and a `Parser` is per-parse state that points at one. Globals move from `Name.global` to the module's table, with a `Name.binding` cache only if the table probe costs too much. Resolves D21's cross-module instantiation question: the one active Parser is re-pointed at the defining module. |
 
 ### D1 ★ Single-pass emit vs. building an AST
 
@@ -838,6 +839,9 @@ records. Within one module, deferring is enough: globals can't be
 redefined, and a name defined after the generic but before the
 instantiation was already reported as undefined by the definition parse.
 
+Resolved by D24 (2026-11-13): an instantiation is parsed by the same Parser,
+re-pointed at the defining module, so it sees that module's globals.
+
 **Decided (2026-11-08, provisional): `{}`.** The user expects to revisit it
 after writing code that uses generics.
 
@@ -1530,6 +1534,123 @@ copy.**
 per-statement scratch arena (statement temporaries, from option A). Keep it
 if the compiler can elide temporaries cheaply.
 
+
+### D24 Modules and imports
+
+Decided 2026-11-13, not implemented yet.
+
+**Canonical names.** Each source file is a module. Its canonical name is
+its path relative to the root (the main file's directory), normalized
+lexically, without `.luv`. An import path is relative to the importing
+file's directory, so joining the two and collapsing `.` and `..` gives the
+canonical name. `import "x"` in a root file and `import "../../x"` in
+`sub/dir/y.luv` are both the module `x`. A path that goes above the root
+normalizes to `../x`, which is still a consistent key. Normalization doesn't
+touch the filesystem, so a file reached through two symlinked paths is two
+modules.
+
+**Loading.** Ctx has a dict from canonical name to `Module`. Importing a
+module that's already in the dict only binds the name (or `as` alias) to it,
+and nothing is parsed again. Otherwise the module is loaded and parsed
+completely before the importer continues past its import list. Imports come
+first in a file (D17), so at that point the importer has no locals, and no
+globals other than the module names it has already imported. Importing a
+module that's still being loaded is an import cycle, and an error.
+
+Files are read through a callback on Ctx that returns a buffer followed by
+`LEX_PADDING` zero bytes, or fails ("Couldn't open import, looking for
+'test/errors/nopes.luv'."). The library itself has no stdio (D16).
+`parsecheck` supplies a callback built from its `load_file()`.
+
+**Module and Parser.** A `Module` lasts as long as the Ctx. It has the
+canonical name, the source, a loading/done state, and the table of
+globals. The source is kept so that generic bodies can be re-lexed. A
+`Parser` is only the state of parsing, and points at the Module it's
+currently in: the lexer, locals, `func_depth` and `type_params`.
+
+The source is a `FileBuf`, which Module owns. `LexState` has a copy of the
+Module's `FileBuf`, which is only changed when the Parser switches modules.
+The lexer reads `buf` and `end` on every token, so it uses its copy rather
+than going through a Module pointer, and `lex.c` doesn't need to know about
+Modules.
+
+```c
+struct FileBuf {
+  const char* filename;  // for errors
+  const u8* buf;         // followed by LEX_PADDING zero bytes
+  const u8* end;         // buf + len
+};
+
+struct Module {
+  const char* path;  // canonical name, also the key in Ctx's dict
+  FileBuf src;       // kept so generic bodies can be re-lexed
+  u8 state;          // loading or done, to detect import cycles
+  // table: NameId -> Global
+};
+```
+
+**One active Parser.** `parse_file()` allocates a single Parser, and it's
+used for the main file, every imported module, and every instantiation.
+Each of those starts at a point where the Parser's state is empty apart
+from the lexer and its Module: imports come first in a file (D17), and
+instantiations are queued to the end of a top-level item (D21). So there's
+no locals, `func_depth` and `type_params` are 0, and the lexer isn't inside
+an interpolation. Switching to another module (or another place in the same
+one) saves the Module pointer, the `FileBuf` and `LexPos`, points them at
+the new source and offset, and restores them afterwards. That's less than
+64 bytes, so an import nests by saving it on the C stack. Instantiations
+found during an instantiation are queued rather than nested.
+
+The switch asserts that the state really is empty (`num_locals`,
+`func_depth`, `type_params` and `interp_sp` are 0). A new Parser field that
+isn't empty at a top-level boundary fails that assert at the switch,
+rather than needing a full snapshot of the Parser.
+
+**Globals.** The module's table, keyed by NameId, is where globals live. It's
+needed for `mod.name` anyway, which looks a name up in another module's
+globals. An entry is a Global record. For now it's only a `GlobalKind`, and
+it's where the type, the declaration offset and the codegen symbol will go.
+`Name.global`, `Parser.globals` (the per-file list of NameIds) and
+`pop_globals()` are removed.
+
+Unqualified names are looked up in the table too. That's a hash probe for
+every non-local name, in a table that can be large (dumbbench has 1.25M
+top-level functions) and so often not in cache, where `Name.global` is a
+load from a Name the lexer has just touched. If the probe is measurably
+slower, a cache can be added afterwards: `Name.binding` points at the active
+module's Global record. Locals already save and restore `binding`, so
+shadowing works without changes. The costs are rebinding names when the
+active module changes, and a tag to tell a Local from a Global. Adding the
+cache doesn't change anything else, so it's fine to start without it. The
+table's own performance (swisstable or other layouts) probably needs a
+separate investigation once it exists.
+
+**Generic instantiation across modules (D21).** A body is instantiated by
+switching the Parser to the module that defines it, with the lexer at the
+body's offset. Names in the body resolve against that module's globals, so
+its private helpers work, and a name that both modules define binds to the
+right one. Within one module it's the same switch without changing the
+Module. Instantiations are queued to the end of the current top-level item,
+because locals are bound through `Name.binding`, and in the middle of a
+function the body would see that function's locals. If the `Name.binding`
+cache for globals is added, switching modules also has to rebind them.
+
+**Steps.**
+
+1. Split `Module` out of `Parser`, with `parse_file()` creating it, and
+   `FileBuf` out of `LexState`. Move globals into the module's table, with
+   all lookups through it, and remove `Name.global`. Bench against HEAD on
+   the desktop.
+2. Probably: improve the table's performance (swisstable or other layouts),
+   depending on what step 1 measures.
+3. The loader callback, the dict of modules by canonical name, and loading
+   imports. Driven by `test/errors/todo/import_does_not_exist.luv`. The test
+   runner skips files marked `# IMPORTED`.
+4. Look up `mod.name` in the imported module's table. Driven by
+   `import_wrong_func`, `import_wrong_type` and
+   `import_treating_module_as_variable` in `test/errors/todo/`.
+5. Report import cycles as an error.
+
 ---
 
 ## 3. Grammar sketch (with the recommendations applied)
@@ -1832,6 +1953,14 @@ Each step is measurable on its own.
      Get hardware counters (L1 misses, split loads) on the desktop, which
      needs `perf_event_paranoid` lowered. Try LTO and PGO, and noinline on
      cold parser paths.
+   - To check later: there's only one active Parser (D24), so it could be a
+     file static in `parser.c` instead of a `Parser*` passed to every
+     function. Its fields would then be at fixed addresses, which frees a
+     register and might let the compiler fold addresses, and the static
+     could be `alignas(64)` so that where `LexPos` lands no longer depends
+     on `malloc`. The cost is that the library isn't reentrant, so two Ctxs
+     can't parse at once (on different threads). Measure whether it's
+     notably faster before deciding.
 7. **Real code generator** behind the interface: luv60's IR, sqbe, or a
    bytecode interpreter in the spirit of `rewrite.txt`'s reference
    implementation.
@@ -1852,7 +1981,7 @@ bench/                      # scripts comparing against luac -p and luv60
 
 ## 7. Decisions that are the user's call
 
-Tracked in the **Decision log** at the top of section 2. Open: D20 (general `for`). Provisional: D21 (generics syntax). Open: D22a (methods on builtin types and the prelude), D23 (arrays, lists, slices and their memory). Deferred: D15 (to measurement), D5b (until
+Tracked in the **Decision log** at the top of section 2. Open: D20 (general `for`). Provisional: D21 (generics syntax). Open: D22a (methods on builtin types and the prelude), D23 (arrays, lists, slices and their memory). Decided, not implemented: D24 (modules and imports). Deferred: D15 (to measurement), D5b (until
 real code needs it).
 
 ---

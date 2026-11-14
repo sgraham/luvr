@@ -74,7 +74,8 @@ int main(int argc, char** argv) {
       ++failures;
       continue;
     }
-    parse_file(&ctx, argv[i], buf, len);
+    FileBuf src = {argv[i], buf, buf + len};
+    parse_file(&ctx, &src);
     secs += now_sec() - t0;
     nbytes += len;
   }
