@@ -106,6 +106,8 @@ grammar is LL(1). The rest are local.
 | D22 | **decided** 2026-11-08 | Methods (`on`): keyed on (generic type, name), no specialization, no methods on pointers, methods only in the receiver type's own module (builtin types: the prelude, D22a open), no free-function overloading. Static methods (`List{int}.new()`) and dunders as operator spellings. A method is a free function with nicer syntax and a namespace: `xyz.f(5)` is `Xyz.f(&xyz, 5)`. |
 | D23 | **open** 2026-11-12, option B preferred | Arrays, lists and slices, and how their memory is managed. What `a = [1, 2, 3]` is, what `a[1:]` is, what a comprehension produces, and what the user has to do to free each of them. This affects literal typing, comprehensions (D10), `[]T`/`{K}V` (D21, D22a) and likely more syntax, so it's settled before further type work. Option A: lists in locals own a region, a current pool, copying results out of scratch blocks. **Option B (preferred):** one dynamically scoped current arena that every allocation goes into, `with Arena():` and `into a:` blocks, and opt-in storage annotations. Under B: literals are lists, slicing copies, comprehensions produce lists, views are deferred to a later `View{T}`/`Slice{T}` type. Strings are immutable `{ptr, len}` with a builder, structs are values, `[]T` is `*List{T}`, and `&Stuff(...)` allocates in the current arena. |
 | D24 | **decided** 2026-11-13, **implemented** 2026-11-14 | Modules and imports. A module's canonical name is its path relative to the root, normalized lexically, and keys a dict of `Module`s on Ctx, so each file is loaded and parsed once however it's imported. Files are loaded through a callback on Ctx. A `Module` (name, buffer, table of globals) lasts as long as the Ctx, and a `Parser` is per-parse state that points at one. Globals move from `Name.global` to the module's table, with a `Name.binding` cache only if the table probe costs too much. Resolves D21's cross-module instantiation question: the one active Parser is re-pointed at the defining module. |
+| D25 | **open** 2026-11-14, direction agreed | Backend and execution model. Survey of existing small backends and execution models. Direction: run in process first, on x64 Windows, x64 Linux and aarch64 macOS. One backend of our own: a linear SSA IL per function built in the single pass, ABI lowering with structs by value as QBE does it, and a backward pass that allocates registers, selects and encodes, into sections with relocations. A JIT is the first consumer, and C objects are linked into a host program by the user. The optimized tier is more passes on the same IL. No interpreter, no `.s`, no third-party backend. sqbe is the fallback and the comparison. Debug info, executable writers and a C emitter are deferred. |
+| D26 | **provisional** 2026-11-14 | The IL. Per-function flat array of 8-byte instructions (opcode, type, two 24-bit references, constants below a bias), value types `i32`/`i64`/`f32`/`f64`, aggregates as memory. Two stages: the parser appends raw instructions with every local as a frame slot, then one forward pass at the end of the function promotes slots whose address wasn't taken to SSA and does folding and CSE. Blocks in source order with structured control flow. C calling convention for luv functions, QBE-style aggregate arguments, and the luv context pointer in a pinned callee-saved register. |
 
 ### D1 ★ Single-pass emit vs. building an AST
 
@@ -1695,6 +1697,868 @@ the import, as a local already shadows any other global.
    `import_treating_module_as_variable` in `test/errors/todo/`.
 5. Report import cycles as an error.
 
+### D25 Backend and execution model (open)
+
+Investigated 2026-11-14, then revised the same day after the user's answers.
+The survey is unchanged. The direction, the IL discussion and the
+recommendation near the end reflect those answers. Not yet marked decided.
+
+#### What's being asked of a backend
+
+- Native code for x64 and aarch64 on Windows, Linux and macOS. That's six
+  OS/CPU pairs and four C ABIs (SysV x64, Win64, AAPCS64, and Apple's
+  arm64 variant), plus Windows arm64 as a fifth if it's wanted.
+- Compile speed is a feature. luv60's goal was to stay above 1M lines/s
+  through to code. The front end here does lex and parse at about 22M
+  lines/s (10M lines in 0.45 s), so the backend will be nearly all of the
+  compile time whatever is chosen.
+- luvr is plain C and is meant to end up as one header. A backend that
+  needs C++, Rust, a generator step, or a copyleft licence works against
+  that.
+- The front end is single pass with no AST (D1). Code is produced in
+  source order through an `expdesc` that's discharged late, behind a
+  `luaK_*`-style interface. Functions are complete units, and generic
+  instantiations are queued until the current top-level item ends (D21).
+  So a function at a time is the natural unit to hand to a backend.
+
+Language features that the backend has to deal with, and that most small
+backends don't do for us:
+
+- `foreign` functions and structs passed by value mean the C ABI rules for
+  aggregates are needed for every target, including C calling back into luv.
+- The current arena (D23) is a per-thread, dynamically scoped variable. Real
+  TLS is different in every object format and is fiddly in a JIT. A pinned
+  register or a hidden context argument avoids all of that.
+- Constants that are evaluated at compile time already exist
+  (`const_for_array_size.luv`). Anything beyond literal folding needs an
+  evaluator inside the compiler.
+- Nested functions capture by value (D12), so there are no closures to
+  allocate. That's only a hidden argument.
+
+A budget, to make "fast" concrete: 1M lines/s on `dumbbench.luv` is about
+8 µs per function (8 lines, about 35 tokens), or a few hundred cycles per
+token. 5M lines/s is under 2 µs per function. Process creation is on a
+different scale. Linking a 2 MB object with the system linker took 32 ms
+here, and one `clang` invocation is tens of milliseconds before it reads any
+input. Anything that starts another process can't be the fast path.
+
+#### Measurements
+
+Laptop (noisy), best of 5, on the first 96k lines (12k functions) of
+`dumbbench.c`, the C equivalent of `dumbbench.luv`:
+
+| What | Time | Lines/s |
+|---|---|---|
+| `clang -fsyntax-only` | 82 ms | 1.2M |
+| `clang -O0 -c` | 630 ms | 150k |
+| `clang -O0 -S` | 807 ms | |
+| `clang -c` on that `.s` (10.9 MB) | 909 ms | 105k |
+| `clang c.o -o c.exe` (link only) | 32 ms | |
+
+Two things follow. LLVM at `-O0` spends 85% of its time after the front end
+and is 100 times slower than our parse. And assembling the text takes
+longer than compiling the C did, so `.s` as an interchange format costs more
+than the code generator that feeds it, before the linker runs.
+
+luv60 is a prototype in an unknown state, so its numbers are weak evidence
+and nothing below depends on them. For the record: its notes have dstogov/ir
+at `-O1`, JIT in memory, doing 10M lines in 4.4 s on an M3 (2.2M lines/s
+including the front end). Its current sqbe build did the 96k-line slice in
+about 0.96 s including a `clang -g` link, and a sample showed about three
+quarters of that in `strcmp` under sqbe's symbol handling, with QBE's own
+passes (`filllive`, `spill`, `filluse`) a few percent. So that says nothing
+about QBE's real speed. It would need the lookup fixed and a re-measure.
+
+#### Execution models
+
+| Model | Needs | Compile cost | Gives | Problems |
+|---|---|---|---|---|
+| Interpret bytecode | Nothing | Lowest. Lua 4's whole code generator was 0.42 s per 10M lines | Runs on every host on day one, a reference for the others, compile-time evaluation | Slow at run time. `foreign` calls and callbacks from C still need per-ABI machine code, or a restricted set of signatures |
+| JIT in process | Executable memory, `dlsym`/`GetProcAddress` for foreign symbols | Low. No files, no linker | Compile and run in one step, the base for luv60's "listener" and code reload ideas | No binary to ship. Debuggers see nothing without extra work (GDB's JIT interface, `RtlAddFunctionTable` for Windows unwinding). macOS arm64 needs `MAP_JIT` and write-protect toggling |
+| Write an executable directly | A writer per format | Low. One file write | A self-contained toolchain with no linker installed, which matters most on Windows | Can't link static `.o`/`.a` files without becoming a linker. Debug info has to be written by us |
+| Emit `.o`/`.obj` | A writer per format, and the system linker | Medium. One linker process | Static linking with C code, and the platform's debug info flow | Needs MSVC or lld on Windows and the Xcode tools on macOS. Linker start-up is the floor |
+| Emit `.s` | Assembler and linker | High, see above | Readable output | Slowest of the native routes. Only useful as a debugging dump, which a disassembly printer also gives |
+| Emit C | A C compiler | Highest: 150k lines/s at `-O0`, far less optimized | Optimized code from clang/gcc/MSVC without writing an optimizer, every platform a C compiler reaches, debug info through `#line` | Not a fast path. C's undefined behaviour has to be fenced off (`-fwrapv`, `-fno-strict-aliasing`, explicit conversions) |
+
+How hard the direct executable writers are, for a program that only links
+against shared libraries:
+
+- **ELF** is the easy one. Program headers, `PT_INTERP`, a dynamic section
+  with `DT_NEEDED`, and a GOT filled from relocations. A few hundred lines.
+- **PE** is nearly as easy. Headers, sections, an import table per DLL, and
+  optionally base relocations. `.pdata` unwind entries are needed for
+  anything that unwinds through our frames (debuggers, SEH).
+- **Mach-O** is the most work. An executable has to be dynamically linked
+  against `libSystem` (there's no stable syscall ABI), needs dyld bind
+  information or chained fixups, and on arm64 has to carry an ad-hoc code
+  signature, which is SHA-256 over each page plus a small blob. tcc, Go and
+  Zig all do this themselves, so it's known to be doable in small code.
+
+A JIT and a direct executable writer are nearly the same thing. Both take
+code and data in section buffers with relocation records against a symbol
+table. One applies the relocations in memory and the other lays the
+sections out behind headers and import tables. Writing `.o` files later is
+a third consumer of the same records. So the choice between them doesn't
+need to be made up front if the code generator emits into sections with
+relocations rather than into "the JIT buffer".
+
+Debug info is the largest hidden cost of every route except C. DWARF line
+tables are a few hundred lines, and types and locals are much more. On
+macOS the debug info normally stays in the `.o` files and is collected by
+`dsymutil`, so a direct writer has to produce a dSYM or embed the sections
+itself. On Windows the native format is CodeView in a PDB, and writing PDBs
+is a project by itself. None of the small backends below solves this either:
+QBE carries line numbers only, MIR and ir have nothing beyond JIT hooks, and
+tcc has DWARF on ELF.
+
+#### Existing backends
+
+| Backend | What it is | Lang, licence | Targets | In-process API | Output | Compile speed | Code quality |
+|---|---|---|---|---|---|---|---|
+| LLVM | Optimizing compiler framework | C++, Apache 2 | Everything | Yes | obj, JIT | Slow, see above | Best |
+| Cranelift | Optimizing code generator from wasmtime | Rust, Apache 2 | x64, aarch64, riscv64, s390x. ELF, Mach-O, COFF through a Rust crate | Rust only, no maintained C API | obj, JIT | Faster than LLVM, by a small factor rather than an order of magnitude | Good |
+| QBE 1.3 (2026-06) | SSA backend that reads a text IL | C, MIT | amd64 SysV, Apple and (new in 1.3) Windows, arm64, arm64 Apple, rv64. No Windows arm64 | No. It's a filter from IL text to assembly text | `.s` only | Limited by text in and text out | "70% of the performance of industrial optimizing compilers in 10% of the code" is its stated aim |
+| sqbe | luv60's fork of QBE as a single header with a C API | C, MIT | As QBE | Yes | `.s`, Mach-O and COFF objects, JIT. No ELF object | Not known, see Measurements | As QBE |
+| dstogov/ir | JIT framework, the base of PHP's JIT since 8.4 | C plus DynASM, MIT | x86, x64, aarch64. Exercised on all three OSes through PHP | Yes | Memory. Can also print C and LLVM text | Fast. Its README claims up to 40 times faster than `gcc -O2` | README claims about 5% slower than `gcc -O2` on its C benchmarks |
+| MIR | JIT with its own IR, an IR interpreter, and a C11 front end | C, MIT | x64, aarch64, ppc64, s390x, riscv64 | Yes | Memory only | Fast | Around `-O1` |
+| TinyCC (mob) | One-pass C compiler with its own assembler and linker | C, LGPL 2.1 | x86, x64, arm, arm64, riscv64. ELF, PE, Mach-O | `libtcc`, which takes C source | exe, obj, memory | The fastest C compiler by a wide margin | Poor, about `-O0` |
+| xcc | C compiler, assembler, linker and libc | C, MIT | x64, aarch64, riscv64, wasm. README says ELF64 only | No, command-line tools | `.s` through its own `as` and `ld` | Not stated | No optimizer yet (it's on the TODO list) |
+| rat | C99 compiler with a sea-of-nodes optimizer and its own linker | C, MIT | x86 only so far. ELF, with COFF and DWARF in progress | No, a `ratcc` driver | obj, exe | README: `-O1` builds `sqlite3.c` about 17 times faster than `clang -O1` | README: within 5% of `gcc -O1` |
+| TPDE | Framework for single-pass back ends over an existing SSA IR | C++20, Apache 2 | x64 and aarch64, ELF only | C++ | obj, JIT | 8–24 times faster than LLVM `-O0` on SPECint | About LLVM `-O0`, within ±9% |
+| sljit | Portable low-level assembler, used by PCRE2 | C, BSD | x86, x64, arm, arm64, riscv, ppc, mips, s390x, on all three OSes | Yes | Memory only | One pass, very fast | Whatever is asked for. It has no register allocator |
+| Tilde (TB) | Sea-of-nodes backend library | C, MIT | Mostly x64 | Yes | obj, JIT | Fast | Aims at `-O1` |
+| Copy and patch | A technique: stencils compiled ahead of time by clang, copied and patched at run time | n/a | Whatever clang targets | n/a | Memory | The paper reports about 100 times faster than LLVM `-O0` | Around `-O0`, sometimes better |
+
+Notes on each, in terms of what this project needs.
+
+**LLVM and Cranelift.** Ruled out as the main path for the reasons already
+suspected. LLVM is two orders of magnitude larger than the rest of the
+compiler would be, and even its fastest mode misses the speed goal by ten
+times. Cranelift is a reasonable backend, but it brings a Rust toolchain
+and a hand-written C shim, and its compile times are in LLVM's league
+rather than tcc's. If optimized output is wanted, emitting C gets LLVM's or
+MSVC's optimizer without linking either.
+
+**QBE and sqbe.** This is the only candidate where every ABI except Windows
+arm64 already works, and sqbe has already added an API, object output for
+two formats, and a JIT. It also produces better code than anything we'd
+write quickly. The doubts are speed and size. QBE runs a dozen passes over
+a pointer-based SSA IR, and upstream has never had to care about throughput
+because it's fed by a text parser. sqbe.h is 24k lines, which would be
+several times the size of everything else in luvr. ELF object output and
+debug info beyond line numbers would be ours to add. Whether its speed is
+acceptable isn't known and is cheap to find out.
+
+**dstogov/ir.** The fastest of the real optimizing backends by luv60's own
+numbers, and it's in production on all three OSes. Against it: the
+instruction selectors are DynASM `.dasc` files (11k lines for x86, 6.6k for
+aarch64) that need a Lua preprocessing step, though the generated C could
+be checked in. It has no object or executable output. Aggregates in the C
+ABI are left to the caller. Its README says the API isn't stable. luv60
+moved from ir to sqbe in June 2025, and the reason isn't recorded in the
+notes.
+
+**MIR.** Similar in shape to ir, with a wider set of CPUs and its own
+interpreter for the IR. It's JIT only, and its author has said he has much
+less time for it. luv60 tried and removed it in January 2025.
+
+**TinyCC.** Its architecture is the closest match there is to this front
+end. It's Lua 4 for C: one pass, a value stack, code emitted as the parser
+goes, one `*-gen.c` of a couple of thousand lines per CPU, and its own ELF,
+PE and Mach-O writers including the arm64 code signature. As a dependency
+it fits badly. The supported interface is C source text, so the program
+would be lexed and parsed twice. The internal code generator interface is
+not an API. LGPL doesn't sit well in a single-header library. The last
+release was in 2017, though the `mob` branch is active daily. It's the best
+thing to read while writing our own, especially `tccelf.c`, `tccpe.c` and
+`tccmacho.c`.
+
+**xcc.** A clean, small, complete toolchain for three CPUs and wasm, but
+it's a C compiler that drives its own assembler with text, has no Windows
+or (per its README) Mach-O output, and has no library interface. Useful
+reading for encoders and for a small linker. Not something to build on.
+
+**rat.** The most interesting as an optimizer: sea of nodes, GVN, SCCP,
+inlining, even SLP vectorization, with fast compile times claimed. It's
+x86 only, one author, changing daily, and built as a C compiler rather than
+a library. Worth watching as a possible optimizing tier in a few years. Not
+usable now.
+
+**TPDE.** Not usable (C++, ELF only), but it's the best evidence for a
+design: one pass over each function that selects instructions and
+allocates registers together, given liveness and loop information, gets
+`-O0`-or-better code at 10–20 times LLVM's `-O0` speed. Baseline JITs for
+wasm and JavaScript are built the same way.
+
+**sljit.** If only a JIT were wanted, this would be the shortcut. It
+supplies encoders, function entry and exit for each ABI, and executable
+memory handling including Apple's rules. It can't produce objects or
+executables, so it's a dead end for anything that ships a binary.
+
+**Copy and patch.** luv60's `gen.c` "snip" experiments were in this family,
+and its notes record the jump-patching trouble. It pays off when each
+operation is a large piece of code, as in a dynamic language. For a typed
+C-like language most operations are one or two instructions, so a stencil
+saves little over a hand-written encoder, and register allocation ends up
+fixed by the stencil set. It also puts clang into luvr's own build.
+
+**Tilde.** Mostly x64, development has slowed, and Odin removed its Tilde
+backend. Not a candidate.
+
+What other small-team languages did, for calibration:
+
+- Zig wrote its own x64 backend and linkers. It became the default for
+  debug builds on Linux in 2025, isn't yet the default on Windows (COFF
+  linker work), and aarch64 isn't ready. Release builds still use LLVM.
+  Reported debug build times dropped several times over.
+- Go has its own backends, assembler and linker for every target, and is
+  the standing proof that it scales.
+- Hare uses QBE and so doesn't target Windows or macOS.
+- V and Nim emit C. V bundles tcc so that development builds are fast.
+- Odin and C3 use LLVM, and both tried Tilde as a fast alternative.
+
+The pattern among the ones that care about build speed is the same: an
+in-house fast path for development, and someone else's optimizer for
+release.
+
+#### Writing our own
+
+Rough sizes for the plan recommended below, in lines of C. They're
+estimates from the sizes of the same jobs in tcc, QBE and LuaJIT (from
+memory), and could easily be off by half in either direction.
+
+| Piece | Lines |
+|---|---|
+| IL: definition, builder, SSA construction, fold and CSE at emit, dump | 1.5–2k |
+| ABI lowering: Win64, Apple arm64, SysV x64, with structs by value | 0.8–1k |
+| Register allocation and the selection driver shared by both CPUs | 1–1.5k |
+| aarch64 selection and encoding | 1.5–2k |
+| x64 selection and encoding | 2–2.5k |
+| JIT glue for three OSes (memory, symbols, Win64 unwind tables) | 0.4–0.6k |
+| **Fast tier on all three targets** | **7–10k** |
+| Optimizing passes, 0.3–0.8k each | 3–5k for a useful set |
+| Executable writers: ELF 0.4k, PE 0.6k, Mach-O with signature 1k | 2k |
+| Loader for external `.o`/`.obj`/`.a` files, three formats | 2–3k |
+| Debug info | depends entirely on the form chosen |
+
+For scale: the front end is about 3.5k lines today, sqbe.h is 24k, and ir
+is about 35k plus its DynASM files. So the fast tier would be two to three
+times the current front end and well under half of sqbe. It is the
+largest single piece of the project.
+
+It doesn't arrive all at once. A first milestone of aarch64 macOS only,
+with integers, pointers, branches and calls to luv and to simple foreign
+functions, is the IL, one classifier, the allocator and half an encoder:
+about 3–4k lines, and it runs most of the existing tests. Floats, structs
+by value, x64 and the other two ABIs are each separate steps after that.
+
+Where the size and risk are, and what the fallbacks are:
+
+- The backward pass that allocates and selects together is the least
+  conventional part. If it gets complicated at joins and loops, the
+  fallback is a liveness pass followed by an ordinary forward linear scan.
+  That's about the same amount of code and one more walk over the function.
+- SysV x64 struct classification is fiddly but small and completely
+  specified, and it can be tested exhaustively against the C compiler.
+- x64 encoding is the larger of the two encoders because of its
+  irregularities. Restricting the fast tier to a fixed set of instruction
+  forms keeps it down.
+- If the whole thing proves too much, the IL lowers to QBE's, and sqbe
+  becomes the backend with the front half kept.
+
+#### Direction from the user (2026-11-14)
+
+- Running in process is fine to start with.
+- Targets to begin with are x64 Windows, x64 Linux and aarch64 macOS only.
+  Windows arm64 is out for now.
+- Differences between backends should be avoided as much as possible. That
+  means observable behaviour, and also capability: no "only this mode can
+  use external `.o` files" and no "this backend only works on Windows". A
+  user should be able to pick any tier and any way of running in whatever
+  context suits their project. Two tiers are fine: a fast compile, and a
+  slower compile that gives faster code.
+- Linking with C objects is wanted on the fast path, but it can be done by
+  the user building a host program ahead of time that contains the C code
+  and runs the luv code. So the fast path needs no object writer or linker.
+- Structs passed by value to and from C are required for `foreign`. This is
+  why luv60 moved from ir to sqbe, so ir is out.
+- Debug info is deferred unless it blocks something. It may be limited to
+  one platform (raddbg only, or PDB with MSVC), or the effort may go into a
+  luv debugger with its own simpler format. The user's `dyn_basic_pdb.h`
+  writes PDBs for JIT code but only has file and line.
+- A C backend is in doubt. Debugging luv through generated C with its
+  temporaries and helper calls may be too strange.
+- Compile-time evaluation is only basic constant folding.
+
+These change the earlier draft of this section in three ways. The
+interpreter loses most of its case: no compile-time evaluation needs it, the
+three targets are all hosts that can JIT, it couldn't do struct-by-value
+foreign calls without machine code anyway, and it would be one more backend
+to differ. The C emitter is a second semantics (undefined behaviour,
+evaluation order, float contraction) as well as awkward to debug, so it
+moves to "only if a platform we can't generate code for ever matters". And
+the wish for one behaviour across tiers means the tiers should be the same
+backend with more or fewer passes, which makes the choice of IL the main
+design question.
+
+#### Keeping the modes equal
+
+The user's rule is that every combination should work: either tier, on
+every target, run in process or (later) written out. The plan keeps to it
+by making each choice independent of the others:
+
+- A tier is a list of passes over the IL. It doesn't know which CPU or OS
+  is being targeted or where the code will go.
+- A target is an ABI classifier plus an encoder. Both tiers go through the
+  same ones.
+- A consumer (JIT, later an executable or object writer) takes sections
+  and relocations. It doesn't know which tier produced them.
+- Anything to do with foreign code belongs to the layer that resolves
+  symbols, below all three. To begin with there's one rule everywhere: C
+  code lives in the host program or a shared library. If loading `.o`
+  files is added, it's added there, as a reader that turns an object file
+  into the same sections and relocations, so the JIT and any executable
+  writer get it together. An executable writer that could link objects when
+  the JIT couldn't, or the reverse, is what to avoid.
+
+The practical consequence for sequencing is that a feature isn't done until
+it works on all three targets and both tiers, and the test runner should
+run every test in every combination that exists.
+
+#### Where this is headed
+
+The user's reference for where the project should end up is the Tomorrow
+Corporation tech demo (https://www.youtube.com/watch?v=72y2EC5fkcE). From
+memory of that talk, not re-checked: their own language, compiler and
+debugger, a whole game rebuilt in a fraction of a second, code reloaded
+into the running game, and the full run recorded so that execution can be
+scrubbed and stepped backwards. luv60's README goals (saved inputs,
+incremental code update, debugger integration) are the same picture.
+
+What that asks of the backend, to keep in mind now though none of it is
+built yet:
+
+- Functions have to be replaceable one at a time in a running program. The
+  per-function IL and per-function code with retained relocations already
+  suit this. Calls between luv functions would go through something
+  patchable (a table, or a jump at the old entry) in the development tier.
+- Globals and types need a story for when their layout changes under a
+  running program, which luv60's notes had started on. That's a language
+  and runtime question more than a backend one.
+- Recording and replay want all input and nondeterminism to come through
+  the host, which fits the host-program model.
+- A debugger of our own makes the debug info format ours to choose. That
+  supports deferring PDB and DWARF, and it means the information the IL
+  and the fast tier keep (source offsets, where locals live) is the real
+  requirement.
+- It favours the JIT and in-process model as the main one, with written
+  executables as the shipping step.
+
+#### The IL
+
+The single-pass front end doesn't force a push/pop code generator. The
+front end produces the IL in one pass, a function at a time, and what
+happens to a finished function is separate. Three levels:
+
+1. **No IL: machine code from the parser** (tcc). Locals in stack slots, a
+   value stack for expressions. Nothing can be improved afterwards, and a
+   better tier would be a different backend.
+2. **Register bytecode, not SSA** (Lua). Virtual registers are locals and
+   expression temporaries. What's affordable without SSA: constant folding
+   in `expdesc` before anything is emitted (Lua 4 does this), fusing
+   compares with branches and folding address arithmetic into addressing
+   modes at selection time, and giving the most used locals a register for
+   the whole function from use counts weighted by loop depth. That's well
+   ahead of push/pop code. It stops there, though: with no def-use
+   information there's no CSE, no dead store removal, and nothing for a
+   second tier to build on.
+3. **Linear SSA in a flat array, built during the single pass.** This is
+   the shape of LuaJIT's IR, which dstogov/ir also follows: fixed-size
+   instructions in one array, operands are indices, constants in the same
+   array growing the other way, reset per function. SSA can be built
+   directly by a single-pass front end with no dominance computation
+   (Braun et al., "Simple and Efficient Construction of Static Single
+   Assignment Form", 2013, which is what Cranelift's front end uses): each
+   block keeps a small map from local to current value, and a read that
+   misses asks the predecessors and adds a phi where they disagree. Loop
+   headers get provisional phis that are resolved when the loop ends. It's
+   a few hundred lines.
+
+What level 3 gives nearly for free, in the fast tier:
+
+- Folding and algebraic simplification as each instruction is emitted.
+- CSE by hashing each instruction as it's emitted, within the dominating
+  code that's already been seen.
+- Dead code removal from use counts.
+- Register allocation, instruction selection and encoding in **one backward
+  pass** over the array, as LuaJIT's assembler does. Going backwards, a
+  value's last use is seen first, so liveness needs no separate analysis,
+  and each instruction can see how its result is used (as an address, as a
+  branch condition) when it's selected. Control flow joins and loops need
+  more care than in a trace compiler, which is the part TPDE's design
+  shows how to do.
+
+What the slower tier adds, on the same IL and through the same selection,
+allocation and ABI code: inlining, moving loop-invariant code, global value
+numbering, load and store forwarding, a better allocator. These are
+ordinary passes that can be added one at a time, and each can be turned off
+to find a miscompile. Both tiers share everything that defines behaviour,
+so they differ only in which rewrites ran.
+
+Level 3 is recommended. It costs more than level 2 up front (the SSA
+construction, phi handling in the allocator) and compiles somewhat slower.
+The budget has room: ir, which has this shape plus a real pass pipeline,
+was the fastest backend luv60 tried. It's also the level at which "fast
+tier" and "optimized tier" are one backend.
+
+Struct passing is handled the way QBE does it, which is known to work for
+this language. Aggregates are memory in the IL. A call or parameter that
+takes a struct by value says so with the struct's layout, and a per-target
+ABI step rewrites that into registers, stack slots and hidden pointers
+before selection. Three classifiers are needed for the first targets: Win64
+(simple, by size), Apple arm64 (homogeneous float aggregates, 16-byte
+rule), and SysV x64 (the eightbyte classification, the hard one). A
+generated test that passes many struct shapes both ways across a C boundary
+and compares the bytes would be written with it. sqbe stays useful here as
+something to compare against.
+
+For debug info, whichever way it goes later, two things are worth keeping
+from the start because they're cheap now and awkward to add: every IL
+instruction carries a source offset, and the fast tier can report where each
+named local lives.
+
+#### Recommendation (revised 2026-11-14)
+
+1. **A linear SSA IL per function**, with folding and CSE as it's built.
+   D26 has the design, and explains why SSA is made by one pass at the end
+   of each function and not while parsing. Expression typing produces this. A text
+   dump of it is the first testable output.
+2. **One backend of our own: ABI lowering, then a backward pass that
+   allocates registers, selects and encodes**, for x64 and aarch64, emitting
+   into sections with relocation records.
+3. **A JIT as the only consumer to begin with.** The library compiles and
+   runs in process. Foreign symbols are resolved by the host, through a
+   callback on Ctx in the same style as D24's file loader, with `dlsym` and
+   `GetProcAddress` as the default. C code is linked into the host program
+   by the user. Order of bring-up: aarch64 macOS (the laptop), x64 Linux
+   (the desktop), then x64 Windows, which adds only Win64 and unwind tables
+   to the x64 work.
+4. **The optimized tier is passes on the same IL**, added when there's
+   real code that's too slow. Nothing needs to be designed for it now
+   beyond choosing SSA.
+5. **Later, as needed:** executable or object writers as further consumers
+   of the same sections, debug info in whatever form is chosen, and a C
+   emitter only for platforms without a native generator.
+
+Not planned: an interpreter, `.s` output, any third-party backend as a
+dependency.
+
+sqbe is the fallback and the comparison. If the backward-pass generator
+turns out harder than expected, lowering this IL to QBE's is mechanical,
+since both are SSA with the same view of aggregates. It also remains the
+quickest way to check our ABI lowering and code quality against something
+independent.
+
+What this gives up:
+
+- The first native "hello world" is further away than with sqbe, since the
+  IL, one ABI, one encoder and the allocator all have to exist first.
+- Until the optimizing passes exist, code is somewhere between tcc and
+  `-O1`.
+- Two instruction selectors and three ABIs are ours to get right. With no
+  interpreter, the checks are the tests' expected output, the two CPUs
+  against each other, the fast tier against the optimized tier, and the
+  struct-passing test against C.
+- Standard debuggers see nothing in JIT code until debug info is done.
+
+#### Still open
+
+1. The exact IL. See D26 (provisional).
+2. Whether the current arena (D23) is a pinned register or a hidden
+   argument. D26 proposes a pinned register that holds the context, with
+   the arena as a field of it.
+3. How good the fast tier's code needs to be for interactive use, which
+   decides how early the optimizing passes are wanted.
+4. Debug info: platform and format, or our own debugger. Deferred.
+5. Whether a shipped executable without a host program is ever needed, and
+   so whether the executable writers get written.
+6. Whether loading external `.o` files is wanted, beyond C code in the host
+   program or a shared library. If so it's a loader below every consumer.
+
+#### Sources
+
+- QBE: https://c9x.me/compile/ and https://c9x.me/compile/releases.html
+- TinyCC: https://bellard.org/tcc/ and https://repo.or.cz/tinycc.git
+- xcc: https://github.com/tyfkda/xcc
+- rat: https://github.com/hexratcc/rat
+- ir: https://github.com/dstogov/ir and https://wiki.php.net/rfc/jit-ir
+- MIR: https://github.com/vnmakarov/mir
+- TPDE: https://arxiv.org/abs/2505.22610 and https://github.com/tpde2/tpde
+- Copy and patch: https://arxiv.org/abs/2011.13127
+- SSA construction: Braun, Buchwald, Hack, Leißa, Mallon, Zwinkau, "Simple and
+  Efficient Construction of Static Single Assignment Form", CC 2013
+- Tilde: https://github.com/RealNeGate/Cuik and
+  https://forum.odin-lang.org/t/tilde-backend-got-removed/1697
+- Zig's x86 backend: https://ziggit.dev/t/self-hosted-x86-backend-is-now-default-in-debug-mode/10447
+  and https://mitchellh.com/writing/zig-builds-getting-faster
+
+Not checked against a primary source, from memory: Cranelift's lack of a C
+API and its relative compile speed, sljit's and MIR's target lists, tcc's
+per-file sizes and its Mach-O arm64 support, what Go, Hare, V, Nim, Odin and
+C3 use, and the descriptions of LuaJIT's IR and backward assembler pass and
+of Cranelift's use of Braun's algorithm, and the contents of the Tomorrow
+Corporation demo.
+
+---
+
+### D26 The IL (provisional)
+
+Written 2026-11-14, before expression typing exists, so that typing has
+something to produce and a dump to test against. Everything here is
+expected to change as it's used. The parts most likely to change are listed
+at the end.
+
+The two references are LuaJIT's IR and dstogov/ir, which follows it. Both
+keep a function's instructions in one flat array, refer to operands by
+index, and keep constants in the same index space. LuaJIT's instructions
+are 8 bytes with 16-bit operands, which limits a trace to 64k entries.
+ir's are 16 bytes with 32-bit operands and room for a third operand.
+
+#### Summary
+
+- One function at a time. All of it is reset when the function is finished.
+- Instructions are 8 bytes: an opcode, a type, and two 24-bit operands.
+- Operands are references. A reference below a bias is a constant, and at
+  or above it is an instruction.
+- Value types are `i32`, `i64`, `f32` and `f64`. Narrower integers exist
+  only in memory and in extension operations.
+- Aggregates are memory. The IL has no struct values.
+- The front end never emits a phi. It reads and writes locals as frame
+  slots. One forward pass at the end of the function turns slots whose
+  address was never taken into SSA values, and folds and removes common
+  subexpressions as it goes.
+- Blocks are in source order, and control flow is structured.
+- The luv context pointer is in a pinned register.
+
+#### Two stages
+
+The earlier plan was to build SSA while parsing. That doesn't work for one
+reason: whether a local can be an SSA value depends on whether its address
+is ever taken, and `&x` can come after `x` has been read and written many
+times. Switching `x` to memory at the `&x` is unsound in a loop. A pointer
+from an earlier iteration can write the slot before the `&x` is reached
+again, and the code between the loop header and the `&x` was already
+emitted reading the SSA value.
+
+So there are two stages, which is also what ir does with its `VAR`,
+`VLOAD` and `VSTORE` and a later pass:
+
+1. **Raw.** The parser appends instructions to a buffer. Every local is a
+   frame slot, read with `LOAD` and written with `STORE`. Nothing is folded
+   or searched for, so emitting is an append. Constant expressions are
+   already folded in `expdesc` before anything is emitted, as Lua 4 does,
+   and that's also what evaluates `[BLAH]int`.
+2. **SSA.** When the function ends, one forward pass copies the raw buffer
+   into the final one. A slot that was only ever loaded and stored directly
+   is promoted: its stores define values, its loads are replaced by the
+   current value, and phis are placed where control flow joins. Each copied
+   instruction goes through folding and CSE. Slots that weren't promoted
+   keep their loads and stores.
+
+The parser is still single pass. The cost is one more linear walk and a
+second buffer of the same size. Both buffers are reused for every function.
+
+The front end not emitting phis keeps it simple. A value that depends on
+control flow, like the result of `a and b` or a comprehension's
+accumulator, is a compiler temporary slot that's stored on each path and
+loaded after the join. The SSA pass turns that into a phi like any other
+local.
+
+#### Instruction format
+
+```
+typedef u64 Ins;   // op:8 | ty:8 | a:24 | b:24
+typedef u32 Ref;   // 24 bits used
+```
+
+One `u64` with shifts, not bit-fields, so the layout doesn't depend on the
+compiler.
+
+`IL_BIAS` is `1 << 23`. A `Ref` at or above the bias is the instruction at
+`ins[ref]`, and below it is the constant at `ins[ref]`, with constants
+allocated downwards from `IL_BIAS - 1`. Reference 0 means no operand. That
+gives 8M instructions and 8M constants per function. Running out is an
+error, "function too large".
+
+Smaller was considered. LuaJIT's 16-bit operands would cap a function at
+32k instructions, which generated code would hit. 16 bytes as in ir would
+double the memory that every pass walks, for the sake of a third operand
+that few operations need.
+
+Operations with more than two operands (calls, phis, block copies) are
+followed by extension slots. Each is an `Ins` with opcode `EXT` holding
+two more references. The count comes from the instruction itself (the call
+descriptor, the block's predecessor count). Passes that walk the array skip
+`EXT` by its opcode.
+
+Nothing else is stored in the instruction. Per-instruction data that only
+some stages need is in parallel arrays indexed by reference: the CSE chain
+during the SSA pass, and the register and spill slot during code
+generation. LuaJIT keeps these in the instruction's fourth 16-bit field.
+We've spent those bits on operand range instead.
+
+#### Types
+
+| Type | Used for |
+|---|---|
+| `i32` | `bool`, `i8`–`i32`, `u8`–`u32` once loaded |
+| `i64` | `i64`, `u64`, `int`, pointers |
+| `f32`, `f64` | floats |
+| `i8 u8 i16 u16` | only as the type of `LOAD`, `STORE`, and the extensions |
+| `void` | instructions with no result |
+
+This follows QBE. Signedness belongs to the operation (`DIV` and `UDIV`,
+`LT` and `ULT`, `SHR` and `SAR`), not the type. Arithmetic on a narrow type
+is done in `i32`, and the front end emits a `SEXT8`/`ZEXT8` or similar
+where the narrow result is observed. Folding removes the redundant ones.
+The encoders then only need 32-bit and 64-bit forms.
+
+A pointer isn't a separate type from `i64`. All three targets are 64-bit.
+
+#### Constants
+
+A constant occupies one slot below the bias, holding 64 bits of payload,
+with its kind and type in a parallel byte array. Kinds:
+
+- `KINT`: an integer of either width.
+- `KFLT`: a float of either width, as its bits.
+- `KSYM`: the address of a symbol (a function, a global, string data). The
+  payload is a symbol index and a 32-bit addend. These become relocations.
+
+Constants are interned per function through a small hash, so equal
+constants have equal references and comparing references is enough for CSE.
+
+#### Slots
+
+A slot is a piece of the function's frame. The slot table holds size,
+alignment, a scalar type if it has one, and an `escaped` flag.
+
+- `SLOT k` is an instruction whose value is the slot's address.
+- A named scalar local is a slot. Reading it is `LOAD ty, SLOT k`, and
+  writing is `STORE ty, value, SLOT k`.
+- When the front end uses a slot's address for anything other than the
+  address operand of such a `LOAD` or `STORE` (`&x`, passing it, indexing
+  into it), it sets `escaped`. Structs, arrays and anything else that's an
+  aggregate are escaped from the start.
+- A slot that isn't escaped when the function ends is promoted.
+
+The front end also keeps, for each loop, the list of slots stored inside
+it. A nested loop's list is added to its parent's when it closes. The SSA
+pass uses these to place phis at loop headers without guessing.
+
+A read of a promoted slot before any write produces zero, which matches the
+language's zero initialization.
+
+#### Blocks and control flow
+
+`BLOCK` starts a block and is the only way one starts. Its operand is an
+index into the block table, which holds the block's first instruction, its
+predecessor list, its loop depth, and a loop header flag. A block ends at
+the next `BLOCK`.
+
+Terminators:
+
+- `JMP b`: go to block `b`.
+- `BR c, b`: if `c` is zero go to block `b`, otherwise continue into the
+  next block. `BR` is always the last instruction of its block.
+- `RET` and `RET v`.
+- A block with no terminator continues into the next one.
+
+`BR` with one target and a fall-through matches both how the parser emits
+(jump over the body if the condition is false) and what the encoder
+produces (a compare and one conditional jump).
+
+Two invariants, which hold because luv only has structured control flow
+(`if`, `for`, `break`, `continue`, `return`, `and`, `or`, `with`):
+
+1. Blocks are in source order.
+2. Every predecessor of a block comes before it, except for the back edges
+   of a loop, which go to a block flagged as a loop header.
+
+A lot of the design leans on these. The SSA pass can be one forward walk.
+The immediate dominator of each block can be found in the same walk, since
+for a graph like this one visit in this order is exact. The code generator
+can use loop depth for spill decisions without finding loops. If the
+language ever gets `goto`, these need revisiting.
+
+#### The SSA pass
+
+For each block in order, and each instruction in it:
+
+- `STORE` to a promoted slot records the value as the slot's current
+  definition in this block and emits nothing.
+- `LOAD` from a promoted slot is replaced by the slot's current definition.
+  If this block has none, it's looked up through the predecessors, as in
+  Braun et al.'s algorithm: one predecessor means asking it, and several
+  mean asking each and creating a `PHI` in this block if they differ. The
+  answer is recorded in the block so it's only found once.
+- At a loop header, a `PHI` is created up front for each promoted slot in
+  the loop's stored list. Its back-edge operands are filled in when the
+  loop's last block has been processed. Because the stored list is known,
+  there are no provisional phis to remove afterwards.
+- Anything else is copied with its operands mapped to their new references,
+  through the folder and then the CSE lookup.
+
+Folding covers constant operands, identities (`x + 0`, `x * 1`, `x & x`),
+and extensions of values that are already in range. CSE applies to pure
+operations only. A match found through the hash chain is used if the block
+that defines it dominates the current block. Loads are not matched in the
+fast tier, since that needs to know what a store might alias.
+
+`PHI`'s operands are in the order of its block's predecessor list, in
+extension slots when there are more than two.
+
+Dead code isn't removed in this pass. The code generator walks backwards,
+so it reaches a value's uses before its definition, and a pure instruction
+that nothing has asked for by then is skipped. Its operands are then never
+asked for either.
+
+#### Operations
+
+Provisional. The exact set of conversions and comparisons will follow from
+expression typing.
+
+| Group | Operations |
+|---|---|
+| Integer arithmetic | `ADD SUB MUL DIV UDIV REM UREM NEG` |
+| Bitwise | `AND OR XOR NOT SHL SHR SAR` |
+| Float arithmetic | `FADD FSUB FMUL FDIV FNEG` |
+| Integer compare, result `i32` 0 or 1 | `EQ NE LT LE GT GE ULT ULE UGT UGE` |
+| Float compare | `FEQ FNE FLT FLE FGT FGE` |
+| Width | `SEXT8 SEXT16 SEXT32 ZEXT8 ZEXT16 ZEXT32 TRUNC` |
+| Int and float | `ITOF UTOF FTOI FTOU FEXT FTRUNC BITCAST` |
+| Memory | `LOAD STORE SLOT COPY ZERO` |
+| Control | `BLOCK JMP BR RET PHI` |
+| Calls | `PARAM PARAMAGG CALL ARGAGG` |
+| Other | `CTX EXT NOP` |
+
+The operand type is the instruction's type for arithmetic. For compares
+and conversions, where the result type differs from the operand type, the
+opcode says which is meant, so some of these will split by width (`EQ` and
+`EQ64`, or a type on the operand side). That's to be settled with the first
+encoder.
+
+Address arithmetic has no operations of its own. A field access is `ADD
+ptr, KINT offset`, and an index is a `MUL` and an `ADD`. The code generator
+sees these when it selects the `LOAD` or `STORE` that uses them and turns
+them into an addressing mode.
+
+`COPY dst, src` and `ZERO dst` take a constant size in an extension slot.
+They're how aggregates are assigned and initialized.
+
+A static table gives each opcode its operand count, whether it's pure,
+whether it's commutative (for CSE to order operands), and whether it ends a
+block.
+
+#### Calls and the calling convention
+
+Calls between luv functions use the platform's C calling convention. That
+means one convention to implement and test per target, and it means C can
+call a luv function with the signature it appears to have.
+
+`CALL callee, desc` is followed by the arguments in extension slots. The
+callee is a `KSYM` or a computed value. `desc` indexes a table of call
+descriptors: argument count, where variadic arguments start (they're
+passed differently on Apple arm64 and Win64), and the type record for an
+aggregate result. The instruction's type is the scalar result type, or
+`void`.
+
+Aggregates, following QBE:
+
+- An argument passed by value is `ARGAGG ptr, type`. It marks that the
+  memory at `ptr`, with the layout of that type record, is passed by value.
+  Its result is only used as a call argument.
+- A call that returns an aggregate takes the address to write it to as its
+  first argument, and the descriptor says so.
+- `PARAM n` is the value of scalar parameter `n`. `PARAMAGG n` is the
+  address of the function's own copy of aggregate parameter `n`.
+
+Before code generation, an ABI step for the target rewrites these into
+what the convention says: which registers, which stack offsets, which
+aggregates go by hidden pointer, which are split across registers. The
+type records it reads (size, alignment, fields) are the ones typing
+creates. The IL only refers to them by index.
+
+A nested function that captures (D12) takes a pointer to its captured
+values as an extra first argument. That's part of its type, so a call to it
+through a function value passes it too.
+
+#### The context register
+
+One callee-saved register is reserved in all luv code for a pointer to the
+thread's luv context: `r15` on x64 and `x28` on aarch64 (provisional
+choices, both callee-saved in every ABI we target). `CTX` is the
+instruction whose value is that register. The current arena (D23) is a
+field of the context, so finding it is one load, and `with Arena()` and
+`into a:` store that field and restore it on the way out.
+
+The register holds the context, not the arena, so that it never changes
+while a thread runs luv code. That's what makes C interop work:
+
+- **luv calling C.** The register is callee-saved, so C preserves it.
+  Nothing is done at the call.
+- **C calling luv**, as the host entering luv code or as a callback through
+  a function pointer. C doesn't have the context in that register, and by
+  the C convention the luv function has to preserve whatever was there. So
+  a luv function that C can reach has a second entry point that saves the
+  register, loads the context, and continues into the body, with the
+  register restored on return. The context comes from a function in the
+  runtime that returns the calling thread's context. The runtime is C and
+  is compiled into the host, so thread-local storage is the C compiler's
+  job and our code generator never emits it.
+- **Which functions get the second entry.** A function whose address is
+  taken, or that's exported to the host. Direct calls between luv
+  functions use the normal entry and pay nothing.
+
+A hidden context argument on every function was the alternative. It keeps
+all registers available, but every luv function then has a signature that
+differs from what it appears to be, so every function pointer handed to C
+would need a thunk with the same problem of finding the context, and every
+luv-to-luv call would pass one more argument. The pinned register costs
+one of fifteen usable registers on x64 and one of about twenty-eight on
+aarch64.
+
+#### Source positions
+
+A side table of (reference, source offset) pairs, with an entry each time
+the front end starts a statement. The SSA pass carries it across. That's
+enough for line tables and for reporting where a fault happened, whatever
+form debug info takes later (D25). The slot table keeps each named local's
+name, so the code generator can report where it lives.
+
+#### The dump
+
+A text form of both stages, one instruction per line, with references
+printed as `%n` for instructions and the value itself for constants.
+The first use is as test output for expression typing: a test's expected
+IL sits beside its expected program output. There's no parser for the text.
+
+#### What's likely to change
+
+1. The operation list, especially conversions and how operand width is
+   expressed for compares.
+2. Whether strings and lists (D23) are ordinary memory operations or get
+   operations of their own, for bounds checks for example.
+3. Whether the SSA pass should rewrite in place, with a forwarding array,
+   instead of copying to a second buffer. To be measured.
+4. How `check`, `print` and other statements with runtime support are
+   expressed. Probably as calls into the runtime.
+5. Overflow and division behaviour. The IL operations wrap, and anything
+   stricter would be added operations or explicit checks.
+6. The register choices for `CTX`, once the allocators exist.
+7. Phi handling in the backward code generation pass, which isn't designed
+   yet and may ask for something different from the SSA pass.
+
 ---
 
 ## 3. Grammar sketch (with the recommendations applied)
@@ -2007,7 +2871,7 @@ Each step is measurable on its own.
      notably faster before deciding.
 7. **Real code generator** behind the interface: luv60's IR, sqbe, or a
    bytecode interpreter in the spirit of `rewrite.txt`'s reference
-   implementation.
+   implementation. See D25.
 
 Proposed layout in `~/luvr`:
 
@@ -2025,7 +2889,7 @@ bench/                      # scripts comparing against luac -p and luv60
 
 ## 7. Decisions that are the user's call
 
-Tracked in the **Decision log** at the top of section 2. Open: D20 (general `for`). Provisional: D21 (generics syntax). Open: D22a (methods on builtin types and the prelude), D23 (arrays, lists, slices and their memory). Decided, not implemented: D24 (modules and imports). Deferred: D15 (to measurement), D5b (until
+Tracked in the **Decision log** at the top of section 2. Open: D20 (general `for`). Provisional: D21 (generics syntax). Open: D22a (methods on builtin types and the prelude), D23 (arrays, lists, slices and their memory), D25 (backend and execution model). Provisional: D26 (the IL). Decided, not implemented: D24 (modules and imports). Deferred: D15 (to measurement), D5b (until
 real code needs it).
 
 ---
