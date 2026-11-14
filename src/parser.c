@@ -929,7 +929,8 @@ static void primary(Parser* p, Shape* sh) {
     case TK_NAME: {
       NameId name = p->ls.pos.t.v.name;
       const Name* n = name_of(p, name);
-      const Module* m = imported_module(p, name);
+      GlobalKind kind = n->binding ? GK_NONE : global_kind(p, name);
+      const Module* m = kind == GK_MODULE ? imported_module(p, name) : NULL;
       if (m) {
         next(p);
         if (T(p) != TK_DOT) {
@@ -944,7 +945,7 @@ static void primary(Parser* p, Shape* sh) {
         next(p);
         break;
       }
-      bool defined = n->binding || n->is_builtin || global_kind(p, name) != GK_NONE;
+      bool defined = n->binding || n->is_builtin || kind != GK_NONE;
       next(p);
       // A name followed by '=' is an assignment target, which declares the name
       // if it's new.
