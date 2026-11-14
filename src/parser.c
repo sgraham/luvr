@@ -6,7 +6,7 @@
 //
 //   - `Stuff s` (declaration) vs. `Stuff(1).f()` (expression), and
 //     `mod.Type x` vs. `mod.func()`: parse the postfix chain, then look at its
-//     Shape and the next token.
+//     shape and the next token.
 //   - In a method's parameter list, `self` vs. `mod.Type x`: read the name,
 //     then a following '.' means it was the start of a type.
 //   - `[x for x in xs]` vs. `[x, y]`: parse the first element, then `for` or
@@ -17,6 +17,7 @@
 
 #include "luvr.h"
 
+typedef struct ExpDesc ExpDesc;
 typedef struct Local Local;
 typedef struct Parser Parser;
 typedef struct Targets Targets;
@@ -77,10 +78,15 @@ typedef enum Shape {
   SH_STRUCT_LITERAL,  // Stuff(...): '&' allocates it in the current arena
 } Shape;
 
+// What is known about an expression that has been parsed but not yet emitted.
+struct ExpDesc {
+  Shape shape;
+};
+
 static void expr(Parser* p);
-static void subexpr(Parser* p, int limit, Shape* sh);
-static void binop_rest(Parser* p, int limit, Shape* sh);
-static void primary(Parser* p, Shape* sh);
+static void subexpr(Parser* p, int limit, ExpDesc* e);
+static void binop_rest(Parser* p, int limit, ExpDesc* e);
+static void primary(Parser* p, ExpDesc* e);
 static void type(Parser* p);
 static void stat(Parser* p);
 static void suite(Parser* p);
@@ -547,47 +553,47 @@ static bool is_comparison(BinOpr op) {
 
 // subexpr -> (primary | unop subexpr) { binop subexpr }
 // where binop is any binary operator with a priority higher than `limit`.
-static void subexpr(Parser* p, int limit, Shape* sh) {
+static void subexpr(Parser* p, int limit, ExpDesc* e) {
   switch (T(p)) {
     case TK_NOT:
       if (limit >= PRIORITY_NOT) {
         error_at(p, p->ls.pos.t.offset, "'not' needs parentheses here.");
       }
       next(p);
-      subexpr(p, PRIORITY_NOT, sh);
-      *sh = SH_VALUE;
+      subexpr(p, PRIORITY_NOT, e);
+      e->shape = SH_VALUE;
       break;
     case TK_MINUS:
     case TK_TILDE:
       next(p);
-      subexpr(p, PRIORITY_UNARY, sh);
-      *sh = SH_VALUE;
+      subexpr(p, PRIORITY_UNARY, e);
+      e->shape = SH_VALUE;
       break;
     case TK_AMP: {
       next(p);
       u32 at = p->ls.pos.t.offset;
       // Only valid if the operand turns out to be a bare name.
       NameId name = p->ls.pos.t.v.name;
-      subexpr(p, PRIORITY_UNARY, sh);
-      const Local* l = *sh == SH_NAME ? lookup(p, name) : NULL;
-      if ((*sh != SH_NAME && *sh != SH_LVALUE && *sh != SH_STRUCT_LITERAL) ||
+      subexpr(p, PRIORITY_UNARY, e);
+      const Local* l = e->shape == SH_NAME ? lookup(p, name) : NULL;
+      if ((e->shape != SH_NAME && e->shape != SH_LVALUE && e->shape != SH_STRUCT_LITERAL) ||
           (l && l->kind == LK_PARAM)) {
         error_at(p, at, "Can't take the address of non-lvalue.");
       }
-      *sh = SH_VALUE;
+      e->shape = SH_VALUE;
       break;
     }
     default:
-      primary(p, sh);
+      primary(p, e);
       break;
   }
-  binop_rest(p, limit, sh);
+  binop_rest(p, limit, e);
 }
 
 // The { binop subexpr } loop of subexpr(). It's separate so that
 // sizeof_operand() can continue an expression after already parsing a
 // primary.
-static void binop_rest(Parser* p, int limit, Shape* sh) {
+static void binop_rest(Parser* p, int limit, ExpDesc* e) {
   BinOpr op = getbinopr(T(p));
   while (op != OPR_NONE && priority[op] > limit) {
     u32 at = p->ls.pos.t.offset;
@@ -595,20 +601,20 @@ static void binop_rest(Parser* p, int limit, Shape* sh) {
     if (op == OPR_NOTIN) {
       check(p, TK_IN);
     }
-    Shape rhs;
+    ExpDesc rhs;
     subexpr(p, priority[op], &rhs);
     BinOpr nextop = getbinopr(T(p));
     if (is_comparison(op) && is_comparison(nextop)) {
       error_at(p, at, "Comparisons can't be chained. Use 'and' to combine them.");
     }
-    *sh = SH_VALUE;
+    e->shape = SH_VALUE;
     op = nextop;
   }
 }
 
 static void expr(Parser* p) {
-  Shape sh;
-  subexpr(p, -1, &sh);
+  ExpDesc e;
+  subexpr(p, -1, &e);
 }
 
 // "...\(e)...\(e)..."
@@ -801,10 +807,10 @@ static void sizeof_operand(Parser* p) {
   if (is_builtin_type(k) || k == TK_STAR || k == TK_LSQUARE || k == TK_LBRACE || k == TK_TYPEOF) {
     type(p);
   } else if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
-    Shape sh;
-    primary(p, &sh);
-    if (sh != SH_TYPE) {
-      binop_rest(p, -1, &sh);
+    ExpDesc e;
+    primary(p, &e);
+    if (e.shape != SH_TYPE) {
+      binop_rest(p, -1, &e);
     }
   } else {
     expr(p);
@@ -840,15 +846,15 @@ static void call_args(Parser* p, bool is_struct_literal) {
 }
 
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice)
-static void index_or_slice(Parser* p, Shape* sh) {
+static void index_or_slice(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
   next(p);  // '['
-  *sh = SH_LVALUE;
+  e->shape = SH_LVALUE;
   if (T(p) != TK_COLON) {
     expr(p);
   }
   if (optional(p, TK_COLON)) {
-    *sh = SH_VALUE;
+    e->shape = SH_VALUE;
     if (T(p) != TK_RSQUARE) {
       expr(p);
     }
@@ -863,13 +869,13 @@ static void index_or_slice(Parser* p, Shape* sh) {
 // be at the start of an expression. So after a type it opens type arguments
 // (Pair{int, str}). Only structs have type parameters, so after a name it's an
 // error.
-static void postfix(Parser* p, Shape* sh) {
+static void postfix(Parser* p, ExpDesc* e) {
   for (;;) {
     switch (T(p)) {
       case TK_DOT:
         next(p);
         if (T(p) == TK_NAME) {
-          *sh = SH_LVALUE;
+          e->shape = SH_LVALUE;
         } else if (T(p) == TK_TYPENAME) {
           // module.TypeName is handled by primary().
           error_at(p, p->ls.pos.t.offset, "Unexpected type name after '.'.");
@@ -879,22 +885,22 @@ static void postfix(Parser* p, Shape* sh) {
         next(p);
         break;
       case TK_LSQUARE:
-        if (*sh == SH_TYPE) {
+        if (e->shape == SH_TYPE) {
           error_at(p, p->ls.pos.t.offset, "A type can't be indexed.");
         }
-        index_or_slice(p, sh);
+        index_or_slice(p, e);
         break;
       case TK_LPAREN: {
-        bool is_struct_literal = *sh == SH_TYPE;
+        bool is_struct_literal = e->shape == SH_TYPE;
         call_args(p, is_struct_literal);
-        *sh = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
+        e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
         break;
       }
       case TK_LBRACE:
-        if (*sh == SH_NAME || *sh == SH_LVALUE) {
+        if (e->shape == SH_NAME || e->shape == SH_LVALUE) {
           error_at(p, p->ls.pos.t.offset, "Type arguments can only follow a type name.");
         }
-        if (*sh != SH_TYPE) {
+        if (e->shape != SH_TYPE) {
           return;
         }
         type_args(p);
@@ -911,9 +917,9 @@ static void postfix(Parser* p, Shape* sh) {
 // primary -> literal | string | name | TypeName | '(' expr ')'
 //          | list | dict | sizeof | alignof | offsetof | cast
 //          followed by postfix
-static void primary(Parser* p, Shape* sh) {
+static void primary(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
-  *sh = SH_VALUE;
+  e->shape = SH_VALUE;
   switch (T(p)) {
     case TK_INTLIT:
     case TK_FLOATLIT:
@@ -941,7 +947,7 @@ static void primary(Parser* p, Shape* sh) {
           error_expected(p, "name after module name");
         }
         check_module_member(p, m, name);
-        *sh = T(p) == TK_TYPENAME ? SH_TYPE : SH_LVALUE;
+        e->shape = T(p) == TK_TYPENAME ? SH_TYPE : SH_LVALUE;
         next(p);
         break;
       }
@@ -952,18 +958,18 @@ static void primary(Parser* p, Shape* sh) {
       if (!defined && T(p) != TK_EQ) {
         error_at(p, at, "Undefined reference to '%.*s'.", (int)n->len, (const char*)n->str);
       }
-      *sh = SH_NAME;
+      e->shape = SH_NAME;
       break;
     }
     case TK_TYPEPARAM:
       check_type_param(p);
       next(p);
-      *sh = SH_TYPE;
+      e->shape = SH_TYPE;
       break;
     case TK_TYPENAME:
       check_type_name(p);
       next(p);
-      *sh = SH_TYPE;
+      e->shape = SH_TYPE;
       break;
     case TK_LPAREN:
       next(p);
@@ -1004,7 +1010,7 @@ static void primary(Parser* p, Shape* sh) {
     default:
       error_expected(p, "expression");
   }
-  postfix(p, sh);
+  postfix(p, e);
 }
 
 // Statements
@@ -1031,7 +1037,7 @@ static bool is_augassign(TokenKind kind) {
 }
 
 // A declaration, assignment, or call. The postfix chain is parsed first, and
-// then its Shape and the next token decide which it is.
+// then its shape and the next token decide which it is.
 //
 //   decl   -> type name ['=' expr]
 //   assign -> name_or_lvalue ('=' | augop) expr
@@ -1041,20 +1047,20 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
   u32 at = p->ls.pos.t.offset;
   if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
     NameId name = p->ls.pos.t.v.name;
-    Shape sh;
-    primary(p, &sh);
-    if (sh == SH_TYPE) {
+    ExpDesc e;
+    primary(p, &e);
+    if (e.shape == SH_TYPE) {
       decl_rest(p, toplevel);
       return;
     }
     if (T(p) == TK_EQ || is_augassign(T(p))) {
-      if (sh != SH_NAME && sh != SH_LVALUE) {
+      if (e.shape != SH_NAME && e.shape != SH_LVALUE) {
         error_at(p, at, "Can't assign to this expression.");
       }
       if (toplevel && T(p) != TK_EQ) {
         error_at(p, p->ls.pos.t.offset, "Augmented assignment isn't allowed at top level.");
       }
-      if (sh == SH_NAME) {
+      if (e.shape == SH_NAME) {
         if (toplevel) {
           check_not_global(p, name, p->ls.pos.t.offset);
         }
@@ -1074,7 +1080,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           error_at(p, p->ls.pos.t.offset, "Cannot assign a new value to a constant.");
         }
       }
-      bool declares = sh == SH_NAME && T(p) == TK_EQ;
+      bool declares = e.shape == SH_NAME && T(p) == TK_EQ;
       next(p);
       expr(p);
       // After the expression, so that it can't see the new local.
@@ -1085,7 +1091,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       }
       return;
     }
-    if (sh == SH_CALL) {
+    if (e.shape == SH_CALL) {
       if (toplevel) {
         error_at(p, at, "Calls aren't allowed at top level.");
       }
