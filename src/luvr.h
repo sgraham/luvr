@@ -421,6 +421,25 @@ NORETURN void ctx_error_unclosed(const LexState* ls,
 // directories, as import paths do.
 void parse_file(Ctx* ctx, const char* path);
 
+// Paths
+
+// Returns the length of the directory part of path[0..len), including its
+// final '/', or 0 if there isn't one.
+u32 path_dir_len(const u8* path, u32 len);
+
+// Returns the file name in path, and its length without .luv in *len.
+const char* path_stem(const char* path, u32* len);
+
+// Returns an error message if path[0..len) isn't allowed as an import path, or
+// NULL if it is.
+const char* path_import_is_invalid(const u8* path, u32 len);
+
+// Removes each ".." in path[0..len) along with the component before it, in
+// place, and returns the new length. A ".." with nothing before it to remove is
+// kept, so a path above the root is still a consistent name. path can't have
+// empty or '.' components.
+u32 path_normalize(u8* path, u32 len);
+
 // Lexer
 //
 // The lexer is pull-style. The parser calls lex_next() to get a token into

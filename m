@@ -10,7 +10,8 @@ import sys
 TARGETS = {
     "lexdump": ["src/lexdump.c", "src/lex.c", "src/ctx.c"],
     "lexfloor": ["bench/lexfloor.c", "src/lex.c", "src/ctx.c"],
-    "parsecheck": ["src/parsecheck.c", "src/parser.c", "src/lex.c", "src/ctx.c"],
+    "parsecheck": ["src/parsecheck.c", "src/parser.c", "src/path.c", "src/lex.c", "src/ctx.c"],
+    "unittest": ["src/unittest.c", "src/path.c"],
 }
 
 
@@ -88,6 +89,10 @@ def run_tests():
     r = subprocess.run([lexdump, "-r"] + rewind, capture_output=True, text=True)
     if r.returncode != 0:
         failures.append(f"lexdump -r: rewind check failed\n  got: {r.stderr.strip()}")
+    unittest = os.path.join("out", "unittest.exe" if sys.platform == "win32" else "unittest")
+    r = subprocess.run([unittest], capture_output=True, text=True)
+    if r.returncode != 0:
+        failures.append(f"unittest failed\n  got: {(r.stdout + r.stderr).strip()}")
     for f in failures:
         print(f)
     total = len(paths) + len(syntax)
@@ -102,8 +107,8 @@ def main():
     ap.add_argument(
         "action",
         nargs="?",
-        choices=["test", "lexdump", "lexfloor"],
-        help="test: build parsecheck and run the parser tests. lexdump, lexfloor: build that tool instead of parsecheck",
+        choices=["test", "lexdump", "lexfloor", "unittest"],
+        help="test: build parsecheck and run the parser tests and unit tests. lexdump, lexfloor, unittest: build that tool instead of parsecheck",
     )
     args = ap.parse_args()
 
@@ -115,10 +120,11 @@ def main():
     if rc:
         sys.exit(rc)
     if args.action == "test":
-        cmd, cwd = commands(args, "lexdump")
-        rc = subprocess.call(cmd, cwd=cwd)
-        if rc:
-            sys.exit(rc)
+        for tool in ["lexdump", "unittest"]:
+            cmd, cwd = commands(args, tool)
+            rc = subprocess.call(cmd, cwd=cwd)
+            if rc:
+                sys.exit(rc)
     if args.action == "test" and not run_tests():
         sys.exit(1)
 
