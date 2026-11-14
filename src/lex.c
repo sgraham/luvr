@@ -210,6 +210,9 @@ NameId lex_intern(Ctx* ctx, const u8* s, u32 len) {
 // Decoded string storage
 
 static void strbytes_append(Ctx* ctx, const u8* s, size_t n) {
+  if (n == 0) {
+    return;
+  }
   vec_reserve(ctx, &ctx->strbytes, n);
   memcpy(ctx->strbytes.v + ctx->strbytes.num, s, n);
   ctx->strbytes.num += (u32)n;

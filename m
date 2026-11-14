@@ -34,7 +34,7 @@ def commands(args, name):
     else:
         flags = ["-g", "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Wimplicit-fallthrough"]
         if args.debug:
-            flags += ["-O0", "-DBUILD_DEBUG=1"]
+            flags += ["-O0", "-DBUILD_DEBUG=1", "-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
         else:
             flags += ["-O2", "-DBUILD_DEBUG=0"]
         return ["clang"] + flags + srcs + ["-o", f"out/{name}"], None
