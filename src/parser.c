@@ -17,7 +17,9 @@
 
 #include "luvr.h"
 
+typedef struct Global Global;
 typedef struct Local Local;
+typedef struct Module Module;
 typedef struct Parser Parser;
 typedef struct Targets Targets;
 
@@ -37,7 +39,7 @@ typedef enum LocalKind {
 // encloses it.
 struct Local {
   NameId name;
-  u8 kind;  // LocalKind
+  LocalKind kind;
   // The Name's binding before this was declared. It's restored when the
   // function ends.
   Local* shadowed;
@@ -51,15 +53,31 @@ typedef enum GlobalKind {
   GK_MODULE,
 } GlobalKind;
 
+// A top-level name declared by a module.
+struct Global {
+  NameId name;
+  GlobalKind kind;  // GK_NONE in an empty slot
+};
+
+// Initial size of Module.globals. It must be a power of 2.
+#define MIN_GLOBALS 64
+
+struct Module {
+  FileBuf src;
+  // Open addressing with linear probing. It's kept at most half full, so a
+  // probe always reaches an empty slot.
+  Global* globals;
+  u32 globals_mask;
+  u32 num_globals;
+};
+
 struct Parser {
   LexState ls;
+  Module* mod;
   Local locals[MAX_LOCALS];
   u32 num_locals;
   u32 func_base;   // first of the current function's entries in locals
   u32 func_depth;  // 0 at top level
-  // Names declared as globals by this file, so that Name.global can be
-  // cleared at the end.
-  VEC(NameId) globals;
   // Bit c - 'A' is set for each type parameter declared by the current
   // struct's list or method's receiver.
   u32 type_params;
@@ -179,6 +197,76 @@ static NameId expect_name(Parser* p, const char* what, u32* at) {
   return name;
 }
 
+// Global table
+
+// NameIds are allocated in the order that names are first seen, so a
+// module's globals are usually close together. Using the id itself keeps
+// declarations that are near each other in the source in nearby slots, and on
+// a file with many globals that's much faster than spreading them out with a
+// hash.
+static u32 global_hash(NameId name) {
+  return name.idx;
+}
+
+static GlobalKind global_kind(Parser* p, NameId name) {
+  const Module* m = p->mod;
+  u32 i = global_hash(name) & m->globals_mask;
+  for (;;) {
+    const Global* g = &m->globals[i];
+    if (g->kind == GK_NONE || g->name.idx == name.idx) {
+      return g->kind;
+    }
+    i = (i + 1) & m->globals_mask;
+  }
+}
+
+static void globals_grow(Parser* p) {
+  Module* m = p->mod;
+  u32 size = (m->globals_mask + 1) * 2;
+  Global* globals = (Global*)calloc(size, sizeof(Global));
+  if (!globals) {
+    ctx_error(p->ls.ctx, NULL, NULL, 0, "Out of memory.");
+  }
+  u32 mask = size - 1;
+  for (u32 j = 0; j <= m->globals_mask; ++j) {
+    const Global* g = &m->globals[j];
+    if (g->kind == GK_NONE) {
+      continue;
+    }
+    u32 i = global_hash(g->name) & mask;
+    while (globals[i].kind != GK_NONE) {
+      i = (i + 1) & mask;
+    }
+    globals[i] = *g;
+  }
+  free(m->globals);
+  m->globals = globals;
+  m->globals_mask = mask;
+}
+
+// Sets name's kind, adding it if it's new.
+static void declare_global(Parser* p, NameId name, GlobalKind kind) {
+  Module* m = p->mod;
+  u32 i = global_hash(name) & m->globals_mask;
+  for (;;) {
+    Global* g = &m->globals[i];
+    if (g->kind == GK_NONE) {
+      g->name = name;
+      g->kind = kind;
+      ++m->num_globals;
+      if (m->num_globals * 2 > m->globals_mask + 1) {
+        globals_grow(p);
+      }
+      return;
+    }
+    if (g->name.idx == name.idx) {
+      g->kind = kind;
+      return;
+    }
+    i = (i + 1) & m->globals_mask;
+  }
+}
+
 // Locals
 //
 // Scope is the whole function: a local is declared by its first assignment
@@ -200,7 +288,7 @@ static void declare_local(Parser* p, NameId name, u32 at, LocalKind kind) {
   Local* l = &p->locals[p->num_locals++];
   l->name = name;
   Name* n = name_of(p, name);
-  l->kind = (u8)kind;
+  l->kind = kind;
   l->shadowed = (Local*)n->binding;
   n->binding = l;
 }
@@ -333,8 +421,9 @@ static void check_type_param(Parser* p) {
 }
 
 static void check_type_name(Parser* p) {
-  const Name* n = name_of(p, p->ls.pos.t.v.name);
-  if (n->global != GK_TYPE) {
+  NameId name = p->ls.pos.t.v.name;
+  if (global_kind(p, name) != GK_TYPE) {
+    const Name* n = name_of(p, name);
     error_at(p, p->ls.pos.t.offset, "Undefined type '%.*s'.", (int)n->len, (const char*)n->str);
   }
 }
@@ -575,19 +664,12 @@ static void interpolated_string(Parser* p) {
 
 // Globals
 //
-// A global is marked on its Name rather than having a binding, because the
-// number of globals isn't bounded. Locals are looked up first, so they shadow
-// globals.
-
-static void declare_global(Parser* p, NameId name, GlobalKind kind) {
-  *vec_push(p->ls.ctx, &p->globals) = name;
-  name_of(p, name)->global = (u8)kind;
-}
+// Locals are looked up first, so they shadow globals.
 
 // Reports an error at `at` if name is already a global.
 static void check_not_global(Parser* p, NameId name, u32 at) {
-  const Name* n = name_of(p, name);
-  if (n->global) {
+  if (global_kind(p, name) != GK_NONE) {
+    const Name* n = name_of(p, name);
     error_at(p, at,
              n->is_const ? "Cannot assign a new value to a constant."
                          : "Cannot re-initialize an existing global.");
@@ -596,23 +678,16 @@ static void check_not_global(Parser* p, NameId name, u32 at) {
 
 // Declares a function or type, which can only be defined once.
 //
-// TODO: This costs 2-5% on dumbbench, which has 1.25M top-level functions.
-// About half is code layout in funcsig() (moving the error report out of line
-// recovers most of that), and the rest is growing p->globals and clearing it in
-// pop_globals(). Revisit once globals have their own records for codegen.
+// TODO: This is measurable on dumbbench, which has 1.25M top-level functions.
+// Part of it is code layout in funcsig() (moving the error report out of line
+// recovers most of that), and part is page faults from growing
+// Module.globals.
 static void declare_definition(Parser* p, NameId name, u32 at, GlobalKind kind) {
-  const Name* n = name_of(p, name);
-  if (n->global) {
+  if (global_kind(p, name) != GK_NONE) {
+    const Name* n = name_of(p, name);
     error_at(p, at, "Duplicate top-level definition of '%.*s'.", (int)n->len, (const char*)n->str);
   }
   declare_global(p, name, kind);
-}
-
-static void pop_globals(Parser* p) {
-  for (u32 i = 0; i < p->globals.num; ++i) {
-    name_of(p, p->globals.v[i])->global = GK_NONE;
-  }
-  p->globals.num = 0;
 }
 
 #define MAX_TARGETS 8
@@ -889,8 +964,9 @@ static void primary(Parser* p, Shape* sh) {
       interpolated_string(p);
       break;
     case TK_NAME: {
-      const Name* n = name_of(p, p->ls.pos.t.v.name);
-      bool defined = n->binding || n->global || n->is_builtin;
+      NameId name = p->ls.pos.t.v.name;
+      const Name* n = name_of(p, name);
+      bool defined = n->binding || n->is_builtin || global_kind(p, name) != GK_NONE;
       next(p);
       // A name followed by '=' is an assignment target, which declares the name
       // if it's new.
@@ -1076,8 +1152,8 @@ static void simple_stat(Parser* p) {
       for (;;) {
         u32 at;
         NameId name = expect_name(p, "variable name", &at);
-        const Name* n = name_of(p, name);
-        if (!n->global) {
+        if (global_kind(p, name) == GK_NONE) {
+          const Name* n = name_of(p, name);
           error_at(p, at, "Undefined global '%.*s'.", (int)n->len, (const char*)n->str);
         }
         declare_local(p, name, at, LK_GLOBAL);
@@ -1430,12 +1506,11 @@ static void parse_module(Parser* p) {
   }
 }
 
-// Undoes the file's bindings and frees the Parser.
+// Undoes the file's bindings and frees the Parser and Module.
 static void parse_end(Parser* p) {
-  // TODO: These (esp globals) might be unnecessarily expensive.
   pop_locals(p, 0);
-  pop_globals(p);
-  free(p->globals.v);
+  free(p->mod->globals);
+  free(p->mod);
   free(p);
 }
 
@@ -1445,14 +1520,22 @@ void parse_file(Ctx* ctx, const FileBuf* src) {
   // tables with vec_push(), so it'd be better to settle on one owner for
   // allocations that error paths can clean up.
   Parser* p = (Parser*)malloc(sizeof(Parser));
-  if (!p) {
+  Module* m = (Module*)malloc(sizeof(Module));
+  Global* globals = (Global*)calloc(MIN_GLOBALS, sizeof(Global));
+  if (!p || !m || !globals) {
+    free(p);
+    free(m);
+    free(globals);
     ctx_error(ctx, src->filename, NULL, 0, "Out of memory.");
   }
+  m->src = *src;
+  m->globals = globals;
+  m->globals_mask = MIN_GLOBALS - 1;
+  m->num_globals = 0;
+  p->mod = m;
   p->num_locals = 0;
   p->func_base = 0;
   p->func_depth = 0;
-  p->globals.v = NULL;
-  p->globals.num = p->globals.cap = 0;
   // Names are shared by all files parsed with ctx, so this file's bindings
   // are undone at the end, including after an error.
   jmp_buf* outer = ctx->on_error;

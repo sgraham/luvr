@@ -153,7 +153,6 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) 
   n->str = s;
   n->len = len;
   n->is_const = false;
-  n->global = 0;
   n->is_builtin = false;
   n->kind = kind_if_new ? kind_if_new : classify_ident(s, len, &n->is_const);
   n->hash = h;

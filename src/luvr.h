@@ -424,7 +424,6 @@ struct Name {
   u32 len;
   u8 kind;          // TK_NAME, TK_TYPENAME, TK_TYPEPARAM, or a keyword kind
   bool is_const;    // kind=TK_NAME: an ALL_CAPS constant
-  u8 global;        // parser: kind of global in the file being parsed, or 0
   bool is_builtin;  // kind=TK_NAME: a builtin function such as len
   u64 hash;
   void* binding;  // parser: current symbol for this name, or NULL

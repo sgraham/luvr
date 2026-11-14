@@ -1641,6 +1641,15 @@ cache for globals is added, switching modules also has to rebind them.
    `FileBuf` out of `LexState`. Move globals into the module's table, with
    all lookups through it, and remove `Name.global`. Bench against HEAD on
    the desktop.
+   - **Measured 2026-11-14** (desktop, `parsecheck`, dumbbench): with the
+     NameId multiplied by 2^64 / phi as the hash, 778 ms vs. 680 ms at HEAD
+     (14% slower), with 2.3 more cache misses and 25 more page faults per
+     function. Every global in dumbbench is a declaration, so it's the
+     duplicate check and insert into a table with 1.25M entries spread out at
+     random. Using the NameId itself as the hash puts consecutive
+     declarations in consecutive slots: 702 ms (3% slower), and almost all
+     of the difference is system time from growing the table. locals64 is
+     1% slower (83.8 vs. 83.1 ms).
 2. Probably: improve the table's performance (swisstable or other layouts),
    depending on what step 1 measures.
 3. The loader callback, the dict of modules by canonical name, and loading
