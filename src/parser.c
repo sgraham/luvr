@@ -17,7 +17,6 @@
 
 #include "luvr.h"
 
-typedef struct Global Global;
 typedef struct Local Local;
 typedef struct Module Module;
 typedef struct Parser Parser;
@@ -53,21 +52,12 @@ typedef enum GlobalKind {
   GK_MODULE,
 } GlobalKind;
 
-// A top-level name declared by a module.
-struct Global {
-  NameId name;
-  GlobalKind kind;  // GK_NONE in an empty slot
-};
-
 // Minimum size of Module.globals. It must be a power of 2.
 #define MIN_GLOBALS 64
 
 struct Module {
   FileBuf src;
-  // Open addressing with linear probing. cap is a power of 2, and it's kept
-  // at most half full, so a probe always reaches an empty slot. It's rehashed
-  // into a new buffer to grow, so it isn't grown with vec_reserve().
-  VEC(Global) globals;
+  NameMap globals;  // NameId -> GlobalKind
 };
 
 struct Parser {
@@ -198,75 +188,13 @@ static NameId expect_name(Parser* p, const char* what, u32* at) {
 
 // Global table
 
-// A NameId is an index into Ctx.names, allocated in the order that names are
-// first interned, so ids are compact, and a module's globals are usually close
-// together. Using the id itself keeps declarations that are near each other in
-// the source in nearby slots, and on a file with many globals that's much
-// faster than spreading them out with a hash. An array indexed directly by the
-// id would avoid probing, but each module's array would have to cover every
-// name in the Ctx, and grow as more names are interned.
-static u32 global_hash(NameId name) {
-  return name.idx;
-}
-
 static GlobalKind global_kind(Parser* p, NameId name) {
-  const Module* m = p->mod;
-  u32 mask = m->globals.cap - 1;
-  u32 i = global_hash(name) & mask;
-  for (;;) {
-    const Global* g = &m->globals.v[i];
-    if (g->kind == GK_NONE || g->name.idx == name.idx) {
-      return g->kind;
-    }
-    i = (i + 1) & mask;
-  }
+  const u32* kind = namemap_find(&p->mod->globals, name);
+  return kind ? (GlobalKind)*kind : GK_NONE;
 }
 
-static void globals_grow(Parser* p) {
-  Module* m = p->mod;
-  u32 cap = m->globals.cap * 2;
-  Global* v = (Global*)calloc(cap, sizeof(Global));
-  if (!v) {
-    ctx_error(p->ls.ctx, NULL, NULL, 0, "Out of memory.");
-  }
-  u32 mask = cap - 1;
-  for (u32 j = 0; j < m->globals.cap; ++j) {
-    const Global* g = &m->globals.v[j];
-    if (g->kind == GK_NONE) {
-      continue;
-    }
-    u32 i = global_hash(g->name) & mask;
-    while (v[i].kind != GK_NONE) {
-      i = (i + 1) & mask;
-    }
-    v[i] = *g;
-  }
-  free(m->globals.v);
-  m->globals.v = v;
-  m->globals.cap = cap;
-}
-
-// Sets name's kind, adding it if it's new.
 static void declare_global(Parser* p, NameId name, GlobalKind kind) {
-  Module* m = p->mod;
-  u32 mask = m->globals.cap - 1;
-  u32 i = global_hash(name) & mask;
-  for (;;) {
-    Global* g = &m->globals.v[i];
-    if (g->kind == GK_NONE) {
-      g->name = name;
-      g->kind = kind;
-      if (++m->globals.num * 2 > m->globals.cap) {
-        globals_grow(p);
-      }
-      return;
-    }
-    if (g->name.idx == name.idx) {
-      g->kind = kind;
-      return;
-    }
-    i = (i + 1) & mask;
-  }
+  namemap_set(p->ls.ctx, &p->mod->globals, name, kind);
 }
 
 // Locals
@@ -1510,7 +1438,7 @@ static void parse_module(Parser* p) {
 // Undoes the file's bindings and frees the Parser and Module.
 static void parse_end(Parser* p) {
   pop_locals(p, 0);
-  free(p->mod->globals.v);
+  namemap_free(&p->mod->globals);
   free(p->mod);
   free(p);
 }
@@ -1530,17 +1458,12 @@ void parse_file(Ctx* ctx, const FileBuf* src) {
   }
   Parser* p = (Parser*)malloc(sizeof(Parser));
   Module* m = (Module*)malloc(sizeof(Module));
-  Global* globals = (Global*)calloc(cap, sizeof(Global));
-  if (!p || !m || !globals) {
+  if (!p || !m || !namemap_init(&m->globals, cap)) {
     free(p);
     free(m);
-    free(globals);
     ctx_error(ctx, src->filename, NULL, 0, "Out of memory.");
   }
   m->src = *src;
-  m->globals.v = globals;
-  m->globals.num = 0;
-  m->globals.cap = cap;
   p->mod = m;
   p->num_locals = 0;
   p->func_base = 0;

@@ -6,6 +6,8 @@ typedef struct LexPos LexPos;
 typedef struct LexState LexState;
 typedef struct Name Name;
 typedef struct NameId NameId;
+typedef struct NameMap NameMap;
+typedef struct NameMapSlot NameMapSlot;
 typedef struct StrRef StrRef;
 typedef struct Token Token;
 
@@ -434,6 +436,50 @@ struct StrRef {
   u32 off;  // into Ctx.strbytes
   u32 len;
 };
+
+// A hash table from NameId to u32, using open addressing and linear probing.
+// A NameId is an index into Ctx.names, allocated in the order that names are
+// first interned, so ids are compact, and names that are declared together are
+// usually close together. Using the id itself as the hash keeps them in nearby
+// slots, and on a table with many entries that's much faster than spreading
+// them out with a hash. An array indexed directly by the id would avoid
+// probing, but it would have to cover every name in the Ctx, and grow as more
+// names are interned.
+struct NameMap {
+  NameMapSlot* v;
+  u32 num;
+  // A power of 2. The table is kept at most half full, so a probe always
+  // reaches an empty slot.
+  u32 cap;
+};
+
+struct NameMapSlot {
+  u32 key;  // NameId.idx + 1, so that a zeroed slot is empty
+  u32 val;
+};
+
+// cap must be a power of 2. Returns false if allocation fails.
+bool namemap_init(NameMap* m, u32 cap);
+void namemap_free(NameMap* m);
+
+// Sets name's value, adding it if it's new.
+void namemap_set(Ctx* ctx, NameMap* m, NameId name, u32 val);
+
+// Returns the value for name, or NULL if it isn't in m.
+static inline u32* namemap_find(const NameMap* m, NameId name) {
+  u32 mask = m->cap - 1;
+  u32 i = name.idx & mask;
+  for (;;) {
+    NameMapSlot* s = &m->v[i];
+    if (s->key == name.idx + 1) {
+      return &s->val;
+    }
+    if (s->key == 0) {
+      return NULL;
+    }
+    i = (i + 1) & mask;
+  }
+}
 
 // A source file. buf is followed by LEX_PADDING zero bytes, and must outlive
 // the Ctx, because interned names point into it.
