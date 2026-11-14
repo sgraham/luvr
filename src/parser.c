@@ -21,6 +21,7 @@ typedef struct ExpDesc ExpDesc;
 typedef struct Local Local;
 typedef struct Parser Parser;
 typedef struct Targets Targets;
+typedef struct TypeId TypeId;
 
 // Locals that can be in scope at once, including those of enclosing functions.
 #define MAX_LOCALS 1024
@@ -78,9 +79,21 @@ typedef enum Shape {
   SH_STRUCT_LITERAL,  // Stuff(...): '&' allocates it in the current arena
 } Shape;
 
+// Types are compared by index.
+struct TypeId {
+  u32 idx;
+};
+
+typedef enum FixedType {
+  TY_UNKNOWN,      // Not inferred yet. Checks against it always pass.
+  TY_UNTYPED_INT,  // An integer constant that hasn't been given a type yet.
+  TY_BOOL,
+} FixedType;
+
 // What is known about an expression that has been parsed but not yet emitted.
 struct ExpDesc {
   Shape shape;
+  TypeId type;
 };
 
 static void expr(Parser* p);
@@ -102,6 +115,19 @@ static void next(Parser* p) {
 
 #define error_at(p, offset, ...) \
   ctx_error((p)->ls.ctx, (p)->ls.src.filename, (p)->ls.src.buf, (offset), __VA_ARGS__)
+
+// Describes a type for error messages, as it would follow "not".
+static const char* describe_type(TypeId t) {
+  switch ((FixedType)t.idx) {
+    case TY_UNKNOWN:
+      break;
+    case TY_UNTYPED_INT:
+      return "an integer constant";
+    case TY_BOOL:
+      return "bool";
+  }
+  return "an unknown type";
+}
 
 // Describes the current token for error messages.
 static const char* describe(Parser* p, char* buf, size_t size) {
@@ -555,19 +581,26 @@ static bool is_comparison(BinOpr op) {
 // where binop is any binary operator with a priority higher than `limit`.
 static void subexpr(Parser* p, int limit, ExpDesc* e) {
   switch (T(p)) {
-    case TK_NOT:
+    case TK_NOT: {
       if (limit >= PRIORITY_NOT) {
         error_at(p, p->ls.pos.t.offset, "'not' needs parentheses here.");
       }
       next(p);
+      u32 at = p->ls.pos.t.offset;
       subexpr(p, PRIORITY_NOT, e);
+      if (e->type.idx != TY_UNKNOWN && e->type.idx != TY_BOOL) {
+        error_at(p, at, "'not' expects bool, not %s.", describe_type(e->type));
+      }
       e->shape = SH_VALUE;
+      e->type.idx = TY_BOOL;
       break;
+    }
     case TK_MINUS:
     case TK_TILDE:
       next(p);
       subexpr(p, PRIORITY_UNARY, e);
       e->shape = SH_VALUE;
+      e->type.idx = TY_UNKNOWN;
       break;
     case TK_AMP: {
       next(p);
@@ -581,6 +614,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
         error_at(p, at, "Can't take the address of non-lvalue.");
       }
       e->shape = SH_VALUE;
+      e->type.idx = TY_UNKNOWN;
       break;
     }
     default:
@@ -608,6 +642,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
       error_at(p, at, "Comparisons can't be chained. Use 'and' to combine them.");
     }
     e->shape = SH_VALUE;
+    e->type.idx = TY_UNKNOWN;
     op = nextop;
   }
 }
@@ -873,6 +908,7 @@ static void postfix(Parser* p, ExpDesc* e) {
   for (;;) {
     switch (T(p)) {
       case TK_DOT:
+        e->type.idx = TY_UNKNOWN;
         next(p);
         if (T(p) == TK_NAME) {
           e->shape = SH_LVALUE;
@@ -888,12 +924,14 @@ static void postfix(Parser* p, ExpDesc* e) {
         if (e->shape == SH_TYPE) {
           error_at(p, p->ls.pos.t.offset, "A type can't be indexed.");
         }
+        e->type.idx = TY_UNKNOWN;
         index_or_slice(p, e);
         break;
       case TK_LPAREN: {
         bool is_struct_literal = e->shape == SH_TYPE;
         call_args(p, is_struct_literal);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
+        e->type.idx = TY_UNKNOWN;
         break;
       }
       case TK_LBRACE:
@@ -920,12 +958,19 @@ static void postfix(Parser* p, ExpDesc* e) {
 static void primary(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
   e->shape = SH_VALUE;
+  e->type.idx = TY_UNKNOWN;
   switch (T(p)) {
     case TK_INTLIT:
-    case TK_FLOATLIT:
-    case TK_STRING:
+      e->type.idx = TY_UNTYPED_INT;
+      next(p);
+      break;
     case TK_TRUE:
     case TK_FALSE:
+      e->type.idx = TY_BOOL;
+      next(p);
+      break;
+    case TK_FLOATLIT:
+    case TK_STRING:
     case TK_NULL:
       next(p);
       break;

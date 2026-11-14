@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:5:12:    if not 5:
-# CERR: {ssss}                 ^ error: Type i32 cannot be used in a boolean not.
+# CERR: {ssss}                 ^ error: 'not' expects bool, not an integer constant.
 def int main():
     if not 5:
         pass
