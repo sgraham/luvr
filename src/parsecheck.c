@@ -50,13 +50,6 @@ int main(int argc, char** argv) {
   size_t nbytes = 0;
   double secs = 0;
   for (int i = first; i < argc; ++i) {
-    size_t len;
-    u8* buf = load_file(argv[i], &len);
-    if (!buf) {
-      fprintf(stderr, "%s: cannot read\n", argv[i]);
-      ++failures;
-      continue;
-    }
     // Each file is a separate program, so it has its own Ctx.
     Ctx ctx;
     if (!ctx_init(&ctx)) {
@@ -73,17 +66,16 @@ int main(int argc, char** argv) {
       fprintf(stderr, "%s:%u:%u: error: %s\n", ctx.err_file ? ctx.err_file : argv[i], line, col,
               ctx.err_msg);
       ++failures;
-      // Interned names point into buf, so it's freed after ctx.
       ctx_free(&ctx);
-      free(buf);
       continue;
     }
-    FileBuf src = {argv[i], buf, buf + len};
-    parse_file(&ctx, &src);
+    parse_file(&ctx, argv[i]);
     secs += now_sec() - t0;
-    nbytes += len;
+    for (u32 j = 0; j < ctx.modules.num; ++j) {
+      const FileBuf* src = &ctx.modules.v[j]->src;
+      nbytes += (size_t)(src->end - src->buf);
+    }
     ctx_free(&ctx);
-    free(buf);
   }
   if (!quiet) {
     int nfiles = argc - first;

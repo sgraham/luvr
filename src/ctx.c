@@ -18,10 +18,8 @@ void ctx_free(Ctx* ctx) {
     Module* m = ctx->modules.v[i];
     namemap_free(&m->globals);
     free(m->name_buf);
-    if (m->owns_src) {
-      free((void*)m->src.filename);
-      free((void*)m->src.buf);
-    }
+    free((void*)m->src.filename);
+    free((void*)m->src.buf);
     free(m);
   }
   free(ctx->modules.v);

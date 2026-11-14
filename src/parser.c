@@ -1430,18 +1430,38 @@ static Module* module_new(Ctx* ctx, u8* name_buf, NameId name) {
   return m;
 }
 
-static void module_init_globals(Ctx* ctx, Module* m) {
+// Returns len bytes for a filename, plus one for the terminating NUL.
+static char* filename_new(Ctx* ctx, size_t len) {
+  char* filename = (char*)malloc(len + 1);
+  if (!filename) {
+    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+  }
+  return filename;
+}
+
+// Reads m's source from filename, which m takes ownership of. Returns false if
+// it can't be read.
+static bool module_read(Ctx* ctx, Module* m, char* filename) {
+  m->src.filename = filename;
+  size_t size;
+  u8* buf = ctx->load_file ? ctx->load_file(filename, &size) : NULL;
+  if (!buf) {
+    return false;
+  }
+  m->src.buf = buf;
+  m->src.end = buf + size;
   // Most of the cost of growing a large table is page faults, so it starts
   // with room for a global every 64 bytes of source. A large calloc() gets
   // pages that the OS has already zeroed, so the pages that are never used
   // aren't touched.
   u32 cap = MIN_GLOBALS;
-  while (cap < (size_t)(m->src.end - m->src.buf) / 32) {
+  while (cap < size / 32) {
     cap *= 2;
   }
   if (!namemap_init(&m->globals, cap)) {
-    ctx_error(ctx, m->src.filename, NULL, 0, "Out of memory.");
+    ctx_error(ctx, filename, NULL, 0, "Out of memory.");
   }
+  return true;
 }
 
 // The root module's canonical name is its file name, without the directory or
@@ -1493,23 +1513,13 @@ static Module* import_module(Parser* p, const u8* path, u32 len, u32 at) {
   const char* root = ctx->modules.v[0]->src.filename;
   u32 unused;
   u32 root_dir = (u32)(root_name(root, &unused) - root);
-  char* filename = (char*)malloc(root_dir + name_len + sizeof(".luv"));
-  if (!filename) {
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
-  }
+  char* filename = filename_new(ctx, root_dir + name_len + strlen(".luv"));
   memcpy(filename, root, root_dir);
   memcpy(filename + root_dir, name_buf, name_len);
   memcpy(filename + root_dir + name_len, ".luv", sizeof(".luv"));
-  m->owns_src = true;
-  m->src.filename = filename;
-  size_t size;
-  u8* buf = ctx->load_file ? ctx->load_file(filename, &size) : NULL;
-  if (!buf) {
+  if (!module_read(ctx, m, filename)) {
     error_at(p, at, "Couldn't open import, looking for '%s'.", filename);
   }
-  m->src.buf = buf;
-  m->src.end = buf + size;
-  module_init_globals(ctx, m);
   return m;
 }
 
@@ -1548,12 +1558,12 @@ static void parse_end(Parser* p) {
   free(p);
 }
 
-void parse_file(Ctx* ctx, const FileBuf* src) {
+void parse_file(Ctx* ctx, const char* path) {
   ASSERT(ctx->modules.num == 0);
   // The Parser isn't a local, so that it's still valid after a longjmp.
   Parser* p = (Parser*)malloc(sizeof(Parser));
   if (!p) {
-    ctx_error(ctx, src->filename, NULL, 0, "Out of memory.");
+    ctx_error(ctx, path, NULL, 0, "Out of memory.");
   }
   p->num_locals = 0;
   p->func_base = 0;
@@ -1569,13 +1579,17 @@ void parse_file(Ctx* ctx, const FileBuf* src) {
     longjmp(*outer, 1);
   }
   u32 len;
-  const char* name = root_name(src->filename, &len);
+  const char* name = root_name(path, &len);
   u8* name_buf = name_buf_new(ctx, len);
   memcpy(name_buf, name, len);
   p->mod = module_new(ctx, name_buf, lex_intern(ctx, name_buf, len));
-  p->mod->src = *src;
-  module_init_globals(ctx, p->mod);
-  lex_init(&p->ls, ctx, src);
+  size_t path_len = strlen(path);
+  char* filename = filename_new(ctx, path_len);
+  memcpy(filename, path, path_len + 1);
+  if (!module_read(ctx, p->mod, filename)) {
+    ctx_error(ctx, filename, NULL, 0, "Couldn't open '%s'.", filename);
+  }
+  lex_init(&p->ls, ctx, &p->mod->src);
   parse_module(p);
   parse_end(p);
   ctx->on_error = outer;

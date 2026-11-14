@@ -415,10 +415,11 @@ NORETURN void ctx_error_unclosed(const LexState* ls,
 // error, the message and location are stored in ctx (see
 // ctx_error_location()) and it longjmps to ctx->on_error.
 //
-// src is the root module of a program. Canonical module names are relative to
-// its directory, so a Ctx can only be used to parse one root. Its filename
-// has to use '/' to separate directories, as import paths do.
-void parse_file(Ctx* ctx, const FileBuf* src);
+// path is the root module of a program, which is read with ctx->load_file,
+// as imports are. Canonical module names are relative to its directory, so a
+// Ctx can only be used to parse one root. It has to use '/' to separate
+// directories, as import paths do.
+void parse_file(Ctx* ctx, const char* path);
 
 // Lexer
 //
@@ -512,10 +513,7 @@ struct Module {
   NameId name;
   // A padded copy of the canonical name, which the Name may point into.
   u8* name_buf;
-  FileBuf src;
-  // Whether src.filename and src.buf are freed with the Ctx. The root's
-  // belong to the caller.
-  bool owns_src;
+  FileBuf src;      // filename and buf are freed with the Ctx
   NameMap globals;  // NameId -> GlobalKind
 };
 
