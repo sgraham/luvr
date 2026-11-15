@@ -32,15 +32,22 @@ typedef enum FixedType {
   TY_UNKNOWN,      // Not inferred yet. Checks against it always pass.
   TY_UNTYPED_INT,  // An integer constant that hasn't been given a type yet.
   TY_BOOL,
-  TY_I32,
   TY_STR,
+  // Integer types are contiguous, from TY_FIRST_INT to TY_LAST_INT.
+  TY_I32,
+  TY_I64,
+  TY_U64,
+  TY_FIRST_INT = TY_I32,
+  TY_LAST_INT = TY_U64,
 } FixedType;
 
 static const TypeId ty_unknown = {TY_UNKNOWN};
 static const TypeId ty_untyped_int = {TY_UNTYPED_INT};
 static const TypeId ty_bool = {TY_BOOL};
-static const TypeId ty_i32 = {TY_I32};
 static const TypeId ty_str = {TY_STR};
+static const TypeId ty_i32 = {TY_I32};
+static const TypeId ty_i64 = {TY_I64};
+static const TypeId ty_u64 = {TY_U64};
 
 // Locals that can be in scope at once, including those of enclosing functions.
 #define MAX_LOCALS 1024
@@ -134,10 +141,14 @@ static const char* describe_type(TypeId t) {
       return "an integer constant";
     case TY_BOOL:
       return "bool";
-    case TY_I32:
-      return "i32";
     case TY_STR:
       return "str";
+    case TY_I32:
+      return "i32";
+    case TY_I64:
+      return "i64";
+    case TY_U64:
+      return "u64";
   }
   return "an unknown type";
 }
@@ -443,11 +454,15 @@ static TypeId builtin_type(TokenKind kind) {
   switch (kind) {
     case TK_BOOL:
       return ty_bool;
+    case TK_STR:
+      return ty_str;
     case TK_I32:
     case TK_INT:
       return ty_i32;
-    case TK_STR:
-      return ty_str;
+    case TK_I64:
+      return ty_i64;
+    case TK_U64:
+      return ty_u64;
     default:
       return ty_unknown;
   }
@@ -620,7 +635,7 @@ static TypeId default_type(TypeId t) {
 // expected.
 static bool assignable(TypeId from, TypeId to) {
   return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
-         (from.idx == TY_UNTYPED_INT && to.idx == TY_I32);
+         (from.idx == TY_UNTYPED_INT && to.idx >= TY_FIRST_INT && to.idx <= TY_LAST_INT);
 }
 
 // Checks that a value can be assigned to something of type `to`.

@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:7:13:    if sign < unsign:
-# CERR: {ssss}                  ^ error: Comparison with different signs: i64 and u64.
+# CERR: {ssss}                  ^ error: Can't compare i64 and u64.
 def int main():
     i64 sign = -55
     u64 unsign = 123
