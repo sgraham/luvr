@@ -2367,6 +2367,26 @@ during the SSA pass, and the register and spill slot during code
 generation. LuaJIT keeps these in the instruction's fourth 16-bit field.
 We've spent those bits on operand range instead.
 
+To revisit (2026-11-15): whether a third field in the instruction is worth
+a smaller range. With the CSE link or the register and spill slot inline,
+a chain step or an operand lookup touches one cache line, not two.
+
+- LuaJIT's layout (8/8/16/16/16) allows 32k instructions and 32k
+  constants. A function that fits is at most 256 KB of IL and 128 KB of
+  side array, which stays in L2, so the second line is cheap. The raw
+  stage reaches the limit first, since every local access is a `SLOT` and
+  a `LOAD` or `STORE`. Probably a function of a couple of thousand lines.
+- 6/4/18/18/18 allows about 131k of each. It leaves no spare bits, caps
+  the opcode count at 64 (the provisional list is already around 60) and
+  the types at 16, and generated code can still reach the limit.
+- Whichever layout is used, bound the chain walk as LuaJIT does: chains are
+  per opcode, and the search stops below the larger operand reference,
+  since a match can't be defined before its operands. A 16-bit backwards
+  delta with an escape value would also halve the chain side array.
+
+Not measured. Decide with the long-function bench input once the SSA pass
+and a code generator exist.
+
 #### Types
 
 | Type | Used for |
