@@ -31,6 +31,7 @@ struct TypeId {
 typedef enum FixedType {
   TY_UNKNOWN,      // Not inferred yet. Checks against it always pass.
   TY_UNTYPED_INT,  // An integer constant that hasn't been given a type yet.
+  TY_VOID,  // The return type of a function without one.
   TY_BOOL,
   TY_STR,
   // Integer types are contiguous, from TY_FIRST_INT to TY_LAST_INT.
@@ -43,6 +44,7 @@ typedef enum FixedType {
 
 static const TypeId ty_unknown = {TY_UNKNOWN};
 static const TypeId ty_untyped_int = {TY_UNTYPED_INT};
+static const TypeId ty_void = {TY_VOID};
 static const TypeId ty_bool = {TY_BOOL};
 static const TypeId ty_str = {TY_STR};
 static const TypeId ty_i32 = {TY_I32};
@@ -140,6 +142,8 @@ static const char* describe_type(TypeId t) {
       break;
     case TY_UNTYPED_INT:
       return "an integer constant";
+    case TY_VOID:
+      return "void";
     case TY_BOOL:
       return "bool";
     case TY_STR:
@@ -1273,18 +1277,28 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
 //              | decl_or_expr_stat
 static void simple_stat(Parser* p) {
   switch (T(p)) {
-    case TK_RETURN:
+    case TK_RETURN: {
+      u32 return_at = p->ls.pos.t.offset;
       next(p);
-      if (T(p) != TK_NEWLINE && !block_follow(T(p))) {
+      if (T(p) == TK_NEWLINE || block_follow(T(p))) {
+        if (p->ret_type.idx != TY_VOID && p->ret_type.idx != TY_UNKNOWN) {
+          error_at(p, return_at, "Missing return value in a function returning %s.",
+                   describe_type(p->ret_type));
+        }
+      } else {
         u32 at = p->ls.pos.t.offset;
         ExpDesc e;
         subexpr(p, -1, &e);
+        if (p->ret_type.idx == TY_VOID) {
+          error_at(p, at, "Can't return a value from a function with no return type.");
+        }
         if (!assignable(e.type, p->ret_type)) {
           error_at(p, at, "Can't return %s from a function returning %s.", describe_type(e.type),
                    describe_type(p->ret_type));
         }
       }
       return;
+    }
     case TK_BREAK:
     case TK_CONTINUE:
     case TK_PASS:
@@ -1381,11 +1395,12 @@ static void suite(Parser* p) {
 static u32 funcsig(Parser* p, bool is_method) {
   NameId name = p->ls.pos.t.v.name;
   u32 at = p->ls.pos.t.offset;
-  TypeId ret = ty_unknown;
+  TypeId ret = ty_void;
   if (T(p) == TK_NAME) {
     next(p);
     if (optional(p, TK_DOT)) {  // module.Type return type
       qualified_type_rest(p, name, at);
+      ret = ty_unknown;
       name = expect_name(p, "function name", &at);
     }
   } else {
