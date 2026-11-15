@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:6:8:    if x:
-# CERR: {ssss}            ^ error: Condition expects bool, not i32.
+# CERR: {ssss}            ^ error: Condition expects bool, not int.
 def int main():
     int x = 4
     if x:

@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:6:11:    y = x << "s"
-# CERR: {ssss}                ^ error: Can't shift i32 left by str.
+# CERR: {ssss}                ^ error: Can't shift int left by str.
 def int main():
     x = 1
     y = x << "s"

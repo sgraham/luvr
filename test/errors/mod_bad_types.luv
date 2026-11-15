@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:6:11:    y = x % "s"
-# CERR: {ssss}                ^ error: Can't take i32 modulo str.
+# CERR: {ssss}                ^ error: Can't take int modulo str.
 def int main():
     x = 1
     y = x % "s"

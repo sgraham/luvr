@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:5:5:    return
-# CERR: {ssss}         ^ error: Missing return value in a function returning i32.
+# CERR: {ssss}         ^ error: Missing return value in a function returning int.
 def int f():
     return
 

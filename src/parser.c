@@ -151,7 +151,7 @@ static const char* describe_type(TypeId t) {
     case TY_I32:
       return "i32";
     case TY_I64:
-      return "i64";
+      return "int";
     case TY_U64:
       return "u64";
   }
@@ -462,9 +462,9 @@ static TypeId builtin_type(TokenKind kind) {
     case TK_STR:
       return ty_str;
     case TK_I32:
-    case TK_INT:
       return ty_i32;
     case TK_I64:
+    case TK_INT:
       return ty_i64;
     case TK_U64:
       return ty_u64;
@@ -632,8 +632,7 @@ static bool is_comparison(BinOpr op) {
 // The type that a variable gets when it's declared by assigning a value of
 // type t.
 static TypeId default_type(TypeId t) {
-  // i32, as C's int usually is.
-  return t.idx == TY_UNTYPED_INT ? ty_i32 : t;
+  return t.idx == TY_UNTYPED_INT ? ty_i64 : t;
 }
 
 // Whether a value of type `from` can be used, without a cast, where `to` is

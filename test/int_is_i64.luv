@@ -1,0 +1,11 @@
+# RET: 3
+def i64 f(int x):
+    return x
+
+def int main():
+    i64 a = 1
+    int b = a
+    x = 2
+    i64 c = x
+    c += b
+    return f(c)

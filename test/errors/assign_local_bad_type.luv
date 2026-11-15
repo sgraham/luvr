@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:7:13:    myvar = "hi!"
-# CERR: {ssss}                  ^ error: Can't assign str to i32.
+# CERR: {ssss}                  ^ error: Can't assign str to int.
 
 def int main():
     myvar = 1
