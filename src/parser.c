@@ -33,7 +33,14 @@ typedef enum FixedType {
   TY_UNTYPED_INT,  // An integer constant that hasn't been given a type yet.
   TY_BOOL,
   TY_I32,
+  TY_STR,
 } FixedType;
+
+static const TypeId ty_unknown = {TY_UNKNOWN};
+static const TypeId ty_untyped_int = {TY_UNTYPED_INT};
+static const TypeId ty_bool = {TY_BOOL};
+static const TypeId ty_i32 = {TY_I32};
+static const TypeId ty_str = {TY_STR};
 
 // Locals that can be in scope at once, including those of enclosing functions.
 #define MAX_LOCALS 1024
@@ -129,6 +136,8 @@ static const char* describe_type(TypeId t) {
       return "bool";
     case TY_I32:
       return "i32";
+    case TY_STR:
+      return "str";
   }
   return "an unknown type";
 }
@@ -251,7 +260,7 @@ static Local* declare_local(Parser* p, NameId name, u32 at, LocalKind kind) {
   }
   Local* l = &p->locals[p->num_locals++];
   l->name = name;
-  l->type.idx = TY_UNKNOWN;
+  l->type = ty_unknown;
   Name* n = name_of(p, name);
   l->kind = kind;
   l->shadowed = (Local*)n->binding;
@@ -265,17 +274,16 @@ static Local* own_local(Parser* p, NameId name) {
   return l && l >= &p->locals[p->func_base] ? l : NULL;
 }
 
-// Declares name in the current function, unless it's already one of the
-// function's locals. Returns the local, or NULL at top level.
-static Local* declare_if_new(Parser* p, NameId name, u32 at) {
+// Declares name in the current function with type t, unless it's already one
+// of the function's locals.
+static void declare_if_new(Parser* p, NameId name, u32 at, TypeId t) {
   if (p->func_depth == 0) {
-    return NULL;
+    return;
   }
-  Local* l = own_local(p, name);
-  if (!l) {
-    l = declare_local(p, name, at, name_of(p, name)->is_const ? LK_CONST : LK_VAR);
+  if (!own_local(p, name)) {
+    Local* l = declare_local(p, name, at, name_of(p, name)->is_const ? LK_CONST : LK_VAR);
+    l->type = t;
   }
-  return l;
 }
 
 static void pop_locals(Parser* p, u32 base) {
@@ -434,23 +442,24 @@ static void check_type_name(Parser* p) {
 static TypeId builtin_type(TokenKind kind) {
   switch (kind) {
     case TK_BOOL:
-      return (TypeId){TY_BOOL};
+      return ty_bool;
     case TK_I32:
     case TK_INT:
-      return (TypeId){TY_I32};
+      return ty_i32;
+    case TK_STR:
+      return ty_str;
     default:
-      return (TypeId){TY_UNKNOWN};
+      return ty_unknown;
   }
 }
 
 static TypeId type(Parser* p) {
-  TypeId unknown = {TY_UNKNOWN};
   u32 at = p->ls.pos.t.offset;
   switch (T(p)) {
     case TK_STAR:
       next(p);
       type(p);
-      return unknown;
+      return ty_unknown;
     case TK_LSQUARE:
       next(p);
       if (T(p) != TK_RSQUARE) {
@@ -458,30 +467,30 @@ static TypeId type(Parser* p) {
       }
       check_match(p, TK_RSQUARE, TK_LSQUARE, at);
       type(p);
-      return unknown;
+      return ty_unknown;
     case TK_LBRACE:
       next(p);
       type(p);
       check_match(p, TK_RBRACE, TK_LBRACE, at);
       type(p);
-      return unknown;
+      return ty_unknown;
     case TK_TYPEPARAM:
       check_type_param(p);
       next(p);
-      return unknown;
+      return ty_unknown;
     case TK_TYPENAME:
       check_type_name(p);
       next(p);
       if (T(p) == TK_LBRACE) {
         type_args(p);
       }
-      return unknown;
+      return ty_unknown;
     case TK_NAME: {
       NameId mod = p->ls.pos.t.v.name;
       next(p);
       check(p, TK_DOT);
       qualified_type_rest(p, mod, at);
-      return unknown;
+      return ty_unknown;
     }
     case TK_TYPEOF:
       next(p);
@@ -489,7 +498,7 @@ static TypeId type(Parser* p) {
       check(p, TK_LPAREN);
       expr(p);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
-      return unknown;
+      return ty_unknown;
     default: {
       if (!is_builtin_type(T(p))) {
         error_expected(p, "type");
@@ -600,6 +609,23 @@ static bool is_comparison(BinOpr op) {
   return op >= OPR_EQ && op <= OPR_NOTIN;
 }
 
+// The type that a variable gets when it's declared by assigning a value of
+// type t.
+static TypeId default_type(TypeId t) {
+  // i32, as C's int usually is.
+  return t.idx == TY_UNTYPED_INT ? ty_i32 : t;
+}
+
+// Checks that a value can be assigned to something of type `to`.
+static void check_assign(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
+  TypeId from = e->type;
+  if (to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
+      (from.idx == TY_UNTYPED_INT && to.idx == TY_I32)) {
+    return;
+  }
+  error_at(p, at, "Can't assign %s to %s.", describe_type(from), describe_type(to));
+}
+
 // `what` is the start of the error message, naming what needed the bool.
 static void expect_bool(Parser* p, const ExpDesc* e, u32 at, const char* what) {
   if (e->type.idx != TY_UNKNOWN && e->type.idx != TY_BOOL) {
@@ -620,7 +646,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       subexpr(p, PRIORITY_NOT, e);
       expect_bool(p, e, at, "'not'");
       e->shape = SH_VALUE;
-      e->type.idx = TY_BOOL;
+      e->type = ty_bool;
       break;
     }
     case TK_MINUS:
@@ -628,7 +654,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       next(p);
       subexpr(p, PRIORITY_UNARY, e);
       e->shape = SH_VALUE;
-      e->type.idx = TY_UNKNOWN;
+      e->type = ty_unknown;
       break;
     case TK_AMP: {
       next(p);
@@ -642,7 +668,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
         error_at(p, at, "Can't take the address of non-lvalue.");
       }
       e->shape = SH_VALUE;
-      e->type.idx = TY_UNKNOWN;
+      e->type = ty_unknown;
       break;
     }
     default:
@@ -670,7 +696,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
       error_at(p, at, "Comparisons can't be chained. Use 'and' to combine them.");
     }
     e->shape = SH_VALUE;
-    e->type.idx = TY_UNKNOWN;
+    e->type = ty_unknown;
     op = nextop;
   }
 }
@@ -943,7 +969,7 @@ static void postfix(Parser* p, ExpDesc* e) {
   for (;;) {
     switch (T(p)) {
       case TK_DOT:
-        e->type.idx = TY_UNKNOWN;
+        e->type = ty_unknown;
         next(p);
         if (T(p) == TK_NAME) {
           e->shape = SH_LVALUE;
@@ -959,14 +985,14 @@ static void postfix(Parser* p, ExpDesc* e) {
         if (e->shape == SH_TYPE) {
           error_at(p, p->ls.pos.t.offset, "A type can't be indexed.");
         }
-        e->type.idx = TY_UNKNOWN;
+        e->type = ty_unknown;
         index_or_slice(p, e);
         break;
       case TK_LPAREN: {
         bool is_struct_literal = e->shape == SH_TYPE;
         call_args(p, is_struct_literal);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
-        e->type.idx = TY_UNKNOWN;
+        e->type = ty_unknown;
         break;
       }
       case TK_LBRACE:
@@ -993,24 +1019,28 @@ static void postfix(Parser* p, ExpDesc* e) {
 static void primary(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
   e->shape = SH_VALUE;
-  e->type.idx = TY_UNKNOWN;
+  e->type = ty_unknown;
   switch (T(p)) {
     case TK_INTLIT:
-      e->type.idx = TY_UNTYPED_INT;
+      e->type = ty_untyped_int;
+      next(p);
+      break;
+    case TK_STRING:
+      e->type = ty_str;
       next(p);
       break;
     case TK_TRUE:
     case TK_FALSE:
-      e->type.idx = TY_BOOL;
+      e->type = ty_bool;
       next(p);
       break;
     case TK_FLOATLIT:
-    case TK_STRING:
     case TK_NULL:
       next(p);
       break;
     case TK_STRING_BEGIN:
       interpolated_string(p);
+      e->type = ty_str;
       break;
     case TK_NAME: {
       NameId name = p->ls.pos.t.v.name;
@@ -1111,8 +1141,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
   if (toplevel) {
     declare_global(p, name, GK_VAR);
   } else {
-    Local* l = declare_if_new(p, name, at);
-    l->type = t;
+    declare_if_new(p, name, at, t);
   }
 }
 
@@ -1134,7 +1163,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
     ExpDesc e;
     primary(p, &e);
     if (e.shape == SH_TYPE) {
-      decl_rest(p, toplevel, (TypeId){TY_UNKNOWN});
+      decl_rest(p, toplevel, ty_unknown);
       return;
     }
     if (T(p) == TK_EQ || is_augassign(T(p))) {
@@ -1164,14 +1193,20 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           error_at(p, p->ls.pos.t.offset, "Cannot assign a new value to a constant.");
         }
       }
-      bool declares = e.shape == SH_NAME && T(p) == TK_EQ;
+      bool is_plain = T(p) == TK_EQ;
+      bool declares = e.shape == SH_NAME && is_plain;
       next(p);
-      expr(p);
+      u32 value_at = p->ls.pos.t.offset;
+      ExpDesc v;
+      subexpr(p, -1, &v);
+      if (is_plain) {
+        check_assign(p, e.type, &v, value_at);
+      }
       // After the expression, so that it can't see the new local.
       if (declares && toplevel) {
         declare_global(p, name, GK_VAR);
       } else if (declares) {
-        declare_if_new(p, name, at);
+        declare_if_new(p, name, at, default_type(v.type));
       }
       return;
     }
@@ -1311,7 +1346,7 @@ static u32 funcsig(Parser* p, bool is_method) {
     if (p->func_depth == 0) {
       declare_definition(p, name, at, GK_FUNC);
     } else {
-      declare_if_new(p, name, at);
+      declare_if_new(p, name, at, ty_unknown);
     }
   }
   if (T(p) == TK_LBRACE) {
@@ -1386,7 +1421,7 @@ static void stat(Parser* p) {
       check(p, TK_IN);
       expr(p);
       for (u32 i = 0; i < t.n; ++i) {
-        declare_if_new(p, t.name[i], t.at[i]);
+        declare_if_new(p, t.name[i], t.at[i], ty_unknown);
       }
       check(p, TK_COLON);
       suite(p);
@@ -1398,7 +1433,7 @@ static void stat(Parser* p) {
       if (optional(p, TK_AS)) {
         u32 at;
         NameId name = expect_name(p, "variable name", &at);
-        declare_if_new(p, name, at);
+        declare_if_new(p, name, at, ty_unknown);
       }
       check(p, TK_COLON);
       suite(p);
