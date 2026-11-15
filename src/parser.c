@@ -1288,10 +1288,17 @@ static void simple_stat(Parser* p) {
       next(p);
       return;
     case TK_PRINT:
-    case TK_CHECK:
       next(p);
       expr(p);
       return;
+    case TK_CHECK: {
+      next(p);
+      u32 at = p->ls.pos.t.offset;
+      ExpDesc e;
+      subexpr(p, -1, &e);
+      expect_bool(p, &e, at, "'check'");
+      return;
+    }
     case TK_GLOBAL:
       next(p);
       for (;;) {
