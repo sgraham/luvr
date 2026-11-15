@@ -7,8 +7,8 @@
 # OUT: 7.000000
 # OUT: 8.000000
 def int main():
-    float a = 1.00
-    double b = 2.00
+    f32 a = 1.00
+    f64 b = 2.00
     f32 c = 3.00
     f64 d = 4.00
 

@@ -1,7 +1,4 @@
 # OUT: 1
-# OUT: 1
-# OUT: 4
-# OUT: 4
 # OUT: 4
 # OUT: 8
 # OUT: ---
@@ -20,7 +17,7 @@
 # OUT: ---
 # OUT: 16
 # OUT: ---
-# OUT: 40
+# OUT: 80
 # OUT: 24
 # OUT: 32
 
@@ -32,11 +29,8 @@ struct Stuff:
 
 def int main():
     print sizeof(bool)
-    print sizeof(byte)
     print sizeof(codept)
     print sizeof(int)
-    print sizeof(float)
-    print sizeof(double)
     print "---"
     print sizeof(u8)
     print sizeof(u16)

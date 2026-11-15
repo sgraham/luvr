@@ -15,7 +15,7 @@
 # OUT: 888.000000
 struct LittleStuff:
     int x
-    float y
+    f32 y
 
 struct Stuff4:
     int x

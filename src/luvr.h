@@ -310,13 +310,9 @@ static inline u32* namemap_find(const NameMap* m, NameId name) {
   KW(TYPEOF, "typeof")              \
   KW(WITH, "with")                  \
   TY(BOOL, "bool")                  \
-  TY(BYTE, "byte")                  \
   TY(CODEPT, "codept")              \
-  TY(DOUBLE, "double")              \
-  TY(F16, "f16")                    \
   TY(F32, "f32")                    \
   TY(F64, "f64")                    \
-  TY(FLOAT, "float")                \
   TY(I8, "i8")                      \
   TY(I16, "i16")                    \
   TY(I32, "i32")                    \
@@ -326,8 +322,7 @@ static inline u32* namemap_find(const NameMap* m, NameId name) {
   TY(U8, "u8")                      \
   TY(U16, "u16")                    \
   TY(U32, "u32")                    \
-  TY(U64, "u64")                    \
-  TY(UINT, "uint")
+  TY(U64, "u64")
 
 // clang-format off
 typedef enum TokenKind {
@@ -337,7 +332,7 @@ typedef enum TokenKind {
   TK_NUM_KINDS,
   TK_FIRST_KEYWORD = TK_ALIGNOF,
   TK_FIRST_TYPE = TK_BOOL,
-  TK_LAST_TYPE = TK_UINT,
+  TK_LAST_TYPE = TK_U64,
 } TokenKind;
 // clang-format on
 
