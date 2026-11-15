@@ -14,7 +14,7 @@ static void test_path_dir_len(void) {
   } cases[] = {
       {"", 0}, {"x", 0}, {"a/x", 2}, {"a/b/x", 4}, {"../x", 3}, {"a/", 2},
   };
-  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+  for (size_t i = 0; i < COUNTOF(cases); ++i) {
     const char* path = cases[i].path;
     u32 got = path_dir_len((const u8*)path, (u32)strlen(path));
     if (got != cases[i].want) {
@@ -32,7 +32,7 @@ static void test_path_stem(void) {
       {"x.luv", "x"},   {"test/x.luv", "x"},    {"a/b/x.luv", "x"},  {"x", "x"},
       {".luv", ".luv"}, {"x.luv.luv", "x.luv"}, {"test/x.c", "x.c"},
   };
-  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+  for (size_t i = 0; i < COUNTOF(cases); ++i) {
     u32 len;
     const char* got = path_stem(cases[i].path, &len);
     if (len != strlen(cases[i].want) || memcmp(got, cases[i].want, len) != 0) {
@@ -56,7 +56,7 @@ static void test_path_import_is_invalid(void) {
       {"/x", true, false},  {"x/", true, false},     {"a//b", true, false},  {".", false, true},
       {"./x", false, true}, {"a/./b", false, true},  {"a/.", false, true},
   };
-  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+  for (size_t i = 0; i < COUNTOF(cases); ++i) {
     const char* path = cases[i].path;
     const char* got = path_import_is_invalid((const u8*)path, (u32)strlen(path));
     const char* want = cases[i].empty ? empty : cases[i].dot ? dot : NULL;
@@ -85,7 +85,7 @@ static void test_path_normalize(void) {
       {"../a/../b", "../b"},
       {"a/b/../../..", ".."},
   };
-  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+  for (size_t i = 0; i < COUNTOF(cases); ++i) {
     u8 buf[64];
     u32 len = (u32)strlen(cases[i].path);
     memcpy(buf, cases[i].path, len);

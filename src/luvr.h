@@ -126,6 +126,8 @@ typedef struct Token Token;
 #  error port
 #endif
 
+#define COUNTOF(a) (sizeof(a) / sizeof((a)[0]))
+
 #define CHECK(x)                                                            \
   do {                                                                      \
     if (!(x)) {                                                             \

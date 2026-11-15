@@ -1239,6 +1239,22 @@ static bool is_augassign(TokenKind kind) {
   return kind >= TK_PLUSEQ && kind <= TK_SHREQ;
 }
 
+// Indexed by an augmented assignment token's offset from TK_PLUSEQ.
+static const BinOpr augassign_opr[] = {
+    OPR_ADD,   // +=
+    OPR_SUB,   // -=
+    OPR_MUL,   // *=
+    OPR_DIV,   // /=
+    OPR_MOD,   // %=
+    OPR_BAND,  // &=
+    OPR_BOR,   // |=
+    OPR_BXOR,  // ^=
+    OPR_SHL,   // <<=
+    OPR_SHR,   // >>=
+};
+static_assert(COUNTOF(augassign_opr) == TK_SHREQ - TK_PLUSEQ + 1,
+              "augassign_opr doesn't match tokens");
+
 // A declaration, assignment, or call. The postfix chain is parsed first, and
 // then its shape and the next token decide which it is.
 //
@@ -1285,12 +1301,18 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       }
       bool is_plain = T(p) == TK_EQ;
       bool declares = e.shape == SH_NAME && is_plain;
+      TokenKind op_kind = T(p);
+      u32 op_at = p->ls.pos.t.offset;
       next(p);
       u32 value_at = p->ls.pos.t.offset;
       ExpDesc v;
       subexpr(p, -1, &v);
       if (is_plain) {
         check_assign(p, e.type, &v, value_at);
+      } else {
+        // The result is always the target's type, so it doesn't need to be
+        // checked again.
+        type_for_arith(p, augassign_opr[op_kind - TK_PLUSEQ], e.type, v.type, op_at);
       }
       // After the expression, so that it can't see the new local.
       if (declares && toplevel) {

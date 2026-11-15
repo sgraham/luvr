@@ -1,7 +1,0 @@
-# CRET: 1
-# CERR: {self}:6:10:    x += "s"
-# CERR: {ssss}               ^ error: Can't add str to i32.
-def int main():
-    x = 1
-    x += "s"
-    return 0

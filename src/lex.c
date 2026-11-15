@@ -187,7 +187,7 @@ bool lex_intern_init(Ctx* ctx) {
 #undef LEX_NONE_
 #undef LEX_KW_
   };
-  for (size_t i = 0; i < sizeof(kws) / sizeof(kws[0]); ++i) {
+  for (size_t i = 0; i < COUNTOF(kws); ++i) {
     u32 len = (u32)strlen(kws[i].s);
     intern(ctx, (const u8*)kws[i].s, len, hash_ident_safe(kws[i].s, len), kws[i].kind);
   }
@@ -195,7 +195,7 @@ bool lex_intern_init(Ctx* ctx) {
   // only so that references to them can be checked, and shouldn't grow. Switch
   // to a prelude before adding any more.
   static const char* const builtins[] = {"len", "max", "range"};
-  for (size_t i = 0; i < sizeof(builtins) / sizeof(builtins[0]); ++i) {
+  for (size_t i = 0; i < COUNTOF(builtins); ++i) {
     u32 len = (u32)strlen(builtins[i]);
     u32 idx = intern(ctx, (const u8*)builtins[i], len, hash_ident_safe(builtins[i], len), TK_NAME);
     ctx->names.v[idx].is_builtin = true;
@@ -340,7 +340,7 @@ static NumSuffix parse_suffix(const u8* s, u32 len) {
       {"i16", SUF_I16}, {"i32", SUF_I32}, {"i64", SUF_I64}, {"u16", SUF_U16},
       {"u32", SUF_U32}, {"u64", SUF_U64}, {"f32", SUF_F32}, {"f64", SUF_F64},
   };
-  for (size_t i = 0; i < sizeof(sufs) / sizeof(sufs[0]); ++i) {
+  for (size_t i = 0; i < COUNTOF(sufs); ++i) {
     if (memcmp(s, sufs[i].s, 3) == 0) {
       return sufs[i].suf;
     }
