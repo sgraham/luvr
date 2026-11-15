@@ -2786,10 +2786,8 @@ arithmetic. Not done, for these reasons:
   would. It's revisited if real code shows the casts are too painful.
 
 The rule doesn't stop `cast int(a * b)` either, which has the same wrap as
-the widened version. When an assignment, argument or `return` fails
-because the value is narrower and the expression is arithmetic, the error
-suggests casting the operands, as in "Can't assign i32 to int. Use
-cast int(...) on the operands so the arithmetic is done in int."
+the widened version. The error for a narrower value doesn't suggest
+casting the operands instead. Errors say what's wrong, not how to fix it.
 
 Comparisons need the same type, so signed and unsigned don't compare
 (`compare_signed_unsigned.luv`). Comparing by mathematical value across all
@@ -2808,9 +2806,8 @@ The IL already has the operations for `cast`: `SEXT32`, `ZEXT32` and
 2. `uint`, `byte`, `float`, `double` and `f16` removed from the lexer, the
    tests and the vim syntax file.
 3. `int` rejected in `foreign` signatures.
-4. The operand cast suggestion in narrowing errors from arithmetic.
-5. Indexes and `len` typed as `int`, any integer type accepted as an index.
-6. Floats: `f32` and `f64` types, untyped float constants, and the
+4. Indexes and `len` typed as `int`, any integer type accepted as an index.
+5. Floats: `f32` and `f64` types, untyped float constants, and the
    conversion errors above.
 
 ---

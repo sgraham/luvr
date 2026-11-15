@@ -525,9 +525,7 @@ static TypeId type(Parser* p) {
         error_expected(p, "type");
       }
       if (T(p) == TK_INT && p->in_foreign) {
-        error_at(
-            p, at,
-            "Can't use int in a foreign declaration, use i32 or i64.");
+        error_at(p, at, "Can't use int in a foreign declaration, use i32 or i64.");
       }
       TypeId t = builtin_type(T(p));
       next(p);

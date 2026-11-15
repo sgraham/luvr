@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:13:    int r = a
+# CERR: {ssss}                  ^ error: Can't assign i32 to int.
+def int main():
+    i32 a = 1
+    int r = a
+    return 0
