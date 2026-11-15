@@ -108,7 +108,7 @@ grammar is LL(1). The rest are local.
 | D24 | **decided** 2026-11-13, **implemented** 2026-11-14 | Modules and imports. A module's canonical name is its path relative to the root, normalized lexically, and keys a dict of `Module`s on Ctx, so each file is loaded and parsed once however it's imported. Files are loaded through a callback on Ctx. A `Module` (name, buffer, table of globals) lasts as long as the Ctx, and a `Parser` is per-parse state that points at one. Globals move from `Name.global` to the module's table, with a `Name.binding` cache only if the table probe costs too much. Resolves D21's cross-module instantiation question: the one active Parser is re-pointed at the defining module. |
 | D25 | **open** 2026-11-14, direction agreed | Backend and execution model. Survey of existing small backends and execution models. Direction: run in process first, on x64 Windows, x64 Linux and aarch64 macOS. One backend of our own: a linear SSA IL per function built in the single pass, ABI lowering with structs by value as QBE does it, and a backward pass that allocates registers, selects and encodes, into sections with relocations. A JIT is the first consumer, and C objects are linked into a host program by the user. The optimized tier is more passes on the same IL. No interpreter, no `.s`, no third-party backend. sqbe is the fallback and the comparison. Debug info, executable writers and a C emitter are deferred. |
 | D26 | **provisional** 2026-11-14 | The IL. Per-function flat array of 8-byte instructions (opcode, type, two 24-bit references, constants below a bias), value types `i32`/`i64`/`f32`/`f64`, aggregates as memory. Two stages: the parser appends raw instructions with every local as a frame slot, then one forward pass at the end of the function promotes slots whose address wasn't taken to SSA and does folding and CSE. Blocks in source order with structured control flow. C calling convention for luv functions, QBE-style aggregate arguments, and the luv context pointer in a pinned callee-saved register. |
-| D27 | **decided** 2026-11-15 | Numeric types and conversions, as in Go. `int` is an alias of `i64`, and error messages say `int`. `len`, `sizeof` and indexes are `int`. No other aliases: no `uint`, `byte`, `float` or `double`, and no `f16` for now. `int` is an error in `foreign` signatures, since C's `int` is 32 bits, and `size_t`, `c_char`, `c_opaque` and `opaque` are only allowed there. No `void` in luv code. `codept` is left for D23. Untyped constants adapt to context, defaulting to `int` and `f64`, with range checks. No implicit conversions between numeric types (widths, signedness, `f32`/`f64`, int/float). Any integer type is accepted as an index or shift count. Lossless widening was rejected because it hides where arithmetic wraps, and is revisited only if the casts prove too painful. |
+| D27 | **decided** 2026-11-15 | Numeric types and conversions, as in Go. `int` is an alias of `i64`, and error messages say `int`. `len`, `sizeof` and indexes are `int`. No other aliases: no `uint`, `byte`, `float` or `double`, and no `f16` for now. `int` is an error in `foreign` signatures, since C's `int` is 32 bits, and `size_t`, `c_char`, `voidptr` and `c_voidptr` are only allowed there. No `void` in luv code. `codept` is left for D23. Untyped constants adapt to context, defaulting to `int` and `f64`, with range checks. No implicit conversions between numeric types (widths, signedness, `f32`/`f64`, int/float). Any integer type is accepted as an index or shift count. Lossless widening was rejected because it hides where arithmetic wraps, and is revisited only if the casts prove too painful. |
 
 ### D1 ★ Single-pass emit vs. building an AST
 
@@ -2696,10 +2696,13 @@ where the callee reads an `int` silently uses the low half, and the upper
 half of an `int` result is garbage, so this would be an ABI mismatch with
 no error.
 
-`size_t`, `c_char`, `c_opaque` and `opaque` are only allowed in `foreign`
-signatures. They exist so that a declaration can match the C prototype
-exactly, which matters for C's `char` signedness and to declare `void*`
-without a warning in emitted C. luv code uses `int`, `u64`, `u8` and `*u8`.
+`size_t`, `c_char`, `voidptr` and `c_voidptr` are only allowed in
+`foreign` signatures. They exist so that a declaration can match the C
+prototype exactly in emitted C. `voidptr` is `void*`, and the `c_` prefix
+is `const`, so `*c_char` is `const char*` and `c_voidptr` is `const void*`.
+`const` is only needed to match C prototypes, so it's part of these type
+names instead of a qualifier in luv. luv code uses `int`, `u64`, `u8` and
+`*u8`.
 
 #### Untyped constants
 
@@ -2775,7 +2778,7 @@ The IL already has the operations for `cast`: `SEXT32`, `ZEXT32` and
 2. `uint`, `byte`, `float`, `double` and `f16` removed from the lexer, the
    tests and the vim syntax file.
 3. `int` rejected in `foreign` signatures, and `size_t`, `c_char`,
-   `c_opaque` and `opaque` rejected outside them.
+   `voidptr` and `c_voidptr` rejected outside them.
 4. The operand cast suggestion in narrowing errors from arithmetic.
 5. Indexes and `len` typed as `int`, any integer type accepted as an index.
 6. Floats: `f32` and `f64` types, untyped float constants, and the
