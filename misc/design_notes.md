@@ -108,6 +108,7 @@ grammar is LL(1). The rest are local.
 | D24 | **decided** 2026-11-13, **implemented** 2026-11-14 | Modules and imports. A module's canonical name is its path relative to the root, normalized lexically, and keys a dict of `Module`s on Ctx, so each file is loaded and parsed once however it's imported. Files are loaded through a callback on Ctx. A `Module` (name, buffer, table of globals) lasts as long as the Ctx, and a `Parser` is per-parse state that points at one. Globals move from `Name.global` to the module's table, with a `Name.binding` cache only if the table probe costs too much. Resolves D21's cross-module instantiation question: the one active Parser is re-pointed at the defining module. |
 | D25 | **open** 2026-11-14, direction agreed | Backend and execution model. Survey of existing small backends and execution models. Direction: run in process first, on x64 Windows, x64 Linux and aarch64 macOS. One backend of our own: a linear SSA IL per function built in the single pass, ABI lowering with structs by value as QBE does it, and a backward pass that allocates registers, selects and encodes, into sections with relocations. A JIT is the first consumer, and C objects are linked into a host program by the user. The optimized tier is more passes on the same IL. No interpreter, no `.s`, no third-party backend. sqbe is the fallback and the comparison. Debug info, executable writers and a C emitter are deferred. |
 | D26 | **provisional** 2026-11-14 | The IL. Per-function flat array of 8-byte instructions (opcode, type, two 24-bit references, constants below a bias), value types `i32`/`i64`/`f32`/`f64`, aggregates as memory. Two stages: the parser appends raw instructions with every local as a frame slot, then one forward pass at the end of the function promotes slots whose address wasn't taken to SSA and does folding and CSE. Blocks in source order with structured control flow. C calling convention for luv functions, QBE-style aggregate arguments, and the luv context pointer in a pinned callee-saved register. |
+| D27 | **decided** 2026-11-15 | Numeric types and conversions, as in Go. `int` is an alias of `i64`, and error messages say `int`. `len`, `sizeof` and indexes are `int`. No other aliases: no `uint`, `byte`, `float` or `double`, and no `f16` for now. `int` is an error in `foreign` signatures, since C's `int` is 32 bits, and `size_t`, `c_char`, `c_opaque` and `opaque` are only allowed there. No `void` in luv code. `codept` is left for D23. Untyped constants adapt to context, defaulting to `int` and `f64`, with range checks. No implicit conversions between numeric types (widths, signedness, `f32`/`f64`, int/float). Any integer type is accepted as an index or shift count. Lossless widening was rejected because it hides where arithmetic wraps, and is revisited only if the casts prove too painful. |
 
 ### D1 ★ Single-pass emit vs. building an AST
 
@@ -2274,6 +2275,65 @@ accumulator, is a compiler temporary slot that's stored on each path and
 loaded after the join. The SSA pass turns that into a phi like any other
 local.
 
+#### Could the SSA pass be removed?
+
+Considered 2026-11-15. Disallowing `&x` on scalar and pointer locals would
+make it possible to build SSA while parsing, since that's the only way a
+local's escape is found late. Captures are by value (D12), so they don't
+add another. Not done, for these reasons:
+
+- It doesn't make the backend one pass. The backward code generation pass
+  needs the whole function, so the walks per function go from three
+  (parser, SSA, code generation) to two, not to one.
+- The SSA pass also knows each loop's stored list before it reaches the
+  loop header, so its phis are exact. Building SSA while parsing, the
+  header is emitted before the body is seen. That means a provisional phi
+  for every local read in the loop, as in Braun et al., with the unneeded
+  ones left as copies or patched through a forwarding array. Code already
+  emitted in the body saw an opaque phi, so loop-invariant locals and
+  constants don't fold or CSE inside the loop.
+- The parser would have to track definitions per block and emit phis for
+  `and`, `or` and comprehension accumulators itself.
+- The language cost is mostly C interop: `strtol(s, &end, 10)`,
+  `sqlite3_open(path, &db)` and other out-parameters, of which `**T` is
+  very common. D5b also currently names `*int out` as the way to return a
+  second value. The workaround would be a `[1]int` or a one-field struct.
+- The folding, CSE and phi lookup move into the parser. They don't go
+  away. What's saved is the walk, the second buffer, and the local `LOAD`,
+  `STORE` and `SLOT` instructions that are emitted and then dropped.
+
+If one stage is wanted later, a narrower rule than a ban would do: a local
+whose address can be taken is marked at its declaration, so it's memory
+from its first use. The loop phi problem remains.
+
+The worry was memory bandwidth in long functions. None of this is
+measured, but the expectation is that it's minor:
+
+- Both buffers are walked sequentially, 8 bytes per instruction. A
+  streaming read of the 207 MB dumbbench source is 0.05 ns/byte, against
+  1.81 ns/byte for the full lexer (section 5).
+- The IL is about the size of the source that produced it, so the pass
+  streams about as many bytes as the lexer did.
+- Folding, the CSE probe and operand mapping are probably several ns per
+  instruction, and exist in a one-stage design too. Moving 16 bytes
+  sequentially is well under 1 ns.
+- Both buffers are reused per function. A function of 10k instructions is
+  80 KB per buffer. Only generated functions near 1M instructions (8 MB per
+  buffer) reach memory at all.
+
+The random access is what to watch in long functions, and the number of
+passes doesn't change it: the CSE hash chain, the per-block slot
+definitions and their walk through predecessors, and operand references
+and the register and spill arrays in the backward pass. The two stages add
+the raw-to-final reference map, 4 bytes per raw instruction, whose accesses
+are mostly to recent entries.
+
+The raw stage is internal to the compiler, so rewriting in place (item 3
+below) or skipping the stage for functions that never take an address can
+be done later without changing the language. A bench input that's one
+function of a few hundred thousand statements should be added once the
+pass exists.
+
 #### Instruction format
 
 ```
@@ -2558,6 +2618,148 @@ IL sits beside its expected program output. There's no parser for the text.
 6. The register choices for `CTX`, once the allocators exist.
 7. Phi handling in the backward code generation pass, which isn't designed
    yet and may ask for something different from the SSA pass.
+
+### D27 Numeric types and conversions
+
+Decided 2026-11-15. Follows Go: one default integer type, untyped
+constants that take their type from context, and no implicit conversions
+between numeric types.
+
+#### `int`
+
+`int` is `i64`. It's an alias, not a distinct type, so `int` and `i64` mix
+freely. Error messages say `int`, even when the source wrote `i64`.
+That's occasionally a little confusing, but `int` is the name nearly all
+code will use.
+
+The alternatives considered:
+
+- `int` as `i32`. Smaller arrays and struct fields, twice the SIMD lanes,
+  and a match for C's `int`. Rejected because 2³¹ is reachable by byte
+  counts, file sizes, sums and millisecond timestamps (24.8 days), and
+  because it makes `len`, `sizeof` and indexes a different type from the
+  default, which is where most mixed-width code comes from. Where storage
+  size matters, `i32` is written explicitly.
+- No `int` at all, only sized types. Rejected because `x = 5` still needs a
+  default type, which would then be unnamed, and because `int` is easier to
+  type and says "the width doesn't matter here". The friction in languages
+  without an `int` comes from defaults that disagree (i32 literals and
+  `usize` indexes), not from the name.
+- Removing `i64` and keeping only `int`. Rejected because `foreign`
+  declarations need a 64-bit signed name (below), and because code where
+  the width is the point (struct layouts, binary formats) reads better with
+  the whole `i8`..`i64`, `u8`..`u64` family.
+
+`len`, `sizeof`, `alignof`, `offsetof` and indexes are `int`. They're
+signed, so `len(xs) - 1` on an empty list is -1, not 2⁶⁴-1.
+
+Each type has one name, apart from `int`, which is there because it's the
+default and is easier to type. So there's no `uint` (`u64`), `byte` (`u8`),
+or `float` and `double` (`f32` and `f64`). `f16` is removed too until
+there's something to do with it. SIMD types like a 4-wide float vector or a
+4x4 matrix are more likely to come first.
+
+`codept` stays as it is for now. It's meant to be a code point type that's
+distinct from the integers, like Go's `rune`, and is mostly unused until
+strings are settled (D23).
+
+There's no `void` type in luv code. A function without a return type
+returns nothing, and an untyped pointer is `*u8`. The parser's `TY_VOID` is
+only the internal return type of such a function.
+
+#### `foreign`
+
+`foreign` is C's `extern "C"`, where `int` is 32 bits. `int` is an error
+in `foreign` signatures, including inside pointer and other compound
+types, so a C `int` is always written `i32`. Passing an `i64`
+where the callee reads an `int` silently uses the low half, and the upper
+half of an `int` result is garbage, so this would be an ABI mismatch with
+no error.
+
+`size_t`, `c_char`, `c_opaque` and `opaque` are only allowed in `foreign`
+signatures. They exist so that a declaration can match the C prototype
+exactly, which matters for C's `char` signedness and to declare `void*`
+without a warning in emitted C. luv code uses `int`, `u64`, `u8` and `*u8`.
+
+#### Untyped constants
+
+Integer and float constants without a suffix are untyped until context
+gives them a type. A declaration by assignment gives `int` for an integer
+constant and `f64` for a float constant. The value must fit the type it
+gets (`u8 x = 300` and `u32 x = -1` are errors). A float constant is
+rounded to an `f32` or `f64` target, and only overflow is an error.
+
+- An untyped integer constant can become a float (`f64 x = 1`, `y * 2` with
+  `f32 y`).
+- An untyped float constant can't become an integer, even when it's
+  integral (`int x = 2.0` is an error).
+- A constant takes the other operand's type, and never makes the other
+  operand wider. `x + 3000000000` with `i32 x` is a range error, not an
+  `int`.
+- With untyped float constants, `x * 0.1` with `f32 x` stays `f32`. In C,
+  `0.1` is a `double`, so the whole expression is promoted.
+
+#### No implicit conversions
+
+Between different numeric types, nothing converts without `cast`:
+integers of different widths or signedness, `f32` and `f64`, and integers
+and floats. That applies everywhere: assignment, arguments, `return`,
+operands of arithmetic and comparisons, and `+=`.
+
+Two places accept any integer type, because neither changes the type of a
+value:
+
+- An index. It's extended to 64 bits and bounds checked as unsigned, so a
+  negative index fails the check.
+- A shift count.
+
+Lossless widening (`i32` to `int`, `u8` to `int`, `u32` to `int`, `f32` to
+`f64`) was considered, either only where a target type is known or for
+binary operands too, as in Zig's peer type resolution. With `int` as `i64`,
+`len` and indexes as `int`, and adapting constants, little code mixes
+widths, and what's left is mostly narrow storage being read into `int`
+arithmetic. Not done, for these reasons:
+
+- It hides where arithmetic happens. `int r = a * b` with `i32` operands
+  multiplies in `i32` and wraps before widening. That's worse with narrow
+  types: `int d = c - 48` with `u8 c` wraps at 256 when `c < 48`. Byte
+  processing code, where widening would save the most casts, is where this
+  happens most.
+- Changing a variable's type to a narrower one is flagged at every use
+  that mixes, instead of moving where its arithmetic wraps.
+- int to float in particular is never added: `f64 avg = sum / n` with
+  integer operands would be integer division followed by a conversion.
+- Adding implicit widening later doesn't break any code, and removing it
+  would. It's revisited if real code shows the casts are too painful.
+
+The rule doesn't stop `cast int(a * b)` either, which has the same wrap as
+the widened version. When an assignment, argument or `return` fails
+because the value is narrower and the expression is arithmetic, the error
+suggests casting the operands, as in "Can't assign i32 to int. Use
+cast int(...) on the operands so the arithmetic is done in int."
+
+Comparisons need the same type, so signed and unsigned don't compare
+(`compare_signed_unsigned.luv`). Comparing by mathematical value across all
+integer types, as Swift does, would be correct and costs one extra
+compare for a signed/unsigned pair, but isn't needed while `len` is signed.
+Integers and floats never compare.
+
+The IL already has the operations for `cast`: `SEXT32`, `ZEXT32` and
+`TRUNC` between integer widths, `ITOF`, `UTOF`, `FTOI` and `FTOU`, and
+`FEXT` and `FTRUNC` between float widths.
+
+#### Steps
+
+1. `int` as an alias of `i64`, untyped integer constants defaulting to
+   `int`, and `describe_type()` printing `int`.
+2. `uint`, `byte`, `float`, `double` and `f16` removed from the lexer, the
+   tests and the vim syntax file.
+3. `int` rejected in `foreign` signatures, and `size_t`, `c_char`,
+   `c_opaque` and `opaque` rejected outside them.
+4. The operand cast suggestion in narrowing errors from arithmetic.
+5. Indexes and `len` typed as `int`, any integer type accepted as an index.
+6. Floats: `f32` and `f64` types, untyped float constants, and the
+   conversion errors above.
 
 ---
 
@@ -2889,7 +3091,7 @@ bench/                      # scripts comparing against luac -p and luv60
 
 ## 7. Decisions that are the user's call
 
-Tracked in the **Decision log** at the top of section 2. Open: D20 (general `for`). Provisional: D21 (generics syntax). Open: D22a (methods on builtin types and the prelude), D23 (arrays, lists, slices and their memory), D25 (backend and execution model). Provisional: D26 (the IL). Decided, not implemented: D24 (modules and imports). Deferred: D15 (to measurement), D5b (until
+Tracked in the **Decision log** at the top of section 2. Open: D20 (general `for`). Provisional: D21 (generics syntax). Open: D22a (methods on builtin types and the prelude), D23 (arrays, lists, slices and their memory), D25 (backend and execution model). Provisional: D26 (the IL). Decided, not implemented: D27 (numeric types and conversions). Deferred: D15 (to measurement), D5b (until
 real code needs it).
 
 ---
