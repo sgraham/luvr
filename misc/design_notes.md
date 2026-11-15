@@ -2810,6 +2810,26 @@ The IL already has the operations for `cast`: `SEXT32`, `ZEXT32` and
 5. Floats: `f32` and `f64` types, untyped float constants, and the
    conversion errors above.
 
+Steps 1, 2, 3 and 5 are done, and step 4 only for `sizeof`, `alignof` and
+`offsetof`. Remaining:
+
+- `len` typed as `int`. It's one of the builtin names in `lex.c`, and calls
+  aren't typed yet. It should get `int` from its declaration once builtins
+  are in a prelude and calls have signatures.
+- Indexes. Arrays, lists and dicts are all `ty_unknown`, and a dict key
+  isn't an integer, so an index can't be checked until container types
+  exist.
+- Range checks on constants: `u8 x = 300`, `u32 x = -1`, and overflow of
+  an `f32` or `f64` target. These need the constant's value in `ExpDesc`,
+  and unary `-` folded, since it currently gives an unknown type.
+- `i8`, `i16`, `u8`, `u16` and `u32` as checker types. They're parsed but
+  give `ty_unknown`, as do literals with those suffixes.
+- Parameter types. `funcsig()` doesn't record the type of a parameter, so
+  checks inside a function don't see them.
+- Parenthesized expressions are `ty_unknown`, so `int r = (a * b)` with
+  `i32` operands isn't an error.
+- `cast T(...)` doesn't give its result type `T`.
+
 ---
 
 ## 3. Grammar sketch (with the recommendations applied)
