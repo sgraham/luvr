@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:6:10:    if x > 0:
-# CERR: {ssss}               ^ error: Cannot compare str and i32.
+# CERR: {ssss}               ^ error: Can't compare str and an integer constant.
 def int main():
     x = ""
     if x > 0:

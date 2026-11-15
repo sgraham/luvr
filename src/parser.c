@@ -616,14 +616,18 @@ static TypeId default_type(TypeId t) {
   return t.idx == TY_UNTYPED_INT ? ty_i32 : t;
 }
 
+// Whether a value of type `from` can be used, without a cast, where `to` is
+// expected.
+static bool assignable(TypeId from, TypeId to) {
+  return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
+         (from.idx == TY_UNTYPED_INT && to.idx == TY_I32);
+}
+
 // Checks that a value can be assigned to something of type `to`.
 static void check_assign(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
-  TypeId from = e->type;
-  if (to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
-      (from.idx == TY_UNTYPED_INT && to.idx == TY_I32)) {
-    return;
+  if (!assignable(e->type, to)) {
+    error_at(p, at, "Can't assign %s to %s.", describe_type(e->type), describe_type(to));
   }
-  error_at(p, at, "Can't assign %s to %s.", describe_type(from), describe_type(to));
 }
 
 // `what` is the start of the error message, naming what needed the bool.
@@ -695,8 +699,12 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
     if (is_comparison(op) && is_comparison(nextop)) {
       error_at(p, at, "Comparisons can't be chained. Use 'and' to combine them.");
     }
+    if (op >= OPR_EQ && op <= OPR_GE && !assignable(rhs.type, e->type) &&
+        !assignable(e->type, rhs.type)) {
+      error_at(p, at, "Can't compare %s and %s.", describe_type(e->type), describe_type(rhs.type));
+    }
     e->shape = SH_VALUE;
-    e->type = ty_unknown;
+    e->type = is_comparison(op) ? ty_bool : ty_unknown;
     op = nextop;
   }
 }
