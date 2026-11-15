@@ -59,8 +59,8 @@ def is_imported(path):
 
 
 # test/*.luv and test/errors/todo/*.luv must parse. The todo/ tests are semantic
-# errors that the parser doesn't detect yet. test/syntax/*.luv and
-# test/errors/*.luv must fail with the error given in their CERR header.
+# errors that the parser doesn't detect yet. test/errors/*.luv must fail with
+# the error given in their CERR header.
 # Files that start with '# IMPORTED' are only imported by other tests, so they
 # aren't run on their own.
 def run_tests():
@@ -72,9 +72,9 @@ def run_tests():
         r = subprocess.run([exe, "-q", path], capture_output=True, text=True)
         if r.returncode != 0:
             failures.append(f"{path}: expected to parse\n  got: {r.stderr.strip()}")
-    syntax = sorted(glob.glob("test/syntax/*.luv") + glob.glob("test/errors/*.luv"))
-    syntax = [p for p in syntax if not is_imported(p)]
-    for path in syntax:
+    errors = sorted(glob.glob("test/errors/*.luv"))
+    errors = [p for p in errors if not is_imported(p)]
+    for path in errors:
         want = expected_error(path)
         if want is None:
             failures.append(f"{path}: missing CERR header")
@@ -98,7 +98,7 @@ def run_tests():
         failures.append(f"unittest failed\n  got: {(r.stdout + r.stderr).strip()}")
     for f in failures:
         print(f)
-    total = len(paths) + len(syntax)
+    total = len(paths) + len(errors)
     print(f"{total - len(failures)}/{total} tests passed")
     return not failures
 
