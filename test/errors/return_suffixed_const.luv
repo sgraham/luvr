@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:5:12:    return 123i32
+# CERR: {ssss}                 ^ error: Can't return i32 from a function returning int.
+def i64 func64():
+    return 123i32
+
+def i64 main():
+    return func64()

@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:13:    int x = 2.0
+# CERR: {ssss}                  ^ error: Can't assign a float constant to int.
+def int main():
+    int x = 2.0
+    return 0

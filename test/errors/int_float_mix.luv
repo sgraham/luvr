@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:11:    y = x * 0.5
+# CERR: {ssss}                ^ error: Can't multiply int by a float constant.
+def int main():
+    x = 3
+    y = x * 0.5
+    return 0

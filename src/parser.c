@@ -29,27 +29,33 @@ struct TypeId {
 };
 
 typedef enum FixedType {
-  TY_UNKNOWN,      // Not inferred yet. Checks against it always pass.
-  TY_UNTYPED_INT,  // An integer constant that hasn't been given a type yet.
-  TY_VOID,         // The return type of a function without one.
+  TY_UNKNOWN,        // Not inferred yet. Checks against it always pass.
+  TY_UNTYPED_INT,    // An integer constant that hasn't been given a type yet.
+  TY_UNTYPED_FLOAT,  // Similarly, a float constant.
+  TY_VOID,           // The return type of a function without one.
   TY_BOOL,
   TY_STR,
   // Integer types are contiguous, from TY_FIRST_INT to TY_LAST_INT.
   TY_I32,
   TY_I64,
   TY_U64,
+  TY_F32,
+  TY_F64,
   TY_FIRST_INT = TY_I32,
   TY_LAST_INT = TY_U64,
 } FixedType;
 
 static const TypeId ty_unknown = {TY_UNKNOWN};
 static const TypeId ty_untyped_int = {TY_UNTYPED_INT};
+static const TypeId ty_untyped_float = {TY_UNTYPED_FLOAT};
 static const TypeId ty_void = {TY_VOID};
 static const TypeId ty_bool = {TY_BOOL};
 static const TypeId ty_str = {TY_STR};
 static const TypeId ty_i32 = {TY_I32};
 static const TypeId ty_i64 = {TY_I64};
 static const TypeId ty_u64 = {TY_U64};
+static const TypeId ty_f32 = {TY_F32};
+static const TypeId ty_f64 = {TY_F64};
 
 // Locals that can be in scope at once, including those of enclosing functions.
 #define MAX_LOCALS 1024
@@ -143,6 +149,8 @@ static const char* describe_type(TypeId t) {
       break;
     case TY_UNTYPED_INT:
       return "an integer constant";
+    case TY_UNTYPED_FLOAT:
+      return "a float constant";
     case TY_VOID:
       return "void";
     case TY_BOOL:
@@ -155,6 +163,10 @@ static const char* describe_type(TypeId t) {
       return "int";
     case TY_U64:
       return "u64";
+    case TY_F32:
+      return "f32";
+    case TY_F64:
+      return "f64";
   }
   return "an unknown type";
 }
@@ -469,6 +481,10 @@ static TypeId builtin_type(TokenKind kind) {
       return ty_i64;
     case TK_U64:
       return ty_u64;
+    case TK_F32:
+      return ty_f32;
+    case TK_F64:
+      return ty_f64;
     default:
       return ty_unknown;
   }
@@ -636,14 +652,35 @@ static bool is_comparison(BinOpr op) {
 // The type that a variable gets when it's declared by assigning a value of
 // type t.
 static TypeId default_type(TypeId t) {
-  return t.idx == TY_UNTYPED_INT ? ty_i64 : t;
+  switch ((FixedType)t.idx) {
+    case TY_UNTYPED_INT:
+      return ty_i64;
+    case TY_UNTYPED_FLOAT:
+      return ty_f64;
+    default:
+      return t;
+  }
+}
+
+static bool is_untyped(TypeId t) {
+  return t.idx == TY_UNTYPED_INT || t.idx == TY_UNTYPED_FLOAT;
+}
+
+static bool is_integer(TypeId t) {
+  return t.idx == TY_UNTYPED_INT || (t.idx >= TY_FIRST_INT && t.idx <= TY_LAST_INT);
+}
+
+static bool is_float(TypeId t) {
+  return t.idx == TY_UNTYPED_FLOAT || t.idx == TY_F32 || t.idx == TY_F64;
 }
 
 // Whether a value of type `from` can be used, without a cast, where `to` is
-// expected.
+// expected. An integer constant can become a float, but not the reverse, even
+// when the float constant is integral.
 static bool assignable(TypeId from, TypeId to) {
   return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
-         (from.idx == TY_UNTYPED_INT && to.idx >= TY_FIRST_INT && to.idx <= TY_LAST_INT);
+         (from.idx == TY_UNTYPED_INT && (is_integer(to) || is_float(to))) ||
+         (from.idx == TY_UNTYPED_FLOAT && is_float(to));
 }
 
 // Checks that a value can be assigned to something of type `to`.
@@ -651,10 +688,6 @@ static void check_assign(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
   if (!assignable(e->type, to)) {
     error_at(p, at, "Can't assign %s to %s.", describe_type(e->type), describe_type(to));
   }
-}
-
-static bool is_integer(TypeId t) {
-  return t.idx == TY_UNTYPED_INT || (t.idx >= TY_FIRST_INT && t.idx <= TY_LAST_INT);
 }
 
 // Error messages for arithmetic and bitwise operators, taking the left and
@@ -675,9 +708,9 @@ static const char* const arith_error[] = {
 };
 // clang-format on
 
-// The type of `a op b` for an arithmetic or bitwise op. Operands are
-// integers of the same type, apart from untyped constants. A shift count can
-// be any integer type, and strings can be added.
+// The type of `a op b` for an arithmetic or bitwise op. Operands are numbers
+// of the same type, apart from untyped constants. Floats only have +, -, *
+// and /. A shift count can be any integer type, and strings can be added.
 static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
   if (a.idx == TY_UNKNOWN || b.idx == TY_UNKNOWN) {
     return ty_unknown;
@@ -685,12 +718,17 @@ static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
   bool is_shift = op == OPR_SHL || op == OPR_SHR;
   bool is_concat = op == OPR_ADD && a.idx == TY_STR && b.idx == TY_STR;
   bool same_type = assignable(a, b) || assignable(b, a);
-  bool ok = is_concat || (is_integer(a) && is_integer(b) && (is_shift || same_type));
-  if (!ok) {
+  bool ints = is_integer(a) && is_integer(b) && (is_shift || same_type);
+  bool floats = op >= OPR_ADD && op <= OPR_DIV && same_type && (is_float(a) || is_float(b));
+  if (!is_concat && !ints && !floats) {
     bool swap = op == OPR_SUB;
     error_at(p, at, arith_error[op], describe_type(swap ? b : a), describe_type(swap ? a : b));
   }
-  return a.idx == TY_UNTYPED_INT && !is_shift ? b : a;
+  if (is_shift || !is_untyped(a)) {
+    return a;
+  }
+  // Two constants give a float constant if either is one.
+  return is_untyped(b) && a.idx == TY_UNTYPED_FLOAT ? a : b;
 }
 
 // `what` is the start of the error message, naming what needed the bool.
@@ -1103,13 +1141,33 @@ static void postfix(Parser* p, ExpDesc* e) {
 // primary -> literal | string | name | TypeName | '(' expr ')'
 //          | list | dict | sizeof | alignof | offsetof | cast
 //          followed by postfix
+static TypeId literal_type(Parser* p) {
+  switch ((NumSuffix)(p->ls.pos.t.flags & TF_SUFFIX_MASK)) {
+    case SUF_NONE:
+      return T(p) == TK_INTLIT ? ty_untyped_int : ty_untyped_float;
+    case SUF_I32:
+      return ty_i32;
+    case SUF_I64:
+      return ty_i64;
+    case SUF_U64:
+      return ty_u64;
+    case SUF_F32:
+      return ty_f32;
+    case SUF_F64:
+      return ty_f64;
+    default:
+      return ty_unknown;
+  }
+}
+
 static void primary(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
   e->shape = SH_VALUE;
   e->type = ty_unknown;
   switch (T(p)) {
     case TK_INTLIT:
-      e->type = ty_untyped_int;
+    case TK_FLOATLIT:
+      e->type = literal_type(p);
       next(p);
       break;
     case TK_STRING:
@@ -1121,7 +1179,6 @@ static void primary(Parser* p, ExpDesc* e) {
       e->type = ty_bool;
       next(p);
       break;
-    case TK_FLOATLIT:
     case TK_NULL:
       next(p);
       break;

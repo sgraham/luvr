@@ -1,0 +1,11 @@
+# RET: 0
+def int main():
+    f32 a = 1
+    f32 b = a * 0.5 + 2
+    c = 1.5 + 2
+    f64 d = c / 3
+    f32 e = 1.5f32
+    if a < 2.5:
+        b -= 1
+    d = 1.5 * 2.5
+    return 0

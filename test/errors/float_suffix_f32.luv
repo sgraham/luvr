@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:13:    f64 x = 1.5f32
+# CERR: {ssss}                  ^ error: Can't assign f32 to f64.
+def int main():
+    f64 x = 1.5f32
+    return 0

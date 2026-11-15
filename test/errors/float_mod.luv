@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:11:    y = x % 2.0
+# CERR: {ssss}                ^ error: Can't take f64 modulo a float constant.
+def int main():
+    f64 x = 3.0
+    y = x % 2.0
+    return 0

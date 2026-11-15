@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:11:    z = x + y
+# CERR: {ssss}                ^ error: Can't add f32 and f64.
+def int main():
+    f32 x = 1.5
+    y = 2.5
+    z = x + y
+    return 0
