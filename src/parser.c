@@ -709,8 +709,16 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
     if (op == OPR_NOTIN) {
       check(p, TK_IN);
     }
+    const char* logical = op == OPR_AND ? "'and'" : op == OPR_OR ? "'or'" : NULL;
+    if (logical) {
+      expect_bool(p, e, at, logical);
+    }
+    u32 rhs_at = p->ls.pos.t.offset;
     ExpDesc rhs;
     subexpr(p, priority[op], &rhs);
+    if (logical) {
+      expect_bool(p, &rhs, rhs_at, logical);
+    }
     BinOpr nextop = getbinopr(T(p));
     if (is_comparison(op) && is_comparison(nextop)) {
       error_at(p, at, "Comparisons can't be chained. Use 'and' to combine them.");
@@ -720,7 +728,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
       error_at(p, at, "Can't compare %s and %s.", describe_type(e->type), describe_type(rhs.type));
     }
     e->shape = SH_VALUE;
-    e->type = is_comparison(op) ? ty_bool : ty_unknown;
+    e->type = is_comparison(op) || logical ? ty_bool : ty_unknown;
     op = nextop;
   }
 }
