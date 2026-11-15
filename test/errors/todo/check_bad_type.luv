@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:11:    check x
+# CERR: {ssss}                ^ error: 'check' expects bool, not i32.
+def int main():
+    x = 3
+    check x
+    return 0

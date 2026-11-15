@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:5:16:    if true or "s":
+# CERR: {ssss}                     ^ error: 'or' expects bool, not str.
+def int main():
+    if true or "s":
+        pass
+    return 0

@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:9:9:    x = f()
+# CERR: {ssss}             ^ error: Can't assign str to i32.
+def str f():
+    return "s"
+
+def int main():
+    x = 1
+    x = f()
+    return 0

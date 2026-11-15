@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:9:    int x = 2
+# CERR: {ssss}             ^ error: 'x' is already declared.
+def int main():
+    int x = 1
+    int x = 2
+    return x

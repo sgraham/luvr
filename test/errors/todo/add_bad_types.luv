@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:11:    y = x + "s"
+# CERR: {ssss}                ^ error: Can't add i32 and str.
+def int main():
+    x = 1
+    y = x + "s"
+    return 0

@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:12:    u8 x = 300
+# CERR: {ssss}                 ^ error: 300 doesn't fit in u8.
+def int main():
+    u8 x = 300
+    return 0

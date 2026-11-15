@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:5:8:    if 1 and true:
+# CERR: {ssss}            ^ error: 'and' expects bool, not an integer constant.
+def int main():
+    if 1 and true:
+        pass
+    return 0

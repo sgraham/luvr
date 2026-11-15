@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:5:12:    return 5
+# CERR: {ssss}                 ^ error: Can't return a value from a function with no return type.
+def f():
+    return 5
+
+def int main():
+    f()
+    return 0
