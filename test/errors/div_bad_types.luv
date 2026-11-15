@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:11:    y = x / i
+# CERR: {ssss}                ^ error: Can't divide i32 by i64.
+def int main():
+    x = 1
+    i64 i = 2
+    y = x / i
+    return 0

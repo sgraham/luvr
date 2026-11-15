@@ -650,18 +650,44 @@ static void check_assign(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
   }
 }
 
-// The type of `a + b`. Strings are concatenated, and integers need to be
-// the same type, apart from untyped constants.
-static TypeId type_for_add(Parser* p, TypeId a, TypeId b, u32 at) {
+static bool is_integer(TypeId t) {
+  return t.idx == TY_UNTYPED_INT || (t.idx >= TY_FIRST_INT && t.idx <= TY_LAST_INT);
+}
+
+// Error messages for arithmetic and bitwise operators, taking the left and
+// right operand types in order, except for subtraction, which reads better
+// with them swapped.
+// clang-format off
+static const char* const arith_error[] = {
+    [OPR_BOR] = "Can't bitwise or %s with %s.",
+    [OPR_BXOR] = "Can't bitwise xor %s with %s.",
+    [OPR_BAND] = "Can't bitwise and %s with %s.",
+    [OPR_SHL] = "Can't shift %s left by %s.",
+    [OPR_SHR] = "Can't shift %s right by %s.",
+    [OPR_ADD] = "Can't add %s and %s.",
+    [OPR_SUB] = "Can't subtract %s from %s.",
+    [OPR_MUL] = "Can't multiply %s by %s.",
+    [OPR_DIV] = "Can't divide %s by %s.",
+    [OPR_MOD] = "Can't take %s modulo %s.",
+};
+// clang-format on
+
+// The type of `a op b` for an arithmetic or bitwise op. Operands are
+// integers of the same type, apart from untyped constants. A shift count can
+// be any integer type, and strings can be added.
+static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
   if (a.idx == TY_UNKNOWN || b.idx == TY_UNKNOWN) {
     return ty_unknown;
   }
-  bool addable =
-      a.idx == TY_STR || a.idx == TY_UNTYPED_INT || (a.idx >= TY_FIRST_INT && a.idx <= TY_LAST_INT);
-  if (!addable || !(assignable(a, b) || assignable(b, a))) {
-    error_at(p, at, "Can't add %s and %s.", describe_type(a), describe_type(b));
+  bool is_shift = op == OPR_SHL || op == OPR_SHR;
+  bool is_concat = op == OPR_ADD && a.idx == TY_STR && b.idx == TY_STR;
+  bool same_type = assignable(a, b) || assignable(b, a);
+  bool ok = is_concat || (is_integer(a) && is_integer(b) && (is_shift || same_type));
+  if (!ok) {
+    bool swap = op == OPR_SUB;
+    error_at(p, at, arith_error[op], describe_type(swap ? b : a), describe_type(swap ? a : b));
   }
-  return a.idx == TY_UNTYPED_INT ? b : a;
+  return a.idx == TY_UNTYPED_INT && !is_shift ? b : a;
 }
 
 // `what` is the start of the error message, naming what needed the bool.
@@ -747,11 +773,11 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
     }
     e->shape = SH_VALUE;
     bool is_bool = is_comparison(op) || logical;
-    bool is_add = op == OPR_ADD;
+    bool is_arith = op >= OPR_BOR && op <= OPR_MOD;
     if (is_bool) {
       e->type = ty_bool;
-    } else if (is_add) {
-      e->type = type_for_add(p, e->type, rhs.type, at);
+    } else if (is_arith) {
+      e->type = type_for_arith(p, op, e->type, rhs.type, at);
     } else {
       e->type = ty_unknown;
     }
