@@ -1166,6 +1166,9 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
   NameId name = expect_name(p, "variable name", &at);
   if (toplevel) {
     check_not_global(p, name, T(p) == TK_EQ ? p->ls.pos.t.offset : at);
+  } else if (own_local(p, name)) {
+    const Name* n = name_of(p, name);
+    error_at(p, at, "'%.*s' is already declared.", (int)n->len, (const char*)n->str);
   }
   if (optional(p, TK_EQ)) {
     u32 value_at = p->ls.pos.t.offset;
