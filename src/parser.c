@@ -1189,6 +1189,7 @@ static void primary(Parser* p, ExpDesc* e) {
       check(p, TK_LPAREN);
       sizeof_operand(p);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
+      e->type = ty_i64;
       break;
     case TK_OFFSETOF:
       next(p);
@@ -1198,6 +1199,7 @@ static void primary(Parser* p, ExpDesc* e) {
       check(p, TK_COMMA);
       check_name(p, "field name");
       check_match(p, TK_RPAREN, TK_LPAREN, at);
+      e->type = ty_i64;
       break;
     case TK_CAST:  // cast T(expr)
       next(p);
