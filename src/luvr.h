@@ -312,8 +312,6 @@ static inline u32* namemap_find(const NameMap* m, NameId name) {
   TY(BOOL, "bool")                  \
   TY(BYTE, "byte")                  \
   TY(CODEPT, "codept")              \
-  TY(C_CHAR, "c_char")              \
-  TY(C_OPAQUE, "c_opaque")          \
   TY(DOUBLE, "double")              \
   TY(F16, "f16")                    \
   TY(F32, "f32")                    \
@@ -324,8 +322,6 @@ static inline u32* namemap_find(const NameMap* m, NameId name) {
   TY(I32, "i32")                    \
   TY(I64, "i64")                    \
   TY(INT, "int")                    \
-  TY(OPAQUE, "opaque")              \
-  TY(SIZE_T, "size_t")              \
   TY(STR, "str")                    \
   TY(U8, "u8")                      \
   TY(U16, "u16")                    \
