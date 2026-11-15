@@ -23,6 +23,18 @@ typedef struct Parser Parser;
 typedef struct Targets Targets;
 typedef struct TypeId TypeId;
 
+// Types are compared by index.
+struct TypeId {
+  u32 idx;
+};
+
+typedef enum FixedType {
+  TY_UNKNOWN,      // Not inferred yet. Checks against it always pass.
+  TY_UNTYPED_INT,  // An integer constant that hasn't been given a type yet.
+  TY_BOOL,
+  TY_I32,
+} FixedType;
+
 // Locals that can be in scope at once, including those of enclosing functions.
 #define MAX_LOCALS 1024
 
@@ -39,6 +51,7 @@ typedef enum LocalKind {
 // encloses it.
 struct Local {
   NameId name;
+  TypeId type;
   LocalKind kind;
   // The Name's binding before this was declared. It's restored when the
   // function ends.
@@ -79,17 +92,6 @@ typedef enum Shape {
   SH_STRUCT_LITERAL,  // Stuff(...): '&' allocates it in the current arena
 } Shape;
 
-// Types are compared by index.
-struct TypeId {
-  u32 idx;
-};
-
-typedef enum FixedType {
-  TY_UNKNOWN,      // Not inferred yet. Checks against it always pass.
-  TY_UNTYPED_INT,  // An integer constant that hasn't been given a type yet.
-  TY_BOOL,
-} FixedType;
-
 // What is known about an expression that has been parsed but not yet emitted.
 struct ExpDesc {
   Shape shape;
@@ -100,7 +102,7 @@ static void expr(Parser* p);
 static void subexpr(Parser* p, int limit, ExpDesc* e);
 static void binop_rest(Parser* p, int limit, ExpDesc* e);
 static void primary(Parser* p, ExpDesc* e);
-static void type(Parser* p);
+static TypeId type(Parser* p);
 static void stat(Parser* p);
 static void suite(Parser* p);
 static void parse_module(Parser* p);
@@ -125,6 +127,8 @@ static const char* describe_type(TypeId t) {
       return "an integer constant";
     case TY_BOOL:
       return "bool";
+    case TY_I32:
+      return "i32";
   }
   return "an unknown type";
 }
@@ -241,16 +245,18 @@ static Local* lookup(Parser* p, NameId name) {
   return (Local*)name_of(p, name)->binding;
 }
 
-static void declare_local(Parser* p, NameId name, u32 at, LocalKind kind) {
+static Local* declare_local(Parser* p, NameId name, u32 at, LocalKind kind) {
   if (p->num_locals == MAX_LOCALS) {
     error_at(p, at, "Too many local variables.");
   }
   Local* l = &p->locals[p->num_locals++];
   l->name = name;
+  l->type.idx = TY_UNKNOWN;
   Name* n = name_of(p, name);
   l->kind = kind;
   l->shadowed = (Local*)n->binding;
   n->binding = l;
+  return l;
 }
 
 // The current function's local for name, ignoring those of enclosing functions.
@@ -260,14 +266,16 @@ static Local* own_local(Parser* p, NameId name) {
 }
 
 // Declares name in the current function, unless it's already one of the
-// function's locals.
-static void declare_if_new(Parser* p, NameId name, u32 at) {
+// function's locals. Returns the local, or NULL at top level.
+static Local* declare_if_new(Parser* p, NameId name, u32 at) {
   if (p->func_depth == 0) {
-    return;
+    return NULL;
   }
-  if (!own_local(p, name)) {
-    declare_local(p, name, at, name_of(p, name)->is_const ? LK_CONST : LK_VAR);
+  Local* l = own_local(p, name);
+  if (!l) {
+    l = declare_local(p, name, at, name_of(p, name)->is_const ? LK_CONST : LK_VAR);
   }
+  return l;
 }
 
 static void pop_locals(Parser* p, u32 base) {
@@ -423,13 +431,26 @@ static void check_type_name(Parser* p) {
   }
 }
 
-static void type(Parser* p) {
+static TypeId builtin_type(TokenKind kind) {
+  switch (kind) {
+    case TK_BOOL:
+      return (TypeId){TY_BOOL};
+    case TK_I32:
+    case TK_INT:
+      return (TypeId){TY_I32};
+    default:
+      return (TypeId){TY_UNKNOWN};
+  }
+}
+
+static TypeId type(Parser* p) {
+  TypeId unknown = {TY_UNKNOWN};
   u32 at = p->ls.pos.t.offset;
   switch (T(p)) {
     case TK_STAR:
       next(p);
       type(p);
-      return;
+      return unknown;
     case TK_LSQUARE:
       next(p);
       if (T(p) != TK_RSQUARE) {
@@ -437,30 +458,30 @@ static void type(Parser* p) {
       }
       check_match(p, TK_RSQUARE, TK_LSQUARE, at);
       type(p);
-      return;
+      return unknown;
     case TK_LBRACE:
       next(p);
       type(p);
       check_match(p, TK_RBRACE, TK_LBRACE, at);
       type(p);
-      return;
+      return unknown;
     case TK_TYPEPARAM:
       check_type_param(p);
       next(p);
-      return;
+      return unknown;
     case TK_TYPENAME:
       check_type_name(p);
       next(p);
       if (T(p) == TK_LBRACE) {
         type_args(p);
       }
-      return;
+      return unknown;
     case TK_NAME: {
       NameId mod = p->ls.pos.t.v.name;
       next(p);
       check(p, TK_DOT);
       qualified_type_rest(p, mod, at);
-      return;
+      return unknown;
     }
     case TK_TYPEOF:
       next(p);
@@ -468,13 +489,15 @@ static void type(Parser* p) {
       check(p, TK_LPAREN);
       expr(p);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
-      return;
-    default:
+      return unknown;
+    default: {
       if (!is_builtin_type(T(p))) {
         error_expected(p, "type");
       }
+      TypeId t = builtin_type(T(p));
       next(p);
-      return;
+      return t;
+    }
   }
 }
 
@@ -577,6 +600,13 @@ static bool is_comparison(BinOpr op) {
   return op >= OPR_EQ && op <= OPR_NOTIN;
 }
 
+// `what` is the start of the error message, naming what needed the bool.
+static void expect_bool(Parser* p, const ExpDesc* e, u32 at, const char* what) {
+  if (e->type.idx != TY_UNKNOWN && e->type.idx != TY_BOOL) {
+    error_at(p, at, "%s expects bool, not %s.", what, describe_type(e->type));
+  }
+}
+
 // subexpr -> (primary | unop subexpr) { binop subexpr }
 // where binop is any binary operator with a priority higher than `limit`.
 static void subexpr(Parser* p, int limit, ExpDesc* e) {
@@ -588,9 +618,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       next(p);
       u32 at = p->ls.pos.t.offset;
       subexpr(p, PRIORITY_NOT, e);
-      if (e->type.idx != TY_UNKNOWN && e->type.idx != TY_BOOL) {
-        error_at(p, at, "'not' expects bool, not %s.", describe_type(e->type));
-      }
+      expect_bool(p, e, at, "'not'");
       e->shape = SH_VALUE;
       e->type.idx = TY_BOOL;
       break;
@@ -650,6 +678,13 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
 static void expr(Parser* p) {
   ExpDesc e;
   subexpr(p, -1, &e);
+}
+
+static void cond(Parser* p) {
+  u32 at = p->ls.pos.t.offset;
+  ExpDesc e;
+  subexpr(p, -1, &e);
+  expect_bool(p, &e, at, "Condition");
 }
 
 // "...\(e)...\(e)..."
@@ -1003,6 +1038,9 @@ static void primary(Parser* p, ExpDesc* e) {
       if (!defined && T(p) != TK_EQ) {
         error_at(p, at, "Undefined reference to '%.*s'.", (int)n->len, (const char*)n->str);
       }
+      if (n->binding) {
+        e->type = ((const Local*)n->binding)->type;
+      }
       e->shape = SH_NAME;
       break;
     }
@@ -1061,7 +1099,7 @@ static void primary(Parser* p, ExpDesc* e) {
 // Statements
 
 // The rest of a declaration once its type is parsed: name ['=' expr].
-static void decl_rest(Parser* p, bool toplevel) {
+static void decl_rest(Parser* p, bool toplevel, TypeId t) {
   u32 at;
   NameId name = expect_name(p, "variable name", &at);
   if (toplevel) {
@@ -1073,7 +1111,8 @@ static void decl_rest(Parser* p, bool toplevel) {
   if (toplevel) {
     declare_global(p, name, GK_VAR);
   } else {
-    declare_if_new(p, name, at);
+    Local* l = declare_if_new(p, name, at);
+    l->type = t;
   }
 }
 
@@ -1095,7 +1134,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
     ExpDesc e;
     primary(p, &e);
     if (e.shape == SH_TYPE) {
-      decl_rest(p, toplevel);
+      decl_rest(p, toplevel, (TypeId){TY_UNKNOWN});
       return;
     }
     if (T(p) == TK_EQ || is_augassign(T(p))) {
@@ -1145,8 +1184,8 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
     error_at(p, at, "Expression can't be used as a statement.");
   }
   if (is_type_start(k)) {
-    type(p);
-    decl_rest(p, toplevel);
+    TypeId t = type(p);
+    decl_rest(p, toplevel, t);
     return;
   }
   if (k == TK_INDENT) {
@@ -1327,11 +1366,11 @@ static void stat(Parser* p) {
   switch (T(p)) {
     case TK_IF:
       next(p);
-      expr(p);
+      cond(p);
       check(p, TK_COLON);
       suite(p);
       while (optional(p, TK_ELIF)) {
-        expr(p);
+        cond(p);
         check(p, TK_COLON);
         suite(p);
       }
