@@ -31,7 +31,7 @@ struct TypeId {
 typedef enum FixedType {
   TY_UNKNOWN,      // Not inferred yet. Checks against it always pass.
   TY_UNTYPED_INT,  // An integer constant that hasn't been given a type yet.
-  TY_VOID,  // The return type of a function without one.
+  TY_VOID,         // The return type of a function without one.
   TY_BOOL,
   TY_STR,
   // Integer types are contiguous, from TY_FIRST_INT to TY_LAST_INT.
@@ -650,6 +650,20 @@ static void check_assign(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
   }
 }
 
+// The type of `a + b`. Strings are concatenated, and integers need to be
+// the same type, apart from untyped constants.
+static TypeId type_for_add(Parser* p, TypeId a, TypeId b, u32 at) {
+  if (a.idx == TY_UNKNOWN || b.idx == TY_UNKNOWN) {
+    return ty_unknown;
+  }
+  bool addable =
+      a.idx == TY_STR || a.idx == TY_UNTYPED_INT || (a.idx >= TY_FIRST_INT && a.idx <= TY_LAST_INT);
+  if (!addable || !(assignable(a, b) || assignable(b, a))) {
+    error_at(p, at, "Can't add %s and %s.", describe_type(a), describe_type(b));
+  }
+  return a.idx == TY_UNTYPED_INT ? b : a;
+}
+
 // `what` is the start of the error message, naming what needed the bool.
 static void expect_bool(Parser* p, const ExpDesc* e, u32 at, const char* what) {
   if (e->type.idx != TY_UNKNOWN && e->type.idx != TY_BOOL) {
@@ -732,7 +746,15 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
       error_at(p, at, "Can't compare %s and %s.", describe_type(e->type), describe_type(rhs.type));
     }
     e->shape = SH_VALUE;
-    e->type = is_comparison(op) || logical ? ty_bool : ty_unknown;
+    bool is_bool = is_comparison(op) || logical;
+    bool is_add = op == OPR_ADD;
+    if (is_bool) {
+      e->type = ty_bool;
+    } else if (is_add) {
+      e->type = type_for_add(p, e->type, rhs.type, at);
+    } else {
+      e->type = ty_unknown;
+    }
     op = nextop;
   }
 }
