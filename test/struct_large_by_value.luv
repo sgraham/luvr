@@ -20,10 +20,10 @@
 # OUT: 5
 # OUT: 8
 struct Stuff4:
-    int x
-    int y
-    int z
-    int w
+    i32 x
+    i32 y
+    i32 z
+    i32 w
 
 foreign Stuff4 testhelper_returns_stuff4()
 foreign testhelper_takes_stuff4(Stuff4 s)

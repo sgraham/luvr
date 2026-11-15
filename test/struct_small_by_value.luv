@@ -14,14 +14,14 @@
 # OUT: 999
 # OUT: 888.000000
 struct LittleStuff:
-    int x
+    i32 x
     f32 y
 
 struct Stuff4:
-    int x
-    int y
-    int z
-    int w
+    i32 x
+    i32 y
+    i32 z
+    i32 w
 
 foreign LittleStuff testhelper_returns_littlestuff()
 

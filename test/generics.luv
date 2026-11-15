@@ -18,7 +18,7 @@ List{int} global_list = List{int}(.data=null, .len=0)
 on Pair{A, B} def A get_first(self):
     return self.first
 
-on List{T} foreign int raw_len(self)
+on List{T} foreign i64 raw_len(self)
 
 on List{E} def List{E} new(int cap):
     return List{E}(.data=null, .len=0)

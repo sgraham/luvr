@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:4:9:foreign int f()
+# CERR: {ssss}             ^ error: Can't use int in a foreign declaration, use i32 or i64.
+foreign int f()
+
+def int main():
+    return 0

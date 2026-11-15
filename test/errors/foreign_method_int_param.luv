@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:6:30:on Stuff foreign i32 g(self, int x)
+# CERR: {ssss}                                   ^ error: Can't use int in a foreign declaration, use i32 or i64.
+struct Stuff:
+    i32 a
+on Stuff foreign i32 g(self, int x)
+
+def int main():
+    return 0

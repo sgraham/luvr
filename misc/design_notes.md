@@ -2723,6 +2723,17 @@ decorator on a `foreign` declaration could give the C declaration to emit
 verbatim. Things that are macros in C (`errno`, `stdin`) need a C shim
 either way.
 
+`int` in struct fields isn't checked, so a struct passed to C with an
+`int` field is the same silent mismatch. Finding these from the `foreign`
+signatures means following fields and pointers transitively, with cycles,
+structs declared later and generic instantiations. If it's checked, the
+tentative choice is to mark C-compatible structs at their declaration
+(`foreign struct S:`), require the mark on structs passed by value in
+`foreign` signatures, and reject `int` fields and unmarked struct fields
+in marked structs. Every check is then local to one declaration, and the
+mark is also where C layout is promised. Nothing is done for now. It may
+be left to a lint tool instead.
+
 #### Untyped constants
 
 Integer and float constants without a suffix are untyped until context

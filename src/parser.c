@@ -96,6 +96,7 @@ struct Parser {
   // struct's list or method's receiver.
   u32 type_params;
   TypeId ret_type;  // of the current function
+  bool in_foreign;  // in a foreign function's signature
 };
 
 // The syntactical shape of parsing an expression. Used to decide whether
@@ -522,6 +523,11 @@ static TypeId type(Parser* p) {
     default: {
       if (!is_builtin_type(T(p))) {
         error_expected(p, "type");
+      }
+      if (T(p) == TK_INT && p->in_foreign) {
+        error_at(
+            p, at,
+            "Can't use int in a foreign declaration, use i32 or i64.");
       }
       TypeId t = builtin_type(T(p));
       next(p);
@@ -1521,6 +1527,14 @@ static u32 funcsig(Parser* p, bool is_method) {
   return outer;
 }
 
+// foreign_decl -> funcsig end   (after 'foreign')
+static void foreign_decl(Parser* p, bool is_method) {
+  p->in_foreign = true;
+  func_close(p, funcsig(p, is_method));
+  p->in_foreign = false;
+  end_of_stat(p);
+}
+
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, bool is_method) {
   TypeId outer_ret = p->ret_type;
@@ -1689,8 +1703,7 @@ static void toplevel_stat(Parser* p) {
       next(p);
       receiver(p);
       if (optional(p, TK_FOREIGN)) {
-        func_close(p, funcsig(p, /*is_method=*/true));
-        end_of_stat(p);
+        foreign_decl(p, /*is_method=*/true);
       } else {
         check(p, TK_DEF);
         funcdef(p, /*is_method=*/true);
@@ -1711,8 +1724,7 @@ static void toplevel_stat(Parser* p) {
       return;
     case TK_FOREIGN:
       next(p);
-      func_close(p, funcsig(p, /*is_method=*/false));
-      end_of_stat(p);
+      foreign_decl(p, /*is_method=*/false);
       return;
     case TK_IMPORT:
       error_at(p, p->ls.pos.t.offset, "Imports must come before other declarations.");
