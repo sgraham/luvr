@@ -1,7 +1,0 @@
-# CRET: 1
-# CERR: {self}:5:12:    return 44
-# CERR: {ssss}                 ^ error: Cannot convert type i32 to expected return type str.
-def str func():
-    return 44
-def int main():
-    func()

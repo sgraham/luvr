@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:5:12:    return 44
+# CERR: {ssss}                 ^ error: Can't return an integer constant from a function returning str.
+def str func():
+    return 44
+def int main():
+    func()

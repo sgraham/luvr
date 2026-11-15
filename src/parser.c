@@ -93,6 +93,7 @@ struct Parser {
   // Bit c - 'A' is set for each type parameter declared by the current
   // struct's list or method's receiver.
   u32 type_params;
+  TypeId ret_type;  // of the current function
 };
 
 // The syntactical shape of parsing an expression. Used to decide whether
@@ -1261,7 +1262,13 @@ static void simple_stat(Parser* p) {
     case TK_RETURN:
       next(p);
       if (T(p) != TK_NEWLINE && !block_follow(T(p))) {
-        expr(p);
+        u32 at = p->ls.pos.t.offset;
+        ExpDesc e;
+        subexpr(p, -1, &e);
+        if (!assignable(e.type, p->ret_type)) {
+          error_at(p, at, "Can't return %s from a function returning %s.", describe_type(e.type),
+                   describe_type(p->ret_type));
+        }
       }
       return;
     case TK_BREAK:
@@ -1353,6 +1360,7 @@ static void suite(Parser* p) {
 static u32 funcsig(Parser* p, bool is_method) {
   NameId name = p->ls.pos.t.v.name;
   u32 at = p->ls.pos.t.offset;
+  TypeId ret = ty_unknown;
   if (T(p) == TK_NAME) {
     next(p);
     if (optional(p, TK_DOT)) {  // module.Type return type
@@ -1361,7 +1369,7 @@ static u32 funcsig(Parser* p, bool is_method) {
     }
   } else {
     if (is_type_start(T(p))) {
-      type(p);
+      ret = type(p);
     }
     name = expect_name(p, "function name", &at);
   }
@@ -1376,6 +1384,7 @@ static u32 funcsig(Parser* p, bool is_method) {
     error_at(p, p->ls.pos.t.offset, "Functions can't have type parameters, only structs.");
   }
   u32 outer = func_open(p);
+  p->ret_type = ret;
 
   u32 lparen = p->ls.pos.t.offset;
   check(p, TK_LPAREN);
@@ -1409,10 +1418,12 @@ static u32 funcsig(Parser* p, bool is_method) {
 
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, bool is_method) {
+  TypeId outer_ret = p->ret_type;
   u32 outer = funcsig(p, is_method);
   check(p, TK_COLON);
   suite(p);
   func_close(p, outer);
+  p->ret_type = outer_ret;
 }
 
 // stat -> 'if' expr ':' suite {'elif' expr ':' suite} ['else' ':' suite]
@@ -1801,6 +1812,7 @@ void parse_file(Ctx* ctx, const char* path) {
   p->num_locals = 0;
   p->func_base = 0;
   p->func_depth = 0;
+  p->ret_type = ty_unknown;
   // Names are shared by all files parsed with ctx, so this file's bindings
   // are undone at the end, including after an error.
   jmp_buf* outer = ctx->on_error;
