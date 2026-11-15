@@ -1160,7 +1160,10 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
     check_not_global(p, name, T(p) == TK_EQ ? p->ls.pos.t.offset : at);
   }
   if (optional(p, TK_EQ)) {
-    expr(p);
+    u32 value_at = p->ls.pos.t.offset;
+    ExpDesc v;
+    subexpr(p, -1, &v);
+    check_assign(p, t, &v, value_at);
   }
   if (toplevel) {
     declare_global(p, name, GK_VAR);
