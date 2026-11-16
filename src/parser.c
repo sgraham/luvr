@@ -921,8 +921,9 @@ static void check_shift_count(Parser* p, BinOpr op, TypeId t, const ExpDesc* rhs
   }
 }
 
-// Checks constant operands of an arithmetic or bitwise op whose result has
-// type t. Out of line, since most operands aren't constants.
+// Checks constant operands of an arithmetic, bitwise or comparison op, where
+// t is the type that untyped constants are converted to. Out of line, since
+// most operands aren't constants.
 static NOINLINE void check_const_operands(Parser* p,
                                           BinOpr op,
                                           TypeId t,
@@ -1085,6 +1086,40 @@ static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
   }
 }
 
+// The value of a comparison of two numeric or bool constants. NaN can't be
+// a constant, so the ordering is total.
+static NOINLINE bool fold_compare(BinOpr op, const ExpDesc* a, const ExpDesc* b) {
+  int c;
+  if (a->type.idx == TY_BOOL) {
+    c = (int)a->v.b - (int)b->v.b;
+  } else if (type_is_float(a->type) || type_is_float(b->type)) {
+    // An integer here can only be an untyped constant, which is converted to
+    // the float type, as in arithmetic.
+    double x = type_is_float(a->type) ? a->v.f : (double)a->v.i;
+    double y = type_is_float(b->type) ? b->v.f : (double)b->v.i;
+    c = (x > y) - (x < y);
+  } else {
+    c = (a->v.i > b->v.i) - (a->v.i < b->v.i);
+  }
+  switch (op) {
+    case OPR_EQ:
+      return c == 0;
+    case OPR_NE:
+      return c != 0;
+    case OPR_LT:
+      return c < 0;
+    case OPR_LE:
+      return c <= 0;
+    case OPR_GT:
+      return c > 0;
+    case OPR_GE:
+      return c >= 0;
+    default:
+      ASSERT(false && "not a folded comparison");
+      return false;
+  }
+}
+
 // Unary '-' or '~', which give the operand's type. Constants are folded.
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
   TypeId t = e->type;
@@ -1201,9 +1236,23 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       error_at(p, at, "Can't compare %s and %s.", describe_type(e->type), describe_type(rhs.type));
     }
     e->shape = SH_VALUE;
+    bool is_compare = op >= OPR_EQ && op <= OPR_GE;
     bool is_bool = binopr_is_comparison(op) || logical;
     bool is_arith = op >= OPR_BOR && op <= OPR_MOD;
-    if (is_bool) {
+    if (is_compare) {
+      bool is_const = false;
+      if (e->is_const || rhs.is_const) {
+        TypeId t = type_is_untyped(e->type) ? rhs.type : e->type;
+        check_const_operands(p, op, t, e, start, &rhs, rhs_at, at);
+        bool foldable = t.idx == TY_BOOL || type_is_integer(t) || type_is_float(t);
+        if (e->is_const && rhs.is_const && foldable) {
+          e->v.b = fold_compare(op, e, &rhs);
+          is_const = true;
+        }
+      }
+      e->type = ty_bool;
+      e->is_const = is_const;
+    } else if (is_bool) {
       e->type = ty_bool;
       e->is_const = false;
     } else if (is_arith) {

@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:14:    b = a == 256
+# CERR: {ssss}                   ^ error: 256 doesn't fit in u8.
+def int f(u8 a):
+    b = a == 256
+    return 0
