@@ -2948,7 +2948,7 @@ global, so variables don't pay for them.
 Each step is driven by the todo tests named.
 
 1. The constant value in `ExpDesc`, set by literals, `true` and `false`.
-   Unary `-` folds untyped and typed constants. `-` and `~` on other values
+   Unary `-` and `~` fold untyped and typed constants. On other values they
    check that the operand is a number or an integer, and give its type
    instead of `ty_unknown`. `neg_const_not.luv`. Benched, since it's on the
    path of every literal.

@@ -1,20 +1,3 @@
-// Recursive-descent parser for luv.
-//
-// Every decision is made from the current token alone. Where more seems to be
-// needed, a common prefix is parsed first, and the decision is based on what
-// it turned out to be:
-//
-//   - `Stuff s` (declaration) vs. `Stuff(1).f()` (expression), and
-//     `mod.Type x` vs. `mod.func()`: parse the postfix chain, then look at its
-//     shape and the next token.
-//   - In a method's parameter list, `self` vs. `mod.Type x`: read the name,
-//     then a following '.' means it was the start of a type.
-//   - `[x for x in xs]` vs. `[x, y]`: parse the first element, then `for` or
-//     `,` decides.
-//
-// Types are recognized lexically (TK_TYPENAME, builtin type keywords), so no
-// decision here consults a symbol table.
-
 #include "luvr.h"
 
 typedef struct ExpDesc ExpDesc;
@@ -126,10 +109,26 @@ typedef enum Shape {
   SH_STRUCT_LITERAL,  // Stuff(...): '&' allocates it in the current arena
 } Shape;
 
+// Untyped integer constants need more than 64 bits so that every value of
+// every integer type fits, as well as intermediates like (1 << 64) - 1.
+#if defined(__SIZEOF_INT128__)
+typedef __int128 ConstInt;
+typedef unsigned __int128 ConstUInt;
+#else
+#  error "ConstInt needs an implementation without __int128"
+#endif
+
 // What is known about an expression that has been parsed but not yet emitted.
 struct ExpDesc {
   Shape shape;
   TypeId type;
+  // When set, the expression's value is in v, which is chosen by type.
+  bool is_const;
+  union {
+    ConstInt i;
+    double f;
+    bool b;
+  } v;
 };
 
 static void expr(Parser* p);
@@ -628,7 +627,7 @@ enum {
   PRIORITY_UNARY = 11,  // unary - ~ &: binds tighter than any binary operator
 };
 
-static BinOpr getbinopr(TokenKind kind) {
+static BinOpr tok_to_binopr(TokenKind kind) {
   switch (kind) {
     case TK_OR:
       return OPR_OR;
@@ -675,13 +674,13 @@ static BinOpr getbinopr(TokenKind kind) {
   }
 }
 
-static bool is_comparison(BinOpr op) {
+static bool binopr_is_comparison(BinOpr op) {
   return op >= OPR_EQ && op <= OPR_NOTIN;
 }
 
 // The type that a variable gets when it's declared by assigning a value of
 // type t.
-static TypeId default_type(TypeId t) {
+static TypeId default_type_for_variable(TypeId t) {
   switch ((FixedType)t.idx) {
     case TY_UNTYPED_INT:
       return ty_i64;
@@ -692,16 +691,48 @@ static TypeId default_type(TypeId t) {
   }
 }
 
-static bool is_untyped(TypeId t) {
+static bool type_is_untyped(TypeId t) {
   return t.idx == TY_UNTYPED_INT || t.idx == TY_UNTYPED_FLOAT;
 }
 
-static bool is_integer(TypeId t) {
+static bool type_is_integer(TypeId t) {
   return t.idx == TY_UNTYPED_INT || (t.idx >= TY_FIRST_INT && t.idx <= TY_LAST_INT);
 }
 
-static bool is_float(TypeId t) {
+static bool type_is_float(TypeId t) {
   return t.idx == TY_UNTYPED_FLOAT || t.idx == TY_F32 || t.idx == TY_F64;
+}
+
+static bool type_is_unsigned(TypeId t) {
+  return t.idx >= TY_U8 && t.idx <= TY_U64;
+}
+
+// The integer types are ordered by width, signed and then unsigned.
+static int type_int_bits(TypeId t) {
+  return 8 << ((t.idx - TY_I8) & 3);
+}
+
+static bool const_fits_in_type(ConstInt v, TypeId t) {
+  ConstInt limit = (ConstInt)1 << (type_int_bits(t) - !type_is_unsigned(t));
+  return v < limit && v >= (type_is_unsigned(t) ? 0 : -limit);
+}
+
+// buf needs to hold 41 chars, enough for any ConstInt.
+static const char* const_as_str(ConstInt v, char* buf) {
+  ConstUInt u = v < 0 ? -(ConstUInt)v : (ConstUInt)v;
+  char* s = buf + 40;
+  *s = 0;
+  for (;;) {
+    *--s = (char)('0' + (int)(u % 10));
+    u /= 10;
+    if (!u) {
+      break;
+    }
+  }
+  if (v < 0) {
+    *--s = '-';
+  }
+  return s;
 }
 
 // Whether a value of type `from` can be used, without a cast, where `to` is
@@ -709,15 +740,15 @@ static bool is_float(TypeId t) {
 // when the float constant is integral.
 static bool assignable(TypeId from, TypeId to) {
   return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
-         (from.idx == TY_UNTYPED_INT && (is_integer(to) || is_float(to))) ||
-         (from.idx == TY_UNTYPED_FLOAT && is_float(to));
+         (from.idx == TY_UNTYPED_INT && (type_is_integer(to) || type_is_float(to))) ||
+         (from.idx == TY_UNTYPED_FLOAT && type_is_float(to));
 }
 
 // Whether `cast to(...)` accepts a value of type `from`. Pointers aren't
 // checker types yet, so they pass as unknown.
 static bool castable(TypeId from, TypeId to) {
-  bool from_num = is_integer(from) || is_float(from);
-  bool to_num = is_integer(to) || is_float(to);
+  bool from_num = type_is_integer(from) || type_is_float(from);
+  bool to_num = type_is_integer(to) || type_is_float(to);
   return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
          (from_num && to_num);
 }
@@ -757,17 +788,18 @@ static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
   bool is_shift = op == OPR_SHL || op == OPR_SHR;
   bool is_concat = op == OPR_ADD && a.idx == TY_STR && b.idx == TY_STR;
   bool same_type = assignable(a, b) || assignable(b, a);
-  bool ints = is_integer(a) && is_integer(b) && (is_shift || same_type);
-  bool floats = op >= OPR_ADD && op <= OPR_DIV && same_type && (is_float(a) || is_float(b));
+  bool ints = type_is_integer(a) && type_is_integer(b) && (is_shift || same_type);
+  bool floats =
+      op >= OPR_ADD && op <= OPR_DIV && same_type && (type_is_float(a) || type_is_float(b));
   if (!is_concat && !ints && !floats) {
     bool swap = op == OPR_SUB;
     error_at(p, at, arith_error[op], describe_type(swap ? b : a), describe_type(swap ? a : b));
   }
-  if (is_shift || !is_untyped(a)) {
+  if (is_shift || !type_is_untyped(a)) {
     return a;
   }
   // Two constants give a float constant if either is one.
-  return is_untyped(b) && a.idx == TY_UNTYPED_FLOAT ? a : b;
+  return type_is_untyped(b) && a.idx == TY_UNTYPED_FLOAT ? a : b;
 }
 
 // `what` is the start of the error message, naming what needed the bool.
@@ -775,6 +807,41 @@ static void expect_bool(Parser* p, const ExpDesc* e, u32 at, const char* what) {
   if (e->type.idx != TY_UNKNOWN && e->type.idx != TY_BOOL) {
     error_at(p, at, "%s expects bool, not %s.", what, describe_type(e->type));
   }
+}
+
+// Unary '-' or '~', which give the operand's type. Constants are folded.
+static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
+  TypeId t = e->type;
+  if (t.idx == TY_UNKNOWN) {
+    e->is_const = false;
+    return;
+  }
+  if (neg && !type_is_integer(t) && !type_is_float(t)) {
+    error_at(p, at, "'-' expects a number, not %s.", describe_type(t));
+  }
+  if (!neg && !type_is_integer(t)) {
+    error_at(p, at, "'~' expects an integer, not %s.", describe_type(t));
+  }
+  if (!e->is_const) {
+    return;
+  }
+  if (type_is_float(t)) {
+    e->v.f = -e->v.f;
+    return;
+  }
+  ConstInt r;
+  if (!neg) {
+    // Complementing a two's complement value of unlimited width gives
+    // -x - 1, which is also right for signed types of any width.
+    r = type_is_unsigned(t) ? (((ConstInt)1 << type_int_bits(t)) - 1) ^ e->v.i : ~e->v.i;
+  } else if (__builtin_sub_overflow((ConstInt)0, e->v.i, &r)) {
+    error_at(p, at, "Constant overflows.");
+  }
+  if (!type_is_untyped(t) && !const_fits_in_type(r, t)) {
+    char buf[41];
+    error_at(p, at, "%s doesn't fit in %s.", const_as_str(r, buf), describe_type(t));
+  }
+  e->v.i = r;
 }
 
 // subexpr -> (primary | unop subexpr) { binop subexpr }
@@ -791,15 +858,19 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       expect_bool(p, e, at, "'not'");
       e->shape = SH_VALUE;
       e->type = ty_bool;
+      e->is_const = false;
       break;
     }
     case TK_MINUS:
-    case TK_TILDE:
+    case TK_TILDE: {
+      bool neg = T(p) == TK_MINUS;
+      u32 at = p->ls.pos.t.offset;
       next(p);
       subexpr(p, PRIORITY_UNARY, e);
+      unary_arith(p, neg, e, at);
       e->shape = SH_VALUE;
-      e->type = ty_unknown;
       break;
+    }
     case TK_AMP: {
       next(p);
       u32 at = p->ls.pos.t.offset;
@@ -813,6 +884,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       }
       e->shape = SH_VALUE;
       e->type = ty_unknown;
+      e->is_const = false;
       break;
     }
     default:
@@ -826,7 +898,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
 // sizeof_operand() can continue an expression after already parsing a
 // primary.
 static void binop_rest(Parser* p, int limit, ExpDesc* e) {
-  BinOpr op = getbinopr(T(p));
+  BinOpr op = tok_to_binopr(T(p));
   while (op != OPR_NONE && priority[op] > limit) {
     u32 at = p->ls.pos.t.offset;
     next(p);
@@ -843,8 +915,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
     if (logical) {
       expect_bool(p, &rhs, rhs_at, logical);
     }
-    BinOpr nextop = getbinopr(T(p));
-    if (is_comparison(op) && is_comparison(nextop)) {
+    BinOpr nextop = tok_to_binopr(T(p));
+    if (binopr_is_comparison(op) && binopr_is_comparison(nextop)) {
       error_at(p, at, "Comparisons can't be chained. Use 'and' to combine them.");
     }
     if (op >= OPR_EQ && op <= OPR_GE && !assignable(rhs.type, e->type) &&
@@ -852,7 +924,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
       error_at(p, at, "Can't compare %s and %s.", describe_type(e->type), describe_type(rhs.type));
     }
     e->shape = SH_VALUE;
-    bool is_bool = is_comparison(op) || logical;
+    e->is_const = false;
+    bool is_bool = binopr_is_comparison(op) || logical;
     bool is_arith = op >= OPR_BOR && op <= OPR_MOD;
     if (is_bool) {
       e->type = ty_bool;
@@ -1134,6 +1207,7 @@ static void postfix(Parser* p, ExpDesc* e) {
     switch (T(p)) {
       case TK_DOT:
         e->type = ty_unknown;
+        e->is_const = false;
         next(p);
         if (T(p) == TK_NAME) {
           e->shape = SH_LVALUE;
@@ -1150,6 +1224,7 @@ static void postfix(Parser* p, ExpDesc* e) {
           error_at(p, p->ls.pos.t.offset, "A type can't be indexed.");
         }
         e->type = ty_unknown;
+        e->is_const = false;
         index_or_slice(p, e);
         break;
       case TK_LPAREN: {
@@ -1157,6 +1232,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         call_args(p, is_struct_literal);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
         e->type = ty_unknown;
+        e->is_const = false;
         break;
       }
       case TK_LBRACE:
@@ -1196,10 +1272,18 @@ static void primary(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
   e->shape = SH_VALUE;
   e->type = ty_unknown;
+  e->is_const = false;
   switch (T(p)) {
     case TK_INTLIT:
+      e->type = literal_type(p);
+      e->is_const = true;
+      e->v.i = p->ls.pos.t.v.i;
+      next(p);
+      break;
     case TK_FLOATLIT:
       e->type = literal_type(p);
+      e->is_const = true;
+      e->v.f = p->ls.pos.t.v.f;
       next(p);
       break;
     case TK_STRING:
@@ -1209,6 +1293,8 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_TRUE:
     case TK_FALSE:
       e->type = ty_bool;
+      e->is_const = true;
+      e->v.b = T(p) == TK_TRUE;
       next(p);
       break;
     case TK_NULL:
@@ -1304,6 +1390,7 @@ static void primary(Parser* p, ExpDesc* e) {
       }
       e->shape = SH_VALUE;
       e->type = t;
+      e->is_const = false;
       break;
     }
     default:
@@ -1420,7 +1507,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       if (declares && toplevel) {
         declare_global(p, name, GK_VAR);
       } else if (declares) {
-        declare_if_new(p, name, at, default_type(v.type));
+        declare_if_new(p, name, at, default_type_for_variable(v.type));
       }
       return;
     }
