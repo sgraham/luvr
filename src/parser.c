@@ -717,10 +717,14 @@ static bool const_fits_in_type(ConstInt v, TypeId t) {
   return v < limit && v >= (type_is_unsigned(t) ? 0 : -limit);
 }
 
-// buf needs to hold 41 chars, enough for any ConstInt.
+// Enough for any ConstInt in decimal (a sign and 39 digits), or any double
+// printed with %.17g, plus the terminator.
+#define CONST_STR_SIZE 41
+
+// buf needs to hold CONST_STR_SIZE chars.
 static const char* const_as_str(ConstInt v, char* buf) {
   ConstUInt u = v < 0 ? -(ConstUInt)v : (ConstUInt)v;
-  char* s = buf + 40;
+  char* s = buf + CONST_STR_SIZE - 1;
   *s = 0;
   for (;;) {
     *--s = (char)('0' + (int)(u % 10));
@@ -753,11 +757,52 @@ static bool castable(TypeId from, TypeId to) {
          (from_num && to_num);
 }
 
+// Integer constants have to be exactly representable as a float, since
+// unlike decimal fractions they can be, and rounding one is likely a mistake.
+// The bound keeps the conversion back to ConstInt in range when v rounds up
+// to 2^127.
+static bool const_exact_in_float(ConstInt v, TypeId t) {
+  double d = t.idx == TY_F32 ? (double)(float)v : (double)v;
+  return d < 0x1p127 && (ConstInt)d == v;
+}
+
+// Float constants are rounded, and only an error if they round to infinity.
+static void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
+  char buf[CONST_STR_SIZE];
+  if (!type_is_integer(e->type)) {
+    float f = (float)e->v.f;
+    if (t.idx == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
+      int prec = 1;
+      for (;;) {
+        snprintf(buf, sizeof(buf), "%.*g", prec, e->v.f);
+        if (strtod(buf, NULL) == e->v.f || prec == 17) {
+          break;
+        }
+        ++prec;
+      }
+      error_at(p, at, "%s doesn't fit in f32.", buf);
+    }
+  } else if (type_is_integer(t) && !type_is_untyped(t) && !const_fits_in_type(e->v.i, t)) {
+    error_at(p, at, "%s doesn't fit in %s.", const_as_str(e->v.i, buf), describe_type(t));
+  } else if ((t.idx == TY_F32 || t.idx == TY_F64) && !const_exact_in_float(e->v.i, t)) {
+    error_at(p, at, "%s can't be represented exactly in %s.", const_as_str(e->v.i, buf),
+             describe_type(t));
+  }
+}
+
+// Untyped constants are only range checked when they're given a type.
+static void check_const_conversion(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
+  if (e->is_const && type_is_untyped(e->type)) {
+    check_const_fits(p, e, to, at);
+  }
+}
+
 // Checks that a value can be assigned to something of type `to`.
 static void check_assign(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
   if (!assignable(e->type, to)) {
     error_at(p, at, "Can't assign %s to %s.", describe_type(e->type), describe_type(to));
   }
+  check_const_conversion(p, to, e, at);
 }
 
 // Error messages for arithmetic and bitwise operators, taking the left and
@@ -838,7 +883,7 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
     error_at(p, at, "Constant overflows.");
   }
   if (!type_is_untyped(t) && !const_fits_in_type(r, t)) {
-    char buf[41];
+    char buf[CONST_STR_SIZE];
     error_at(p, at, "%s doesn't fit in %s.", const_as_str(r, buf), describe_type(t));
   }
   e->v.i = r;
@@ -1278,12 +1323,18 @@ static void primary(Parser* p, ExpDesc* e) {
       e->type = literal_type(p);
       e->is_const = true;
       e->v.i = p->ls.pos.t.v.i;
+      if (!type_is_untyped(e->type)) {
+        check_const_fits(p, e, e->type, at);
+      }
       next(p);
       break;
     case TK_FLOATLIT:
       e->type = literal_type(p);
       e->is_const = true;
       e->v.f = p->ls.pos.t.v.f;
+      if (!type_is_untyped(e->type)) {
+        check_const_fits(p, e, e->type, at);
+      }
       next(p);
       break;
     case TK_STRING:
@@ -1507,7 +1558,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       if (declares && toplevel) {
         declare_global(p, name, GK_VAR);
       } else if (declares) {
-        declare_if_new(p, name, at, default_type_for_variable(v.type));
+        TypeId t = default_type_for_variable(v.type);
+        check_const_conversion(p, t, &v, value_at);
+        declare_if_new(p, name, at, t);
       }
       return;
     }
@@ -1555,6 +1608,7 @@ static void simple_stat(Parser* p) {
           error_at(p, at, "Can't return %s from a function returning %s.", describe_type(e.type),
                    describe_type(p->ret_type));
         }
+        check_const_conversion(p, p->ret_type, &e, at);
       }
       return;
     }

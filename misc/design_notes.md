@@ -2902,8 +2902,11 @@ error is at the start of the value:
 Checking at the operator would mean picking a width, probably `int`, and
 then `1 << 63` would be an error even when the target is `u64`.
 
-A float constant is checked against the range of `f32` or `f64`, and
-rounded to it.
+A float constant is rounded to `f32` or `f64`, and is an error only if it
+rounds to infinity, as in Go. An integer constant converted to a float type
+has to be exactly representable, so `f32 x = 16777217` is an error. Go
+rounds it. Decimal fractions like `0.1` have to be rounded, but an integer
+that changes is probably a mistake.
 
 `~` on an untyped constant is `-x - 1`, which is the bitwise complement of a
 two's complement number with unlimited width. So `~0` is `-1`, and

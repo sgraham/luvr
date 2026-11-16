@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:13:    f64 x = 9007199254740993
+# CERR: {ssss}                  ^ error: 9007199254740993 can't be represented exactly in f64.
+def int main():
+    f64 x = 9007199254740993
+    return 0
