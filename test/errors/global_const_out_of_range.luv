@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:4:5:x = 0xffff_ffff_ffff_ffff
+# CERR: {ssss}         ^ error: 18446744073709551615 doesn't fit in int.
+x = 0xffff_ffff_ffff_ffff
+
+def int main():
+    return 0

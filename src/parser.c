@@ -1864,12 +1864,18 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         }
       }
       // After the expression, so that it can't see the new local.
-      if (declares && toplevel) {
-        declare_global(p, name, GK_VAR);
-      } else if (declares) {
+      if (declares) {
+        // A constant keeps the type of its initializer, so it can still be
+        // untyped, but a variable needs a type.
         TypeId t = default_type_for_variable(v.type);
-        check_const_conversion(p, t, &v, value_at);
-        declare_if_new(p, name, at, t);
+        if (!name_of(p, name)->is_const) {
+          check_const_conversion(p, t, &v, value_at);
+        }
+        if (toplevel) {
+          declare_global(p, name, GK_VAR);
+        } else {
+          declare_if_new(p, name, at, t);
+        }
       }
       return;
     }
