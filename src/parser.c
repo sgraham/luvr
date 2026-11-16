@@ -1578,6 +1578,7 @@ static u32 funcsig(Parser* p, bool is_method) {
     for (;;) {
       name = p->ls.pos.t.v.name;
       at = p->ls.pos.t.offset;
+      TypeId t = ty_unknown;
       if (T(p) == TK_NAME) {
         next(p);
         if (optional(p, TK_DOT)) {  // module.Type param
@@ -1587,10 +1588,10 @@ static u32 funcsig(Parser* p, bool is_method) {
           error_at(p, p->ls.pos.t.offset, "Parameter needs a type.");
         }
       } else {
-        type(p);
+        t = type(p);
         name = expect_name(p, "parameter name", &at);
       }
-      declare_local(p, name, at, LK_PARAM);
+      declare_local(p, name, at, LK_PARAM)->type = t;
       first = false;
       if (!optional(p, TK_COMMA)) {
         break;

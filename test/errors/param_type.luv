@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:12:    return a
+# CERR: {ssss}                 ^ error: Can't return i32 from a function returning int.
+def int f(i32 a):
+    return a
