@@ -596,12 +596,7 @@ def gen_stat(b, ind, depth, in_loop, last):
     elif kind == "list":
         t = rnd.choice(("int", "int", "f64", "str"))
         name = sc.fresh("items")
-        elems = [expr(t, sc, 1).text for _ in range(rnd.randint(0, 6))]
-        # The parser fails on an interpolated string as the first token in a
-        # list literal, so the first element is kept simple for now.
-        if elems and t == "str":
-            elems[0] = leaf("str", sc, 3).text
-        elems = ", ".join(elems)
+        elems = ", ".join(expr(t, sc, 1).text for _ in range(rnd.randint(0, 6)))
         b.line(f"[]{t} {name} = [{elems}]", ind)
         sc.vars.append((name, "[]" + t))
     elif kind == "dict":

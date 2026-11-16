@@ -1,0 +1,9 @@
+def int main():
+    n = 3
+    a = ["x \(n)", "y"]
+    b = ["\(n)"]
+    c = ["\(i) z \(n)" for i in range(3)]
+    d = ["\(["\(n)"])"]
+    e = "\([i for i in range(n)]) and \(n)"
+    f = ["a \(n) b \(n + 1) c", "\(n)"]
+    return 0

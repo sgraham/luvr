@@ -2249,7 +2249,8 @@ static bool module_read(Ctx* ctx, Module* m, char* filename) {
 // else in a file, so p has no other state that could be seen or changed by
 // parsing m.
 static void parse_import(Parser* p, Module* m) {
-  ASSERT(p->num_locals == 0 && p->func_depth == 0 && p->type_params == 0 && p->ls.interp_sp == 0);
+  ASSERT(p->num_locals == 0 && p->func_depth == 0 && p->type_params == 0 &&
+         p->ls.pos.interp_sp == 0);
   Module* mod = p->mod;
   FileBuf src = p->ls.src;
   LexPos pos = p->ls.pos;

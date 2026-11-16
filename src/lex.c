@@ -603,10 +603,10 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, bool cont) 
     return q + 1;
   }
   // At a \(, so the string continues after the matching ')'.
-  if (ls->interp_sp == LEX_MAX_INTERP) {
+  if (ls->pos.interp_sp == LEX_MAX_INTERP) {
     lex_error(ls, q, "String interpolation is nested too deeply.");
   }
-  ls->interp_stack[ls->interp_sp++] = ls->pos.bracket_depth;
+  ls->interp_stack[ls->pos.interp_sp++] = ls->pos.bracket_depth;
   ++ls->pos.bracket_depth;
   t->kind = cont ? TK_STRING_MID : TK_STRING_BEGIN;
   return q + 2;
@@ -677,7 +677,7 @@ void lex_next(LexState* ls) {
       }
 
       case '\n':
-        if (ls->interp_sp) {
+        if (ls->pos.interp_sp) {
           lex_error(ls, p, "Newlines aren't allowed inside string interpolation.");
         }
         if (ls->pos.bracket_depth) {
@@ -705,9 +705,10 @@ void lex_next(LexState* ls) {
       case '}':
         CLOSE(TK_RBRACE);
       case ')':
-        if (ls->interp_sp && ls->pos.bracket_depth == ls->interp_stack[ls->interp_sp - 1] + 1u) {
+        if (ls->pos.interp_sp &&
+            ls->pos.bracket_depth == ls->interp_stack[ls->pos.interp_sp - 1] + 1u) {
           --ls->pos.bracket_depth;
-          --ls->interp_sp;
+          --ls->pos.interp_sp;
           ls->pos.p = lex_string(ls, t, p, /*cont=*/true);
           return;
         }
@@ -846,8 +847,14 @@ void lex_mark(const LexState* ls, LexPos* mark) {
   *mark = ls->pos;
 }
 
+// The current token is lexed before the mark is taken, so if it started an
+// interpolation, the stack entry it pushed may have been popped since.
 void lex_rewind(LexState* ls, const LexPos* mark) {
   ls->pos = *mark;
+  TokenKind k = (TokenKind)mark->t.kind;
+  if (k == TK_STRING_BEGIN || k == TK_STRING_MID) {
+    ls->interp_stack[mark->interp_sp - 1] = mark->bracket_depth - 1;
+  }
 }
 
 // Fields added to LexPos also need to be compared below.
@@ -855,7 +862,7 @@ static_assert(sizeof(LexPos) == 40, "unexpected LexPos size");
 
 bool lex_same_pos_for_testing(const LexState* ls, const LexPos* a, const LexPos* b) {
   if (a->p != b->p || a->indent != b->indent || a->pending_dedents != b->pending_dedents ||
-      a->bracket_depth != b->bracket_depth) {
+      a->bracket_depth != b->bracket_depth || a->interp_sp != b->interp_sp) {
     return false;
   }
   const Token* ta = &a->t;

@@ -550,14 +550,15 @@ struct LexPos {
   u32 indent;  // current block level, in units of 4 spaces
   u32 pending_dedents;
   u32 bracket_depth;  // > 0: newlines are whitespace
+  u8 interp_sp;       // number of open \( in interp_stack
 };
 
 struct LexState {
   Ctx* ctx;
   FileBuf src;
-  // bracket_depth at each open \(. These aren't in LexPos, so a checkpoint has
-  // to be restored at the same depth of interpolation that it was made at.
-  u8 interp_sp;
+  // bracket_depth at each open \(. Only the depth is in LexPos. Entries below
+  // a mark's top are still open when it's restored, and lex_rewind() restores
+  // the top one.
   u32 interp_stack[LEX_MAX_INTERP];
   LexPos pos;
 };
