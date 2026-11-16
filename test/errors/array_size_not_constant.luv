@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:6:    [n]int a
+# CERR: {ssss}          ^ error: Array size must be a constant integer.
+def int f(int n):
+    [n]int a
+    return 0

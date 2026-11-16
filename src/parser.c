@@ -155,6 +155,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e);
 static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start);
 static void primary(Parser* p, ExpDesc* e);
 static TypeId type(Parser* p);
+static void array_size(Parser* p);
 static void stat(Parser* p);
 static void suite(Parser* p);
 static void parse_module(Parser* p);
@@ -560,7 +561,7 @@ static TypeId type(Parser* p) {
     case TK_LSQUARE:
       next(p);
       if (T(p) != TK_RSQUARE) {
-        expr(p);
+        array_size(p);
       }
       check_match(p, TK_RSQUARE, TK_LSQUARE, at);
       type(p);
@@ -848,6 +849,21 @@ static void check_const_conversion(Parser* p, TypeId to, const ExpDesc* e, u32 a
 // Out of line so that check_assign() is small enough to be inlined.
 static NOINLINE NORETURN void assign_type_error(Parser* p, TypeId from, TypeId to, u32 at) {
   error_at(p, at, "Can't assign %s to %s.", describe_type(from), describe_type(to));
+}
+
+// The size in [N]T has to be a constant integer that fits in int, and can't
+// be negative.
+static void array_size(Parser* p) {
+  u32 at = p->ls.pos.t.offset;
+  ExpDesc e;
+  subexpr(p, -1, &e);
+  if (!e.is_const || !type_is_integer(e.type)) {
+    error_at(p, at, "Array size must be a constant integer.");
+  }
+  if (e.v.i < 0) {
+    error_at(p, at, "Array size can't be negative.");
+  }
+  check_const_fits(p, &e, ty_i64, at);
 }
 
 // Checks that a value can be assigned to something of type `to`.
