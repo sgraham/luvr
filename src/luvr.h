@@ -95,6 +95,7 @@ typedef struct Token Token;
 #include <assert.h>
 #include <float.h>
 #include <inttypes.h>
+#include <math.h>
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdbool.h>

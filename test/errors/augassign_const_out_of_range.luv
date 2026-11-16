@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:10:    x += 256
+# CERR: {ssss}               ^ error: 256 doesn't fit in u8.
+def int main():
+    u8 x = 1
+    x += 256
+    return 0

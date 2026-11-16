@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:17:    x = 1e38f32 * 10
+# CERR: {ssss}                      ^ error: 1e+38 multiplied by 10 overflows.
+def int main():
+    x = 1e38f32 * 10
+    return 0

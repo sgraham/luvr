@@ -2878,7 +2878,7 @@ Untyped integer constants are `__int128`, behind a `ConstInt` typedef, with
 all arithmetic in helpers. Go uses arbitrary precision. 128 bits covers
 every value of every integer type, and intermediates such as
 `(1 << 64) - 1` that go past 64 bits and come back. A result past 128 bits
-is a "Constant overflows." error at the operator. MSVC has no `__int128`,
+is an overflow error at the operator, like a typed one. MSVC has no `__int128`,
 so the helpers will need a version over two `u64`s there. Callers don't
 change.
 

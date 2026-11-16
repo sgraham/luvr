@@ -133,7 +133,7 @@ struct ExpDesc {
 
 static void expr(Parser* p);
 static void subexpr(Parser* p, int limit, ExpDesc* e);
-static void binop_rest(Parser* p, int limit, ExpDesc* e);
+static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start);
 static void primary(Parser* p, ExpDesc* e);
 static TypeId type(Parser* p);
 static void stat(Parser* p);
@@ -722,7 +722,7 @@ static bool const_fits_in_type(ConstInt v, TypeId t) {
 #define CONST_STR_SIZE 41
 
 // buf needs to hold CONST_STR_SIZE chars.
-static const char* const_as_str(ConstInt v, char* buf) {
+static const char* const_int_as_str(ConstInt v, char* buf) {
   ConstUInt u = v < 0 ? -(ConstUInt)v : (ConstUInt)v;
   char* s = buf + CONST_STR_SIZE - 1;
   *s = 0;
@@ -737,6 +737,24 @@ static const char* const_as_str(ConstInt v, char* buf) {
     *--s = '-';
   }
   return s;
+}
+
+// The shortest form that reads back as the same double, so that the value
+// shown in errors is the one that was written.
+static const char* const_float_as_str(double v, char* buf) {
+  int prec = 1;
+  for (;;) {
+    snprintf(buf, CONST_STR_SIZE, "%.*g", prec, v);
+    if (strtod(buf, NULL) == v || prec == 17) {
+      break;
+    }
+    ++prec;
+  }
+  return buf;
+}
+
+static const char* const_value_as_str(const ExpDesc* e, char* buf) {
+  return type_is_float(e->type) ? const_float_as_str(e->v.f, buf) : const_int_as_str(e->v.i, buf);
 }
 
 // Whether a value of type `from` can be used, without a cast, where `to` is
@@ -772,20 +790,12 @@ static void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
   if (!type_is_integer(e->type)) {
     float f = (float)e->v.f;
     if (t.idx == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
-      int prec = 1;
-      for (;;) {
-        snprintf(buf, sizeof(buf), "%.*g", prec, e->v.f);
-        if (strtod(buf, NULL) == e->v.f || prec == 17) {
-          break;
-        }
-        ++prec;
-      }
-      error_at(p, at, "%s doesn't fit in f32.", buf);
+      error_at(p, at, "%s doesn't fit in f32.", const_float_as_str(e->v.f, buf));
     }
   } else if (type_is_integer(t) && !type_is_untyped(t) && !const_fits_in_type(e->v.i, t)) {
-    error_at(p, at, "%s doesn't fit in %s.", const_as_str(e->v.i, buf), describe_type(t));
+    error_at(p, at, "%s doesn't fit in %s.", const_int_as_str(e->v.i, buf), describe_type(t));
   } else if ((t.idx == TY_F32 || t.idx == TY_F64) && !const_exact_in_float(e->v.i, t)) {
-    error_at(p, at, "%s can't be represented exactly in %s.", const_as_str(e->v.i, buf),
+    error_at(p, at, "%s can't be represented exactly in %s.", const_int_as_str(e->v.i, buf),
              describe_type(t));
   }
 }
@@ -854,6 +864,69 @@ static void expect_bool(Parser* p, const ExpDesc* e, u32 at, const char* what) {
   }
 }
 
+// Messages for constant overflow, taking the operands in order, except for
+// addition and subtraction, which read better with them swapped.
+// clang-format off
+static const char* const overflow_error[] = {
+    [OPR_ADD] = "%s added to %s overflows.",
+    [OPR_SUB] = "%s subtracted from %s overflows.",
+    [OPR_MUL] = "%s multiplied by %s overflows.",
+};
+// clang-format on
+
+// Folds constants `e op rhs` into e for +, - and *, giving a value of type t.
+// Typed results overflow at their own width, and untyped ones past ConstInt
+// or double.
+static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc* rhs, u32 at) {
+  bool overflow;
+  double fr = 0;
+  ConstInt ir = 0;
+  if (type_is_float(t)) {
+    double a = type_is_float(e->type) ? e->v.f : (double)e->v.i;
+    double b = type_is_float(rhs->type) ? rhs->v.f : (double)rhs->v.i;
+    switch (op) {
+      case OPR_ADD:
+        fr = a + b;
+        break;
+      case OPR_SUB:
+        fr = a - b;
+        break;
+      default:
+        fr = a * b;
+        break;
+    }
+    if (t.idx == TY_F32) {
+      fr = (float)fr;
+    }
+    overflow = isinf(fr);
+  } else {
+    switch (op) {
+      case OPR_ADD:
+        overflow = __builtin_add_overflow(e->v.i, rhs->v.i, &ir);
+        break;
+      case OPR_SUB:
+        overflow = __builtin_sub_overflow(e->v.i, rhs->v.i, &ir);
+        break;
+      default:
+        overflow = __builtin_mul_overflow(e->v.i, rhs->v.i, &ir);
+        break;
+    }
+    overflow = overflow || (!type_is_untyped(t) && !const_fits_in_type(ir, t));
+  }
+  if (overflow) {
+    char a[CONST_STR_SIZE], b[CONST_STR_SIZE];
+    const char* as = const_value_as_str(e, a);
+    const char* bs = const_value_as_str(rhs, b);
+    bool swap = op != OPR_MUL;
+    error_at(p, at, overflow_error[op], swap ? bs : as, swap ? as : bs);
+  }
+  if (type_is_float(t)) {
+    e->v.f = fr;
+  } else {
+    e->v.i = ir;
+  }
+}
+
 // Unary '-' or '~', which give the operand's type. Constants are folded.
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
   TypeId t = e->type;
@@ -884,7 +957,7 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
   }
   if (!type_is_untyped(t) && !const_fits_in_type(r, t)) {
     char buf[CONST_STR_SIZE];
-    error_at(p, at, "%s doesn't fit in %s.", const_as_str(r, buf), describe_type(t));
+    error_at(p, at, "%s doesn't fit in %s.", const_int_as_str(r, buf), describe_type(t));
   }
   e->v.i = r;
 }
@@ -892,6 +965,7 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
 // subexpr -> (primary | unop subexpr) { binop subexpr }
 // where binop is any binary operator with a priority higher than `limit`.
 static void subexpr(Parser* p, int limit, ExpDesc* e) {
+  u32 start = p->ls.pos.t.offset;
   switch (T(p)) {
     case TK_NOT: {
       if (limit >= PRIORITY_NOT) {
@@ -936,13 +1010,13 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       primary(p, e);
       break;
   }
-  binop_rest(p, limit, e);
+  binop_rest(p, limit, e, start);
 }
 
 // The { binop subexpr } loop of subexpr(). It's separate so that
 // sizeof_operand() can continue an expression after already parsing a
-// primary.
-static void binop_rest(Parser* p, int limit, ExpDesc* e) {
+// primary. `start` is the offset of the left operand.
+static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
   BinOpr op = tok_to_binopr(T(p));
   while (op != OPR_NONE && priority[op] > limit) {
     u32 at = p->ls.pos.t.offset;
@@ -969,15 +1043,27 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e) {
       error_at(p, at, "Can't compare %s and %s.", describe_type(e->type), describe_type(rhs.type));
     }
     e->shape = SH_VALUE;
-    e->is_const = false;
     bool is_bool = binopr_is_comparison(op) || logical;
     bool is_arith = op >= OPR_BOR && op <= OPR_MOD;
     if (is_bool) {
       e->type = ty_bool;
+      e->is_const = false;
     } else if (is_arith) {
-      e->type = type_for_arith(p, op, e->type, rhs.type, at);
+      TypeId t = type_for_arith(p, op, e->type, rhs.type, at);
+      // A shift count keeps its own type.
+      if (op != OPR_SHL && op != OPR_SHR && !type_is_untyped(t)) {
+        check_const_conversion(p, t, e, start);
+        check_const_conversion(p, t, &rhs, rhs_at);
+      }
+      e->is_const = e->is_const && rhs.is_const && op >= OPR_ADD && op <= OPR_MUL &&
+                    t.idx != TY_UNKNOWN && t.idx != TY_STR;
+      if (e->is_const) {
+        fold_arith(p, op, t, e, &rhs, at);
+      }
+      e->type = t;
     } else {
       e->type = ty_unknown;
+      e->is_const = false;
     }
     op = nextop;
   }
@@ -1185,10 +1271,11 @@ static void sizeof_operand(Parser* p) {
   if (is_builtin_type(k) || k == TK_STAR || k == TK_LSQUARE || k == TK_LBRACE || k == TK_TYPEOF) {
     type(p);
   } else if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
+    u32 start = p->ls.pos.t.offset;
     ExpDesc e;
     primary(p, &e);
     if (e.shape != SH_TYPE) {
-      binop_rest(p, -1, &e);
+      binop_rest(p, -1, &e, start);
     }
   } else {
     expr(p);
@@ -1552,7 +1639,11 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       } else {
         // The result is always the target's type, so it doesn't need to be
         // checked again.
-        type_for_arith(p, augassign_opr[op_kind - TK_PLUSEQ], e.type, v.type, op_at);
+        BinOpr op = augassign_opr[op_kind - TK_PLUSEQ];
+        type_for_arith(p, op, e.type, v.type, op_at);
+        if (op != OPR_SHL && op != OPR_SHR) {
+          check_const_conversion(p, e.type, &v, value_at);
+        }
       }
       // After the expression, so that it can't see the new local.
       if (declares && toplevel) {

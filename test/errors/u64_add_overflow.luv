@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:13:    u64 x = 0xffff_ffff_ffff_ffff + 1
+# CERR: {ssss}                  ^ error: 18446744073709551616 doesn't fit in u64.
+def int main():
+    u64 ok = 0xffff_ffff_ffff_fffe + 1
+    u64 x = 0xffff_ffff_ffff_ffff + 1
+    return 0
