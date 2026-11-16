@@ -7,6 +7,7 @@ typedef struct NamedConst NamedConst;
 typedef struct Parser Parser;
 typedef struct Targets Targets;
 typedef struct TypeId TypeId;
+typedef struct TypeInfo TypeInfo;
 
 // Types are compared by index.
 struct TypeId {
@@ -31,6 +32,7 @@ typedef enum FixedType {
   TY_U64,
   TY_F32,
   TY_F64,
+  TY_NUM_FIXED,  // TypeIds from here on are created while parsing.
   TY_FIRST_INT = TY_I8,
   TY_LAST_INT = TY_U64,
 } FixedType;
@@ -80,6 +82,19 @@ union ConstValue {
   bool b;
 };
 
+typedef enum TypeKind {
+  TYPE_FUNC,
+} TypeKind;
+
+// A type that's created while parsing. Function types aren't interned, so
+// each function has its own, even when signatures are the same.
+struct TypeInfo {
+  TypeKind kind;
+  TypeId ret;
+  u32 first_param;  // in Parser.param_types
+  u32 num_params;
+};
+
 // A named constant's value, which is kept apart from Local and Module.globals
 // to reduce unnecessarily large searches.
 struct NamedConst {
@@ -107,10 +122,15 @@ typedef enum GlobalKind {
   GK_CONST,
 } GlobalKind;
 
-// GlobalInfo is a GlobalKind in the low bits, and for GK_CONST, the index of
-// the value in Parser.global_consts in the higher bits.
+// GlobalInfo is a GlobalKind in the low bits. The higher bits are the index of
+// the value in Parser.global_consts for GK_CONST, and the function's TypeId for
+// GK_FUNC.
 #define GLOBAL_KIND_BITS 3
 #define GLOBAL_KIND_MASK ((1u << GLOBAL_KIND_BITS) - 1)
+
+// Initial capacity of Parser.types and Parser.param_types, so that they don't
+// need to grow for small programs.
+#define INITIAL_TYPES 1024
 
 // Minimum size of Module.globals. It must be a power of 2.
 #define MIN_GLOBALS 64
@@ -121,6 +141,8 @@ struct Parser {
   Local locals[MAX_LOCALS];
   NamedConst local_consts[MAX_LOCALS];  // for LK_CONST locals, by index in locals
   VEC(NamedConst) global_consts;
+  VEC(TypeInfo) types;  // by TypeId, with unused entries for the FixedTypes
+  VEC(TypeId) param_types;
   u32 num_locals;
   u32 func_base;   // first of the current function's entries in locals
   u32 func_depth;  // 0 at top level
@@ -173,8 +195,12 @@ static void next(Parser* p) {
 
 // Describes a type for error messages, as it would follow "not".
 static const char* describe_type(TypeId t) {
+  if (t.idx >= TY_NUM_FIXED) {
+    return "a function";
+  }
   switch ((FixedType)t.idx) {
     case TY_UNKNOWN:
+    case TY_NUM_FIXED:
       break;
     case TY_UNTYPED_INT:
       return "an integer constant";
@@ -296,9 +322,13 @@ static NameId expect_name(Parser* p, const char* what, u32* at) {
 
 // Global table
 
-static GlobalKind module_global_kind(const Module* m, NameId name) {
+static GlobalInfo module_global_info(const Module* m, NameId name) {
   const GlobalInfo* info = namemap_find(&m->globals, name);
-  return info ? (GlobalKind)(*info & GLOBAL_KIND_MASK) : GK_NONE;
+  return info ? *info : GK_NONE;
+}
+
+static GlobalKind module_global_kind(const Module* m, NameId name) {
+  return (GlobalKind)(module_global_info(m, name) & GLOBAL_KIND_MASK);
 }
 
 static GlobalKind global_kind(Parser* p, NameId name) {
@@ -314,11 +344,6 @@ static NOINLINE void load_named_const(ExpDesc* e, const NamedConst* c) {
   e->type = c->type;
   e->is_const = true;
   e->v = c->v;
-}
-
-static const NamedConst* global_const(Parser* p, NameId name) {
-  GlobalInfo info = *namemap_find(&p->mod->globals, name);
-  return &p->global_consts.v[info >> GLOBAL_KIND_BITS];
 }
 
 // Locals
@@ -1377,12 +1402,12 @@ static void check_not_global(Parser* p, NameId name, u32 at) {
 // Part of it is code layout in funcsig() (moving the error report out of line
 // recovers most of that), and part is page faults from growing
 // Module.globals.
-static void declare_definition(Parser* p, NameId name, u32 at, GlobalKind kind) {
+static void declare_definition(Parser* p, NameId name, u32 at, GlobalInfo info) {
   if (global_kind(p, name) != GK_NONE) {
     const Name* n = name_of(p, name);
     error_at(p, at, "Duplicate top-level definition of '%.*s'.", (int)n->len, (const char*)n->str);
   }
-  declare_global(p, name, kind);
+  declare_global(p, name, info);
 }
 
 #define MAX_TARGETS 8
@@ -1728,7 +1753,8 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_NAME: {
       NameId name = p->ls.pos.t.v.name;
       const Name* n = name_of(p, name);
-      GlobalKind kind = n->binding ? GK_NONE : global_kind(p, name);
+      GlobalInfo info = n->binding ? GK_NONE : module_global_info(p->mod, name);
+      GlobalKind kind = (GlobalKind)(info & GLOBAL_KIND_MASK);
       const Module* m = kind == GK_MODULE ? imported_module(p, name) : NULL;
       if (m) {
         next(p);
@@ -1758,7 +1784,9 @@ static void primary(Parser* p, ExpDesc* e) {
           load_named_const(e, &p->local_consts[l - p->locals]);
         }
       } else if (kind == GK_CONST) {
-        load_named_const(e, global_const(p, name));
+        load_named_const(e, &p->global_consts.v[info >> GLOBAL_KIND_BITS]);
+      } else if (kind == GK_FUNC) {
+        e->type.idx = info >> GLOBAL_KIND_BITS;
       }
       e->shape = SH_NAME;
       break;
@@ -1856,7 +1884,7 @@ static void declare_const(Parser* p,
   if (toplevel) {
     u32 idx = p->global_consts.num;
     *vec_push(p->ls.ctx, &p->global_consts) = c;
-    declare_global(p, name, GK_CONST | idx << GLOBAL_KIND_BITS);
+    declare_global(p, name, GK_CONST | (idx << GLOBAL_KIND_BITS));
   } else {
     Local* l = declare_local(p, name, at, LK_CONST);
     l->type = t;
@@ -2159,11 +2187,15 @@ static u32 funcsig(Parser* p, bool is_method) {
   if (name_of(p, name)->is_const) {
     error_at(p, at, "A constant can't be a function name.");
   }
+  // The type is created before the name is declared, and the parameters are
+  // added to it as they're parsed.
+  TypeId ft = {p->types.num};
+  *vec_push(p->ls.ctx, &p->types) = (TypeInfo){TYPE_FUNC, ret, p->param_types.num, 0};
   if (!is_method) {
     if (p->func_depth == 0) {
-      declare_definition(p, name, at, GK_FUNC);
+      declare_definition(p, name, at, GK_FUNC | (ft.idx << GLOBAL_KIND_BITS));
     } else {
-      declare_if_new(p, name, at, ty_unknown);
+      declare_if_new(p, name, at, ft);
     }
   }
   if (T(p) == TK_LBRACE) {
@@ -2193,6 +2225,8 @@ static u32 funcsig(Parser* p, bool is_method) {
         name = expect_name(p, "parameter name", &at);
       }
       declare_local(p, name, at, LK_PARAM)->type = t;
+      *vec_push(p->ls.ctx, &p->param_types) = t;
+      ++p->types.v[ft.idx].num_params;
       first = false;
       if (!optional(p, TK_COMMA)) {
         break;
@@ -2597,6 +2631,8 @@ static void parse_module(Parser* p) {
 static void parse_end(Parser* p) {
   pop_locals(p, 0);
   free(p->global_consts.v);
+  free(p->types.v);
+  free(p->param_types.v);
   free(p);
 }
 
@@ -2610,6 +2646,10 @@ void parse_file(Ctx* ctx, const char* path) {
   p->num_locals = 0;
   p->global_consts.v = NULL;
   p->global_consts.num = p->global_consts.cap = 0;
+  p->types.v = NULL;
+  p->types.num = p->types.cap = 0;
+  p->param_types.v = NULL;
+  p->param_types.num = p->param_types.cap = 0;
   p->func_base = 0;
   p->func_depth = 0;
   p->ret_type = ty_unknown;
@@ -2623,6 +2663,10 @@ void parse_file(Ctx* ctx, const char* path) {
     ctx->on_error = outer;
     longjmp(*outer, 1);
   }
+  vec_reserve(ctx, &p->types, INITIAL_TYPES);
+  memset(p->types.v, 0, TY_NUM_FIXED * sizeof(TypeInfo));
+  p->types.num = TY_NUM_FIXED;
+  vec_reserve(ctx, &p->param_types, INITIAL_TYPES);
   // The root module's canonical name is its file name, without the directory
   // or .luv.
   u32 len;
