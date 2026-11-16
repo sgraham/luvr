@@ -1,6 +1,0 @@
-# CRET: 1
-# CERR: {self}:5:13:    i32 s = sizeof(i32)
-# CERR: {ssss}                  ^ error: Can't assign int to i32.
-def int main():
-    i32 s = sizeof(i32)
-    return 0

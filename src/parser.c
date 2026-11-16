@@ -1618,6 +1618,7 @@ static void call_args(Parser* p, bool is_struct_literal, TypeId callee) {
   u32 at = p->ls.pos.t.offset;
   bool is_function = type_is_function(p, callee);
   u32 num_params = is_function ? p->types.v[callee.idx].num_params : 0;
+  u32 first_param = is_function ? p->types.v[callee.idx].first_param : 0;
   u32 num_args = 0;
   u32 extra_at = 0;  // the first argument past num_params
   next(p);           // '('
@@ -1638,7 +1639,18 @@ static void call_args(Parser* p, bool is_struct_literal, TypeId callee) {
         check_name(p, "field name");
         check(p, TK_EQ);
       }
-      expr(p);
+      u32 arg_at = p->ls.pos.t.offset;
+      ExpDesc e;
+      subexpr(p, -1, &e);
+      check_not_void(p, &e, arg_at);
+      if (num_args <= num_params) {
+        TypeId t = p->param_types.v[first_param + num_args - 1];
+        if (!assignable(e.type, t)) {
+          error_at(p, arg_at, "Argument %u is %s, but the parameter is %s.", num_args,
+                   describe_type(e.type), describe_type(t));
+        }
+        check_const_conversion(p, t, &e, arg_at);
+      }
       if (!optional(p, TK_COMMA)) {
         break;
       }
@@ -1858,7 +1870,9 @@ static void primary(Parser* p, ExpDesc* e) {
       check(p, TK_LPAREN);
       int size = builtin_type_size(sizeof_operand(p));
       check_match(p, TK_RPAREN, TK_LPAREN, at);
-      e->type = ty_i64;
+      // A known size is an untyped constant, so that it can be used as any
+      // integer type, such as a u64 size for C.
+      e->type = size ? ty_untyped_int : ty_i64;
       e->is_const = size != 0;
       e->v.i = size;
       break;

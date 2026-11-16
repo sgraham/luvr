@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:9:11:    stuff(z)
-# CERR: {ssss}                ^ error: Call argument 1 is type str, but function expects type i32.
+# CERR: {ssss}                ^ error: Argument 1 is str, but the parameter is int.
 def int stuff(int x):
     return 0
 

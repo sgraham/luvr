@@ -108,7 +108,7 @@ grammar is LL(1). The rest are local.
 | D24 | **decided** 2026-11-13, **implemented** 2026-11-14 | Modules and imports. A module's canonical name is its path relative to the root, normalized lexically, and keys a dict of `Module`s on Ctx, so each file is loaded and parsed once however it's imported. Files are loaded through a callback on Ctx. A `Module` (name, buffer, table of globals) lasts as long as the Ctx, and a `Parser` is per-parse state that points at one. Globals move from `Name.global` to the module's table, with a `Name.binding` cache only if the table probe costs too much. Resolves D21's cross-module instantiation question: the one active Parser is re-pointed at the defining module. |
 | D25 | **open** 2026-11-14, direction agreed | Backend and execution model. Survey of existing small backends and execution models. Direction: run in process first, on x64 Windows, x64 Linux and aarch64 macOS. One backend of our own: a linear SSA IL per function built in the single pass, ABI lowering with structs by value as QBE does it, and a backward pass that allocates registers, selects and encodes, into sections with relocations. A JIT is the first consumer, and C objects are linked into a host program by the user. The optimized tier is more passes on the same IL. No interpreter, no `.s`, no third-party backend. sqbe is the fallback and the comparison. Debug info, executable writers and a C emitter are deferred. |
 | D26 | **provisional** 2026-11-14 | The IL. Per-function flat array of 8-byte instructions (opcode, type, two 24-bit references, constants below a bias), value types `i32`/`i64`/`f32`/`f64`, aggregates as memory. Two stages: the parser appends raw instructions with every local as a frame slot, then one forward pass at the end of the function promotes slots whose address wasn't taken to SSA and does folding and CSE. Blocks in source order with structured control flow. C calling convention for luv functions, QBE-style aggregate arguments, and the luv context pointer in a pinned callee-saved register. |
-| D27 | **decided** 2026-11-15 | Numeric types and conversions, as in Go. `int` is an alias of `i64`, and error messages say `int`. `len`, `sizeof` and indexes are `int`. No other aliases: no `uint`, `byte`, `float` or `double`, and no `f16` for now. `int` is an error in `foreign` signatures, since C's `int` is 32 bits. There are no foreign-only types, and `foreign` signatures match C by ABI, not by C type. No `void` in luv code. `codept` is left for D23. Untyped constants adapt to context, defaulting to `int` and `f64`, with range checks. No implicit conversions between numeric types (widths, signedness, `f32`/`f64`, int/float). Any integer type is accepted as an index or shift count. Lossless widening was rejected because it hides where arithmetic wraps, and is revisited only if the casts prove too painful. `cast` converts between any numeric types, between pointers, and between pointers and 64-bit integers. Float to integer out of range is unspecified, and constants must be in range for the target. |
+| D27 | **decided** 2026-11-15 | Numeric types and conversions, as in Go. `int` is an alias of `i64`, and error messages say `int`. `len` and indexes are `int`, and `sizeof` is an untyped constant (D28). No other aliases: no `uint`, `byte`, `float` or `double`, and no `f16` for now. `int` is an error in `foreign` signatures, since C's `int` is 32 bits. There are no foreign-only types, and `foreign` signatures match C by ABI, not by C type. No `void` in luv code. `codept` is left for D23. Untyped constants adapt to context, defaulting to `int` and `f64`, with range checks. No implicit conversions between numeric types (widths, signedness, `f32`/`f64`, int/float). Any integer type is accepted as an index or shift count. Lossless widening was rejected because it hides where arithmetic wraps, and is revisited only if the casts prove too painful. `cast` converts between any numeric types, between pointers, and between pointers and 64-bit integers. Float to integer out of range is unspecified, and constants must be in range for the target. |
 | D28 | **decided** 2026-11-15 | Constants and folding, as in Go. Constant expressions are folded in `ExpDesc` as they're parsed. Untyped integer constants are `__int128` (a two-`u64` implementation later for MSVC), untyped floats are `double`, and they're range checked only when converted to a type. Typed constants fold at their width, and overflow is an error. A constant zero divisor is an error. ALL_CAPS constants keep their initializer's untypedness, and a type or suffix makes them typed. `~` on an untyped constant is `-x - 1`. |
 
 ### D1 ★ Single-pass emit vs. building an AST
@@ -2671,8 +2671,9 @@ The alternatives considered:
   the width is the point (struct layouts, binary formats) reads better with
   the whole `i8`..`i64`, `u8`..`u64` family.
 
-`len`, `sizeof`, `alignof`, `offsetof` and indexes are `int`. They're
-signed, so `len(xs) - 1` on an empty list is -1, not 2⁶⁴-1.
+`len`, `offsetof` and indexes are `int`. They're signed, so `len(xs) - 1`
+on an empty list is -1, not 2⁶⁴-1. `sizeof` and `alignof` are untyped
+constants (D28), so they can be used as any integer type.
 
 Each type has one name, apart from `int`, which is there because it's the
 default and is easier to type. So there's no `uint` (`u64`), `byte` (`u8`),
@@ -2944,8 +2945,10 @@ storage, which gets its type where it's used. Case already carries meaning
 what keeps casts from spreading. `BUF_SIZE = 4096` can be compared with a
 `u32` length and used as an `i32` bound.
 
-A constant is typed if its initializer is: `XX = 3i16`, `SIZE = sizeof(T)`,
-or `NEG = -1i64`. `i16 XX = 3` is the same as `XX = 3i16`. A typed constant
+A constant is typed if its initializer is: `XX = 3i16` or `NEG = -1i64`.
+`sizeof` and `alignof` of a type whose layout is known are untyped constants
+(changed 2026-11-16, they were `int`), so `sizeof(int) * 100` can be passed
+as C's `u64` size without a cast, and `SIZE = sizeof(T)` is untyped. `i16 XX = 3` is the same as `XX = 3i16`. A typed constant
 doesn't adapt, so `x = MASK` with `MASK = 0x0fu8` makes `x` a `u8`.
 
 Values of named constants are in a side array, indexed from the `Local` or
