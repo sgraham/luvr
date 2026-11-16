@@ -1613,11 +1613,19 @@ static int builtin_type_size(TypeId t) {
 
 // `.field=` designators are only allowed in struct literals
 // (`Stuff(.a=1, true)`) because functions don't have named parameters.
-static void call_args(Parser* p, bool is_struct_literal) {
+// Arguments are checked against callee if it's a function type.
+static void call_args(Parser* p, bool is_struct_literal, TypeId callee) {
   u32 at = p->ls.pos.t.offset;
-  next(p);  // '('
+  bool is_function = type_is_function(p, callee);
+  u32 num_params = is_function ? p->types.v[callee.idx].num_params : 0;
+  u32 num_args = 0;
+  u32 extra_at = 0;  // the first argument past num_params
+  next(p);           // '('
   if (T(p) != TK_RPAREN) {
     for (;;) {
+      if (num_args++ == num_params) {
+        extra_at = p->ls.pos.t.offset;
+      }
       if (T(p) == TK_RPAREN) {
         error_at(p, p->ls.pos.t.offset, "Trailing commas aren't allowed in calls.");
       }
@@ -1636,7 +1644,12 @@ static void call_args(Parser* p, bool is_struct_literal) {
       }
     }
   }
+  u32 close_at = p->ls.pos.t.offset;
   check_match(p, TK_RPAREN, TK_LPAREN, at);
+  if (is_function && num_args != num_params) {
+    error_at(p, num_args > num_params ? extra_at : close_at, "Expected %u argument%s, not %u.",
+             num_params, num_params == 1 ? "" : "s", num_args);
+  }
 }
 
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice)
@@ -1691,7 +1704,7 @@ static void postfix(Parser* p, ExpDesc* e) {
       case TK_LPAREN: {
         bool is_struct_literal = e->shape == SH_TYPE;
         TypeId callee = e->type;
-        call_args(p, is_struct_literal);
+        call_args(p, is_struct_literal, callee);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
         e->type = type_is_function(p, callee) ? p->types.v[callee.idx].ret : ty_unknown;
         e->is_const = false;
