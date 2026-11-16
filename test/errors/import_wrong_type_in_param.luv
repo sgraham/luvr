@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:6:19:def int f(someimp.NotHere x):
-# CERR: {ssss}                  ^ error: Type 'NotHere' not found in imported module 'someimp'.
+# CERR: {ssss}                        ^ error: Type 'NotHere' not found in imported module 'someimp'.
 import "someimp"
 
 def int f(someimp.NotHere x):

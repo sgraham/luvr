@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:6:10:    y = &(x)
-# CERR: {ssss}              ^ error: Can't take the address of non-lvalue.
+# CERR: {ssss}               ^ error: Can't take the address of non-lvalue.
 def int main():
     x = 1
     y = &(x)

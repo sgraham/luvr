@@ -44,16 +44,25 @@ def commands(args, name):
         return ["clang"] + flags + srcs + ["-o", f"out/{name}"], None
 
 
-# The location is either {self}, or {dir}/file for an error in another file
-# in the test's directory, such as a module that it imports.
-def expected_error(path):
+# The expected stderr is the CERR lines, with {self} replaced by the test's
+# path, and {ssss} by spaces of the same length, so that the ^ lines up with
+# the source line above it both in the header and in the output. A test can
+# be renamed without changing its header. Trailing whitespace is ignored,
+# since editors tend to strip it from the headers.
+def expected_result(path):
     text = open(path, encoding="utf-8").read()
-    loc = re.search(r"^# CERR: (\{self\}|\{dir\}/[^:]+):(\d+):(\d+):", text, re.M)
-    msg = re.search(r"^# CERR: \{ssss\} *\^ (error: .*)$", text, re.M)
-    if not loc or not msg:
+    ret = re.search(r"^# CRET: (\d+)$", text, re.M)
+    lines = re.findall(r"^# CERR: (.*)$", text, re.M)
+    if not ret or not lines:
         return None
-    where = path if loc.group(1) == "{self}" else os.path.dirname(path) + loc.group(1)[len("{dir}") :]
-    return f"{where}:{loc.group(2)}:{loc.group(3)}: {msg.group(1)}"
+    lines = [l.replace("{self}", path).replace("{ssss}", " " * len(path)).rstrip() for l in lines]
+    return int(ret.group(1)), "\n".join(lines)
+
+
+# Prefixes the first line with `label`, and the rest with spaces to match.
+def indent(text, label):
+    pad = "\n" + " " * len(label)
+    return label + pad.join(text.split("\n"))
 
 
 def is_imported(path):
@@ -78,16 +87,17 @@ def run_tests():
     errors = sorted(glob.glob("test/errors/*.luv"))
     errors = [p for p in errors if not is_imported(p)]
     for path in errors:
-        want = expected_error(path)
-        if want is None:
-            failures.append(f"{path}: missing CERR header")
+        expected = expected_result(path)
+        if expected is None:
+            failures.append(f"{path}: missing CRET or CERR header")
             continue
+        want_ret, want = expected
         r = subprocess.run([exe, "-q", path], capture_output=True, text=True)
-        got = r.stderr.strip()
-        if r.returncode == 0:
-            failures.append(f"{path}: expected an error, but it parsed\n  want: {want}")
+        got = "\n".join(l.rstrip() for l in r.stderr.strip("\n").split("\n"))
+        if r.returncode != want_ret:
+            failures.append(f"{path}: expected exit status {want_ret}, got {r.returncode}\n{indent(want, '  want: ')}")
         elif got != want:
-            failures.append(f"{path}: wrong error\n  want: {want}\n   got: {got}")
+            failures.append(f"{path}: wrong error\n{indent(want, '  want: ')}\n{indent(got, '   got: ')}")
     # Rewinding the lexer and lexing again must reach the same state. All of the
     # test files lex without error, including those in todo/.
     lexdump = os.path.join("out", "lexdump.exe" if sys.platform == "win32" else "lexdump")

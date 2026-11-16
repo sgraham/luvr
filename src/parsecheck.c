@@ -65,7 +65,16 @@ int main(int argc, char** argv) {
       ctx_error_location(&ctx, &line, &col);
       const char* file = ctx.err_file ? ctx.err_file : argv[i];
       if (line) {
-        fprintf(stderr, "%s:%u:%u: error: %s\n", file, line, col, ctx.err_msg);
+        // The buffer is padded with 0s, so the scan for the end of the line
+        // stops even when the error is on the last line.
+        const u8* bol = ctx.err_buf + ctx.err_offset - (col - 1);
+        const u8* eol = bol;
+        while (*eol != '\n' && *eol != '\r' && *eol != 0) {
+          ++eol;
+        }
+        int prefix = fprintf(stderr, "%s:%u:%u:", file, line, col);
+        fprintf(stderr, "%.*s\n", (int)(eol - bol), (const char*)bol);
+        fprintf(stderr, "%*s^ error: %s\n", prefix + (int)col - 1, "", ctx.err_msg);
       } else {
         fprintf(stderr, "%s: error: %s\n", file, ctx.err_msg);
       }

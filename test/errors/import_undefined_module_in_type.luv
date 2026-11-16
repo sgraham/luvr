@@ -1,5 +1,5 @@
 # CRET: 1
 # CERR: {self}:4:11:def int f(nomod.Thing x):
-# CERR: {ssss}          ^ error: Undefined module 'nomod'.
+# CERR: {ssss}                ^ error: Undefined module 'nomod'.
 def int f(nomod.Thing x):
     return 0
