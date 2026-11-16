@@ -1045,6 +1045,46 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
   }
 }
 
+// Casts of numeric constants give a constant, which has to be in range of
+// the target. Integers can be rounded when cast to a float type, but a float
+// has to be integral to be cast to an integer type. Out of line, since casts
+// of constants are rare.
+static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
+  char buf[CONST_STR_SIZE];
+  if (type_is_float(t)) {
+    double d;
+    if (type_is_integer(e->type)) {
+      // Every ConstInt is in range of f32.
+      d = t.idx == TY_F32 ? (double)(float)e->v.i : (double)e->v.i;
+    } else {
+      float f = (float)e->v.f;
+      if (t.idx == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
+        error_at(p, at, "%s doesn't fit in f32.", const_float_as_str(e->v.f, buf));
+      }
+      d = t.idx == TY_F32 ? (double)f : e->v.f;
+    }
+    e->v.f = d;
+    return;
+  }
+  if (type_is_float(e->type)) {
+    // Doubles outside of ConstInt's range are all integral, so they only need
+    // the range check.
+    double d = e->v.f;
+    bool in_range = d >= -0x1p127 && d < 0x1p127;
+    if (in_range && (double)(ConstInt)d != d) {
+      error_at(p, at, "%s isn't an integer.", const_float_as_str(d, buf));
+    }
+    if (!in_range || !const_fits_in_type((ConstInt)d, t)) {
+      error_at(p, at, "%s doesn't fit in %s.", const_float_as_str(d, buf), describe_type(t));
+    }
+    e->v.i = (ConstInt)d;
+    return;
+  }
+  if (!const_fits_in_type(e->v.i, t)) {
+    error_at(p, at, "%s doesn't fit in %s.", const_int_as_str(e->v.i, buf), describe_type(t));
+  }
+}
+
 // Unary '-' or '~', which give the operand's type. Constants are folded.
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
   TypeId t = e->type;
@@ -1642,8 +1682,13 @@ static void primary(Parser* p, ExpDesc* e) {
         error_at(p, value_at, "Can't cast %s to %s.", describe_type(e->type), describe_type(t));
       }
       e->shape = SH_VALUE;
+      if (e->is_const && (type_is_integer(t) || type_is_float(t)) &&
+          (type_is_integer(e->type) || type_is_float(e->type))) {
+        fold_cast(p, e, t, value_at);
+      } else {
+        e->is_const = false;
+      }
       e->type = t;
-      e->is_const = false;
       break;
     }
     default:

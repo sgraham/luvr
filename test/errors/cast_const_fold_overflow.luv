@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:22:    x = cast u8(200) + 100
+# CERR: {ssss}                           ^ error: 100 added to 200 overflows.
+def int main():
+    x = cast u8(200) + 100
+    return 0

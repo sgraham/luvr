@@ -1,0 +1,13 @@
+# RET: 0
+def int main():
+    u8 a = cast u8(255)
+    i8 b = cast i8(-128)
+    c = cast int(2.0)
+    d = cast u64(1 << 63)
+    f32 e = cast f32(16777217)
+    f64 f = cast f64(1e300)
+    g = cast int(-9223372036854775808.0)
+    h = cast u8(200) + 55
+    i = cast u16(cast u8(255)) + 1
+    j = cast f32(0.1) * 2
+    return 0

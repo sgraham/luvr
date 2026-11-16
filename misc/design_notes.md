@@ -2925,6 +2925,11 @@ meant. On a typed constant, `~` flips the bits of its width.
   operand, is an error. `<<` that loses bits of a typed constant overflows.
 - Negating a typed unsigned constant other than 0 is an error, and so is
   converting a negative constant to an unsigned type.
+- A cast of a constant gives a typed constant, and its value has to be in
+  range of the target, including for typed constants (`cast i8(200u8)`). A
+  float constant cast to an integer type has to be integral, as in Go. An
+  integer constant cast to a float type is rounded, unlike an implicit
+  conversion, which has to be exact.
 
 #### Named constants
 

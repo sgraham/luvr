@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:18:    x = cast int(2.5)
+# CERR: {ssss}                       ^ error: 2.5 isn't an integer.
+def int main():
+    x = cast int(2.5)
+    return 0

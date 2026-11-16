@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:18:    x = cast i32(1e10)
+# CERR: {ssss}                       ^ error: 1e+10 doesn't fit in i32.
+def int main():
+    x = cast i32(1e10)
+    return 0

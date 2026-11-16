@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:18:    x = cast u32(-1)
+# CERR: {ssss}                       ^ error: -1 doesn't fit in u32.
+def int main():
+    x = cast u32(-1)
+    return 0
