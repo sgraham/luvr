@@ -13,7 +13,7 @@ struct Nested{K, V}:
     mod.Map{K, []V} index
     {K}List{V} by_key
 
-List{int} global_list = List{int}(.data=null, .len=0)
+List{int} global_list
 
 on Pair{A, B} def A get_first(self):
     return self.first

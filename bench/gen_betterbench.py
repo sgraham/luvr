@@ -731,7 +731,7 @@ for i in range(nfuncs):
         out.append(f"{cname} = {v}\n\n")
         consts.append((cname, v))
     if i % 25 == 0:
-        t = rnd.choice(("int", "int", "u32", "f64", "bool", "str"))
+        t = rnd.choice(("int", "int", "u32", "f64", "bool"))
         gname = f"{rnd.choice(WORDS)}_{rnd.choice(NOUNS)}_{i}"
         out.append(f"{t} {gname} = {const_leaf(t).text}\n\n")
         globals_.append((gname, t))

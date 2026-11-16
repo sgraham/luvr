@@ -2951,6 +2951,16 @@ doesn't adapt, so `x = MASK` with `MASK = 0x0fu8` makes `x` a `u8`.
 Values of named constants are in a side array, indexed from the `Local` or
 global, so variables don't pay for them.
 
+#### Global variables
+
+Decided 2026-11-16. A global variable's initializer must also be a constant
+expression, as in C, so that no code runs before `main` and globals don't
+need an initialization order. `myvar = somefunc()` at the top level is an
+error. C-style constant literals (strings, and struct, list and dict
+literals of constants) are planned, but are errors for now, so that emission
+and the backends don't have to handle initialized aggregate data yet.
+Evaluating calls at compile time is a much later idea.
+
 #### Steps
 
 Each step is driven by the todo tests named.

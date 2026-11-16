@@ -1884,6 +1884,9 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
       declare_const(p, name, at, toplevel, t, &v, value_at);
       return;
     }
+    if (toplevel && !v.is_const) {
+      error_at(p, value_at, "Expected a constant expression.");
+    }
   } else if (is_const) {
     error_at(p, p->ls.pos.t.offset, "A constant needs a value.");
   }
@@ -1984,6 +1987,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       } else if (declares) {
         TypeId t = default_type_for_variable(v.type);
         check_const_conversion(p, t, &v, value_at);
+        if (toplevel && !v.is_const) {
+          error_at(p, value_at, "Expected a constant expression.");
+        }
         if (toplevel) {
           declare_global(p, name, GK_VAR);
         } else {
