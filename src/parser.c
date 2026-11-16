@@ -1169,8 +1169,11 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       subexpr(p, PRIORITY_NOT, e);
       expect_bool(p, e, at, "'not'");
       e->shape = SH_VALUE;
+      e->is_const = e->is_const && e->type.idx == TY_BOOL;
+      if (e->is_const) {
+        e->v.b = !e->v.b;
+      }
       e->type = ty_bool;
-      e->is_const = false;
       break;
     }
     case TK_MINUS:
@@ -1253,8 +1256,14 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       e->type = ty_bool;
       e->is_const = is_const;
     } else if (is_bool) {
+      // Only 'and' and 'or' of two constants are constant, even when one
+      // operand is enough to decide the value.
+      e->is_const = logical && e->is_const && rhs.is_const && e->type.idx == TY_BOOL &&
+                    rhs.type.idx == TY_BOOL;
+      if (e->is_const) {
+        e->v.b = op == OPR_AND ? e->v.b && rhs.v.b : e->v.b || rhs.v.b;
+      }
       e->type = ty_bool;
-      e->is_const = false;
     } else if (is_arith) {
       TypeId t = type_for_arith(p, op, e->type, rhs.type, at);
       if (e->is_const || rhs.is_const) {
