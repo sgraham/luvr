@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:13:    x = 1i8 << 7
+# CERR: {ssss}                  ^ error: 1 shifted left by 7 overflows.
+def int main():
+    x = 1i8 << 7
+    return 0

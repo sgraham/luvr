@@ -2962,7 +2962,8 @@ Each step is driven by the todo tests named.
    `*_mul_overflow` tests, with their messages reworded where the error is
    now a range error.
 4. `/` and `%`. The `*_div_zero` and `*_mod_zero` tests.
-5. Shifts. The `*_shl_overflow` tests.
+5. Shifts, and `|`, `&` and `^`, which can't overflow. The
+   `*_shl_overflow` tests.
 6. Casts of constants, which are range checked (D27), and comparisons,
    `not`, `and` and `or` on constants.
 7. Named constants: a constant expression required for an ALL_CAPS

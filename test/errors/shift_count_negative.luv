@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:11:    x = n << -1
+# CERR: {ssss}                ^ error: Shift count -1 is negative.
+def int f(int n):
+    x = n << -1
+    return 0

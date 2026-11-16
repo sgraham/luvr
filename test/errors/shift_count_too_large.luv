@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:11:    x = a >> 8
+# CERR: {ssss}                ^ error: Shift count 8 is too large for u8.
+def int f(u8 a):
+    x = a >> 8
+    return 0

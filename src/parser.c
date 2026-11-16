@@ -866,13 +866,15 @@ static void expect_bool(Parser* p, const ExpDesc* e, u32 at, const char* what) {
 
 // Messages for constant overflow, taking the operands in order, except for
 // addition and subtraction, which read better with them swapped. Only
-// division can overflow out of / and %, for MIN / -1.
+// division can overflow out of / and %, for MIN / -1, and only << out of the
+// bitwise operators.
 // clang-format off
 static const char* const overflow_error[] = {
     [OPR_ADD] = "%s added to %s overflows.",
     [OPR_SUB] = "%s subtracted from %s overflows.",
     [OPR_MUL] = "%s multiplied by %s overflows.",
     [OPR_DIV] = "%s divided by %s overflows.",
+    [OPR_SHL] = "%s shifted left by %s overflows.",
 };
 // clang-format on
 
@@ -891,9 +893,26 @@ static void check_divisor(Parser* p, BinOpr op, const ExpDesc* rhs, u32 at) {
   }
 }
 
-// Folds constants `e op rhs` into e for +, -, *, / and %, giving a value of
-// type t. Typed results overflow at their own width, and untyped ones past
-// ConstInt or double. The divisor has already been checked for zero.
+// A constant shift count can't be negative, or at least the width of a typed
+// value being shifted. `t` is the type of the value being shifted.
+static void check_shift_count(Parser* p, BinOpr op, TypeId t, const ExpDesc* rhs, u32 at) {
+  if ((op != OPR_SHL && op != OPR_SHR) || !rhs->is_const || !type_is_integer(rhs->type)) {
+    return;
+  }
+  char buf[CONST_STR_SIZE];
+  if (rhs->v.i < 0) {
+    error_at(p, at, "Shift count %s is negative.", const_int_as_str(rhs->v.i, buf));
+  }
+  if (type_is_integer(t) && !type_is_untyped(t) && rhs->v.i >= type_int_bits(t)) {
+    error_at(p, at, "Shift count %s is too large for %s.", const_int_as_str(rhs->v.i, buf),
+             describe_type(t));
+  }
+}
+
+// Folds constants `e op rhs` into e for an arithmetic or bitwise op, giving a
+// value of type t. Typed results overflow at their own width, and untyped ones
+// past the range of ConstInt or double. Divisors and shift counts have already
+// been checked.
 static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc* rhs, u32 at) {
   bool overflow = false;
   double fr = 0;
@@ -946,6 +965,34 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
         break;
       case OPR_MOD:
         ir = b == -1 ? 0 : a % b;
+        break;
+      case OPR_BOR:
+        ir = a | b;
+        break;
+      case OPR_BXOR:
+        ir = a ^ b;
+        break;
+      case OPR_BAND:
+        ir = a & b;
+        break;
+      // An untyped count can be as large as ConstInt's limit. Shifting in
+      // ConstUInt is required to keep overflow defined. Overflow is tested by
+      // checking for any 1s that are lost by shifting left and then right.
+      case OPR_SHL:
+        if (b >= 128) {
+          overflow = a != 0;
+        } else {
+          ir = (ConstInt)((ConstUInt)a << b);
+          overflow = ir >> b != a;
+        }
+        break;
+      // Negative values shift in sign bits, so they stay negative.
+      case OPR_SHR:
+        if (b >= 128) {
+          ir = a < 0 ? -1 : 0;
+        } else {
+          ir = a >> b;
+        }
         break;
       default:
         ASSERT(false && "not a folded integer operator");
@@ -1096,8 +1143,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
         check_const_conversion(p, t, &rhs, rhs_at);
       }
       check_divisor(p, op, &rhs, at);
-      e->is_const = e->is_const && rhs.is_const && op >= OPR_ADD && op <= OPR_MOD &&
-                    t.idx != TY_UNKNOWN && t.idx != TY_STR;
+      check_shift_count(p, op, t, &rhs, at);
+      e->is_const = e->is_const && rhs.is_const && t.idx != TY_UNKNOWN && t.idx != TY_STR;
       if (e->is_const) {
         fold_arith(p, op, t, e, &rhs, at);
       }
@@ -1686,6 +1733,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           check_const_conversion(p, e.type, &v, value_at);
         }
         check_divisor(p, op, &v, op_at);
+        check_shift_count(p, op, e.type, &v, op_at);
       }
       // After the expression, so that it can't see the new local.
       if (declares && toplevel) {

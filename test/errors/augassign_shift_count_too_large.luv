@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:7:    x <<= 64
+# CERR: {ssss}           ^ error: Shift count 64 is too large for int.
+def int main():
+    x = 1
+    x <<= 64
+    return 0

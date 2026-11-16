@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:11:    x = 1 << 1000
+# CERR: {ssss}                ^ error: 1 shifted left by 1000 overflows.
+def int main():
+    x = 1 << 1000
+    return 0
