@@ -1,0 +1,13 @@
+# CRET: 1
+# CERR: {self}:9:8:BLAH = sizeof(u64) + func()
+# CERR: {ssss}            ^ error: Expected a constant expression.
+# Maybe someday some constrained version of this could be allowed
+
+def int func():
+    return 43
+
+BLAH = sizeof(u64) + func()
+
+def int main():
+    return 0
+

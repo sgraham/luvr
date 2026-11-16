@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:5:9:    for MAX in range(3):
+# CERR: {ssss}             ^ error: A constant can't be a loop variable.
+def int main():
+    for MAX in range(3):
+        pass
+    return 0

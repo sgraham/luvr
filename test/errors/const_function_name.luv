@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:4:9:def int MAX():
+# CERR: {ssss}             ^ error: A constant can't be a function name.
+def int MAX():
+    return 0

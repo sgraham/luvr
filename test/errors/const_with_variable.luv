@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:8:17:    with g() as RES:
+# CERR: {ssss}                      ^ error: A constant can't be a 'with' variable.
+def int g():
+    return 0
+
+def int main():
+    with g() as RES:
+        pass
+    return 0

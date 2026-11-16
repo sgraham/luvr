@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:14:    i32 LIMIT
+# CERR: {ssss}                   ^ error: A constant needs a value.
+def int main():
+    i32 LIMIT
+    return 0

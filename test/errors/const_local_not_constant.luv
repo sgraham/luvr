@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:13:    LIMIT = n * 2
+# CERR: {ssss}                  ^ error: Expected a constant expression.
+def int f(int n):
+    LIMIT = n * 2
+    return 0

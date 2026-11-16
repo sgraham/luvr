@@ -1,7 +1,9 @@
 #include "luvr.h"
 
+typedef union ConstValue ConstValue;
 typedef struct ExpDesc ExpDesc;
 typedef struct Local Local;
+typedef struct NamedConst NamedConst;
 typedef struct Parser Parser;
 typedef struct Targets Targets;
 typedef struct TypeId TypeId;
@@ -62,6 +64,29 @@ typedef enum LocalKind {
   LK_GLOBAL,
 } LocalKind;
 
+// Untyped integer constants need more than 64 bits so that every value of
+// every integer type fits, as well as intermediates like (1 << 64) - 1.
+#if defined(__SIZEOF_INT128__)
+typedef __int128 ConstInt;
+typedef unsigned __int128 ConstUInt;
+#else
+#  error "ConstInt needs an implementation without __int128"
+#endif
+
+// The value of a constant, which is chosen by its type.
+union ConstValue {
+  ConstInt i;
+  double f;
+  bool b;
+};
+
+// A named constant's value, which is kept apart from Local and Module.globals
+// to reduce unnecessarily large searches.
+struct NamedConst {
+  TypeId type;
+  ConstValue v;
+};
+
 // A parameter or local variable of the function being parsed, or of one that
 // encloses it.
 struct Local {
@@ -79,7 +104,13 @@ typedef enum GlobalKind {
   GK_FUNC,
   GK_TYPE,
   GK_MODULE,
+  GK_CONST,
 } GlobalKind;
+
+// GlobalInfo is a GlobalKind in the low bits, and for GK_CONST, the index of
+// the value in Parser.global_consts in the higher bits.
+#define GLOBAL_KIND_BITS 3
+#define GLOBAL_KIND_MASK ((1u << GLOBAL_KIND_BITS) - 1)
 
 // Minimum size of Module.globals. It must be a power of 2.
 #define MIN_GLOBALS 64
@@ -88,6 +119,8 @@ struct Parser {
   LexState ls;
   Module* mod;
   Local locals[MAX_LOCALS];
+  NamedConst local_consts[MAX_LOCALS];  // for LK_CONST locals, by index in locals
+  VEC(NamedConst) global_consts;
   u32 num_locals;
   u32 func_base;   // first of the current function's entries in locals
   u32 func_depth;  // 0 at top level
@@ -109,26 +142,12 @@ typedef enum Shape {
   SH_STRUCT_LITERAL,  // Stuff(...): '&' allocates it in the current arena
 } Shape;
 
-// Untyped integer constants need more than 64 bits so that every value of
-// every integer type fits, as well as intermediates like (1 << 64) - 1.
-#if defined(__SIZEOF_INT128__)
-typedef __int128 ConstInt;
-typedef unsigned __int128 ConstUInt;
-#else
-#  error "ConstInt needs an implementation without __int128"
-#endif
-
 // What is known about an expression that has been parsed but not yet emitted.
 struct ExpDesc {
   Shape shape;
   TypeId type;
-  // When set, the expression's value is in v, which is chosen by type.
-  bool is_const;
-  union {
-    ConstInt i;
-    double f;
-    bool b;
-  } v;
+  bool is_const;  // When set, the expression's value is in v.
+  ConstValue v;
 };
 
 static void expr(Parser* p);
@@ -277,16 +296,28 @@ static NameId expect_name(Parser* p, const char* what, u32* at) {
 // Global table
 
 static GlobalKind module_global_kind(const Module* m, NameId name) {
-  const u32* kind = namemap_find(&m->globals, name);
-  return kind ? (GlobalKind)*kind : GK_NONE;
+  const GlobalInfo* info = namemap_find(&m->globals, name);
+  return info ? (GlobalKind)(*info & GLOBAL_KIND_MASK) : GK_NONE;
 }
 
 static GlobalKind global_kind(Parser* p, NameId name) {
   return module_global_kind(p->mod, name);
 }
 
-static void declare_global(Parser* p, NameId name, GlobalKind kind) {
-  namemap_set(p->ls.ctx, &p->mod->globals, name, kind);
+static void declare_global(Parser* p, NameId name, GlobalInfo info) {
+  namemap_set(p->ls.ctx, &p->mod->globals, name, info);
+}
+
+// Out of line, since uses of constants are rare compared to variables.
+static NOINLINE void load_named_const(ExpDesc* e, const NamedConst* c) {
+  e->type = c->type;
+  e->is_const = true;
+  e->v = c->v;
+}
+
+static const NamedConst* global_const(Parser* p, NameId name) {
+  GlobalInfo info = *namemap_find(&p->mod->globals, name);
+  return &p->global_consts.v[info >> GLOBAL_KIND_BITS];
 }
 
 // Locals
@@ -329,7 +360,7 @@ static void declare_if_new(Parser* p, NameId name, u32 at, TypeId t) {
     return;
   }
   if (!own_local(p, name)) {
-    Local* l = declare_local(p, name, at, name_of(p, name)->is_const ? LK_CONST : LK_VAR);
+    Local* l = declare_local(p, name, at, LK_VAR);
     l->type = t;
   }
 }
@@ -447,7 +478,7 @@ static void check_module_member(Parser* p, const Module* m, NameId mod) {
     error_at(p, p->ls.pos.t.offset, "Type '%.*s' not found in imported module '%.*s'.", (int)n->len,
              (const char*)n->str, (int)mn->len, (const char*)mn->str);
   }
-  if (T(p) == TK_NAME && kind != GK_VAR && kind != GK_FUNC) {
+  if (T(p) == TK_NAME && kind != GK_VAR && kind != GK_FUNC && kind != GK_CONST) {
     error_at(p, p->ls.pos.t.offset, "Variable '%.*s' not found in imported module '%.*s'.",
              (int)n->len, (const char*)n->str, (int)mn->len, (const char*)mn->str);
   }
@@ -1359,6 +1390,9 @@ static void for_targets(Parser* p, Targets* t) {
     }
     t->name[t->n] = p->ls.pos.t.v.name;
     t->at[t->n] = p->ls.pos.t.offset;
+    if (name_of(p, t->name[t->n])->is_const) {
+      error_at(p, t->at[t->n], "A constant can't be a loop variable.");
+    }
     ++t->n;
     next(p);
     if (!optional(p, TK_COMMA)) {
@@ -1403,8 +1437,7 @@ static void comprehension(Parser* p, const LexPos* elem, u32 at) {
       expr(p);
       // Loop variables are always new, so they shadow any outer name.
       for (u32 i = 0; i < t.n; ++i) {
-        LocalKind kind = name_of(p, t.name[i])->is_const ? LK_CONST : LK_VAR;
-        declare_local(p, t.name[i], t.at[i], kind);
+        declare_local(p, t.name[i], t.at[i], LK_VAR);
       }
     } else {
       next(p);
@@ -1478,20 +1511,41 @@ static void dict_literal(Parser* p) {
 // sizeof([2]int) is a type, and an expression needs extra parentheses, as in
 // sizeof(([1, 2])). A name or TypeName is parsed as a postfix chain, which is
 // a type if it's TypeName or module.TypeName, and is otherwise continued as an
-// expression.
-static void sizeof_operand(Parser* p) {
+// expression. Returns the type, or the expression's type.
+static TypeId sizeof_operand(Parser* p) {
   TokenKind k = T(p);
   if (is_builtin_type(k) || k == TK_STAR || k == TK_LSQUARE || k == TK_LBRACE || k == TK_TYPEOF) {
-    type(p);
-  } else if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
+    return type(p);
+  }
+  ExpDesc e;
+  if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
     u32 start = p->ls.pos.t.offset;
-    ExpDesc e;
     primary(p, &e);
-    if (e.shape != SH_TYPE) {
-      binop_rest(p, -1, &e, start);
+    if (e.shape == SH_TYPE) {
+      return ty_unknown;
     }
+    binop_rest(p, -1, &e, start);
   } else {
-    expr(p);
+    subexpr(p, -1, &e);
+  }
+  return e.type;
+}
+
+// The size of a bool or numeric type, which is also its alignment, or 0 for
+// types whose layout isn't known yet.
+static int builtin_type_size(TypeId t) {
+  if (type_is_integer(t) && !type_is_untyped(t)) {
+    return type_int_bits(t) / 8;
+  }
+  switch ((FixedType)t.idx) {
+    case TY_BOOL:
+      return 1;
+    case TY_F32:
+      return 4;
+    case TY_F64:
+      return 8;
+    default:
+      return 0;
   }
 }
 
@@ -1682,7 +1736,13 @@ static void primary(Parser* p, ExpDesc* e) {
         error_at(p, at, "Undefined reference to '%.*s'.", (int)n->len, (const char*)n->str);
       }
       if (n->binding) {
-        e->type = ((const Local*)n->binding)->type;
+        const Local* l = (const Local*)n->binding;
+        e->type = l->type;
+        if (l->kind == LK_CONST) {
+          load_named_const(e, &p->local_consts[l - p->locals]);
+        }
+      } else if (kind == GK_CONST) {
+        load_named_const(e, global_const(p, name));
       }
       e->shape = SH_NAME;
       break;
@@ -1714,9 +1774,11 @@ static void primary(Parser* p, ExpDesc* e) {
       next(p);
       at = p->ls.pos.t.offset;
       check(p, TK_LPAREN);
-      sizeof_operand(p);
+      int size = builtin_type_size(sizeof_operand(p));
       check_match(p, TK_RPAREN, TK_LPAREN, at);
       e->type = ty_i64;
+      e->is_const = size != 0;
+      e->v.i = size;
       break;
     case TK_OFFSETOF:
       next(p);
@@ -1757,6 +1819,35 @@ static void primary(Parser* p, ExpDesc* e) {
 
 // Statements
 
+// Declares an ALL_CAPS name, whose initializer v has to be a constant, with
+// type t. An untyped initializer keeps its untypedness.
+static void declare_const(Parser* p,
+                          NameId name,
+                          u32 at,
+                          bool toplevel,
+                          TypeId t,
+                          const ExpDesc* v,
+                          u32 value_at) {
+  if (!v->is_const) {
+    error_at(p, value_at, "Expected a constant expression.");
+  }
+  NamedConst c = {t, v->v};
+  if (type_is_float(t) && type_is_integer(v->type)) {
+    c.v.f = (double)v->v.i;
+  } else if (t.idx == TY_F32) {
+    c.v.f = (float)v->v.f;
+  }
+  if (toplevel) {
+    u32 idx = p->global_consts.num;
+    *vec_push(p->ls.ctx, &p->global_consts) = c;
+    declare_global(p, name, GK_CONST | idx << GLOBAL_KIND_BITS);
+  } else {
+    Local* l = declare_local(p, name, at, LK_CONST);
+    l->type = t;
+    p->local_consts[l - p->locals] = c;
+  }
+}
+
 // The rest of a declaration once its type is parsed: name ['=' expr].
 static void decl_rest(Parser* p, bool toplevel, TypeId t) {
   u32 at;
@@ -1767,11 +1858,18 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
     const Name* n = name_of(p, name);
     error_at(p, at, "'%.*s' is already declared.", (int)n->len, (const char*)n->str);
   }
+  bool is_const = name_of(p, name)->is_const;
   if (optional(p, TK_EQ)) {
     u32 value_at = p->ls.pos.t.offset;
     ExpDesc v;
     subexpr(p, -1, &v);
     check_assign(p, t, &v, value_at);
+    if (is_const) {
+      declare_const(p, name, at, toplevel, t, &v, value_at);
+      return;
+    }
+  } else if (is_const) {
+    error_at(p, p->ls.pos.t.offset, "A constant needs a value.");
   }
   if (toplevel) {
     declare_global(p, name, GK_VAR);
@@ -1864,13 +1962,12 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         }
       }
       // After the expression, so that it can't see the new local.
-      if (declares) {
-        // A constant keeps the type of its initializer, so it can still be
-        // untyped, but a variable needs a type.
+      if (declares && name_of(p, name)->is_const) {
+        // A constant keeps the type of its initializer, which can be untyped.
+        declare_const(p, name, at, toplevel, v.type, &v, value_at);
+      } else if (declares) {
         TypeId t = default_type_for_variable(v.type);
-        if (!name_of(p, name)->is_const) {
-          check_const_conversion(p, t, &v, value_at);
-        }
+        check_const_conversion(p, t, &v, value_at);
         if (toplevel) {
           declare_global(p, name, GK_VAR);
         } else {
@@ -2037,6 +2134,9 @@ static u32 funcsig(Parser* p, bool is_method) {
     }
     name = expect_name(p, "function name", &at);
   }
+  if (name_of(p, name)->is_const) {
+    error_at(p, at, "A constant can't be a function name.");
+  }
   if (!is_method) {
     if (p->func_depth == 0) {
       declare_definition(p, name, at, GK_FUNC);
@@ -2140,6 +2240,9 @@ static void stat(Parser* p) {
       if (optional(p, TK_AS)) {
         u32 at;
         NameId name = expect_name(p, "variable name", &at);
+        if (name_of(p, name)->is_const) {
+          error_at(p, at, "A constant can't be a 'with' variable.");
+        }
         declare_if_new(p, name, at, ty_unknown);
       }
       check(p, TK_COLON);
@@ -2471,6 +2574,7 @@ static void parse_module(Parser* p) {
 // Undoes the file's bindings and frees the Parser.
 static void parse_end(Parser* p) {
   pop_locals(p, 0);
+  free(p->global_consts.v);
   free(p);
 }
 
@@ -2482,6 +2586,8 @@ void parse_file(Ctx* ctx, const char* path) {
     ctx_error(ctx, path, NULL, 0, "Out of memory.");
   }
   p->num_locals = 0;
+  p->global_consts.v = NULL;
+  p->global_consts.num = p->global_consts.cap = 0;
   p->func_base = 0;
   p->func_depth = 0;
   p->ret_type = ty_unknown;

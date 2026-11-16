@@ -273,7 +273,9 @@ def leaf(t, sc, depth):
         name, v = rnd.choice(consts)
         return E(name, "untyped_int", 12, v)
     if kind == "sizeof":
-        return E(f"sizeof({rnd.choice(NUMERIC)})", t)
+        st = rnd.choice(NUMERIC)
+        size = INT_BITS[st] // 8 if st in INT_BITS else {"f32": 4, "f64": 8}[st]
+        return E(f"sizeof({st})", t, 12, size)
     if kind == "cast":
         return E(f"cast {t}({rnd.choice(others)})", t)
     return const_leaf(t)

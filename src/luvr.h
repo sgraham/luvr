@@ -526,6 +526,10 @@ struct FileBuf {
   const u8* end;  // buf + len
 };
 
+// The value for a name in Module.globals. The parser packs the kind of global
+// into it, and for constants, where the value is.
+typedef u32 GlobalInfo;
+
 // A source file, and what's kept from parsing it for the rest of the
 // compilation. Modules are owned by the Ctx.
 struct Module {
@@ -537,7 +541,7 @@ struct Module {
   // Until it's been parsed. Importing a module that's still loading is an
   // import cycle.
   bool loading;
-  NameMap globals;  // NameId -> GlobalKind
+  NameMap globals;  // NameId -> GlobalInfo
   // The name that each import is bound to -> index in Ctx.modules.
   NameMap imports;
 };
