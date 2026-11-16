@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:13:    i32 y = cast u64(x)
+# CERR: {ssss}                  ^ error: Can't assign u64 to i32.
+def int main():
+    x = 3
+    i32 y = cast u64(x)
+    return 0

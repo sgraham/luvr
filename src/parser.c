@@ -1259,14 +1259,16 @@ static void primary(Parser* p, ExpDesc* e) {
       check_match(p, TK_RPAREN, TK_LPAREN, at);
       e->type = ty_i64;
       break;
-    case TK_CAST:  // cast T(expr)
+    case TK_CAST: {  // cast T(expr)
       next(p);
-      type(p);
+      TypeId t = type(p);
       at = p->ls.pos.t.offset;
       check(p, TK_LPAREN);
       expr(p);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
+      e->type = t;
       break;
+    }
     default:
       error_expected(p, "expression");
   }
