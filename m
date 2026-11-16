@@ -37,7 +37,10 @@ def commands(args, name):
         if args.debug:
             flags += ["-O0", "-DBUILD_DEBUG=1", "-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
         else:
-            flags += ["-O2", "-DBUILD_DEBUG=0"]
+            # Without the alignment, a size change in one file moves the
+            # functions after it, and lex_next's speed varies by ~4% depending
+            # on where it lands relative to 64 byte boundaries.
+            flags += ["-O2", "-DBUILD_DEBUG=0", "-falign-functions=64"]
         return ["clang"] + flags + srcs + ["-o", f"out/{name}"], None
 
 
