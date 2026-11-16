@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:18:    x = cast i32(true)
+# CERR: {ssss}                       ^ error: Can't cast bool to i32.
+def int main():
+    x = cast i32(true)
+    return 0

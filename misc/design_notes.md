@@ -108,7 +108,7 @@ grammar is LL(1). The rest are local.
 | D24 | **decided** 2026-11-13, **implemented** 2026-11-14 | Modules and imports. A module's canonical name is its path relative to the root, normalized lexically, and keys a dict of `Module`s on Ctx, so each file is loaded and parsed once however it's imported. Files are loaded through a callback on Ctx. A `Module` (name, buffer, table of globals) lasts as long as the Ctx, and a `Parser` is per-parse state that points at one. Globals move from `Name.global` to the module's table, with a `Name.binding` cache only if the table probe costs too much. Resolves D21's cross-module instantiation question: the one active Parser is re-pointed at the defining module. |
 | D25 | **open** 2026-11-14, direction agreed | Backend and execution model. Survey of existing small backends and execution models. Direction: run in process first, on x64 Windows, x64 Linux and aarch64 macOS. One backend of our own: a linear SSA IL per function built in the single pass, ABI lowering with structs by value as QBE does it, and a backward pass that allocates registers, selects and encodes, into sections with relocations. A JIT is the first consumer, and C objects are linked into a host program by the user. The optimized tier is more passes on the same IL. No interpreter, no `.s`, no third-party backend. sqbe is the fallback and the comparison. Debug info, executable writers and a C emitter are deferred. |
 | D26 | **provisional** 2026-11-14 | The IL. Per-function flat array of 8-byte instructions (opcode, type, two 24-bit references, constants below a bias), value types `i32`/`i64`/`f32`/`f64`, aggregates as memory. Two stages: the parser appends raw instructions with every local as a frame slot, then one forward pass at the end of the function promotes slots whose address wasn't taken to SSA and does folding and CSE. Blocks in source order with structured control flow. C calling convention for luv functions, QBE-style aggregate arguments, and the luv context pointer in a pinned callee-saved register. |
-| D27 | **decided** 2026-11-15 | Numeric types and conversions, as in Go. `int` is an alias of `i64`, and error messages say `int`. `len`, `sizeof` and indexes are `int`. No other aliases: no `uint`, `byte`, `float` or `double`, and no `f16` for now. `int` is an error in `foreign` signatures, since C's `int` is 32 bits. There are no foreign-only types, and `foreign` signatures match C by ABI, not by C type. No `void` in luv code. `codept` is left for D23. Untyped constants adapt to context, defaulting to `int` and `f64`, with range checks. No implicit conversions between numeric types (widths, signedness, `f32`/`f64`, int/float). Any integer type is accepted as an index or shift count. Lossless widening was rejected because it hides where arithmetic wraps, and is revisited only if the casts prove too painful. |
+| D27 | **decided** 2026-11-15 | Numeric types and conversions, as in Go. `int` is an alias of `i64`, and error messages say `int`. `len`, `sizeof` and indexes are `int`. No other aliases: no `uint`, `byte`, `float` or `double`, and no `f16` for now. `int` is an error in `foreign` signatures, since C's `int` is 32 bits. There are no foreign-only types, and `foreign` signatures match C by ABI, not by C type. No `void` in luv code. `codept` is left for D23. Untyped constants adapt to context, defaulting to `int` and `f64`, with range checks. No implicit conversions between numeric types (widths, signedness, `f32`/`f64`, int/float). Any integer type is accepted as an index or shift count. Lossless widening was rejected because it hides where arithmetic wraps, and is revisited only if the casts prove too painful. `cast` converts between any numeric types, between pointers, and between pointers and 64-bit integers. Float to integer out of range is unspecified, and constants must be in range for the target. |
 
 ### D1 ★ Single-pass emit vs. building an AST
 
@@ -2799,6 +2799,40 @@ The IL already has the operations for `cast`: `SEXT32`, `ZEXT32` and
 `TRUNC` between integer widths, `ITOF`, `UTOF`, `FTOI` and `FTOU`, and
 `FEXT` and `FTRUNC` between float widths.
 
+#### Casts
+
+`cast T(x)` converts between these:
+
+| From | To | Result |
+|---|---|---|
+| `T` | `T` | No-op, so generic code doesn't need a special case. |
+| Any integer type | Any integer type | Truncated, or extended by the signedness of the source. |
+| Integer or float | Integer or float | `ITOF`, `UTOF`, `FTOI`, `FTOU`, `FEXT`, `FTRUNC`. |
+| Untyped constant | Any numeric type | The constant, which must be in range for `T`. |
+| `*T` | `*U` | Same address. |
+| `*T` | `i64` or `u64` | The address, and the reverse. |
+
+Everything else is an error, including:
+
+- Pointers to or from integers narrower than 64 bits, which would silently
+  truncate an address. A cast through `u64` is explicit about it.
+- `bool` to or from numbers. Comparisons give a `bool`, and `x != 0` goes
+  the other way.
+- Structs, arrays, lists and dicts, since reinterpreting a layout isn't
+  what `cast` is for.
+- `str` to or from anything, for now. `*u8` from a `str` for foreign calls
+  depends on how strings are represented (D23).
+
+A float that's out of range for the integer type, or NaN, gives an
+unspecified value, but isn't undefined behaviour. Saturating, as in Rust,
+gives the same result on every target, but costs extra instructions on
+x86 for conversions that are wrong either way.
+
+A constant out of range for `T` is an error, as in Go, so `cast u8(300)`
+and `cast u64(-1)` are both rejected. Untyped constants are conceptually
+arbitrarily large, so wrapping one to fit is a category error rather than
+a conversion. `~cast u64(0)` or a hex literal gives all ones.
+
 #### Steps
 
 1. `int` as an alias of `i64`, untyped integer constants defaulting to
@@ -2826,9 +2860,9 @@ Steps 1, 2, 3 and 5 are done, and step 4 only for `sizeof`, `alignof` and
   give `ty_unknown`, as do literals with those suffixes.
 - Parameter types. `funcsig()` doesn't record the type of a parameter, so
   checks inside a function don't see them.
-- Parenthesized expressions are `ty_unknown`, so `int r = (a * b)` with
-  `i32` operands isn't an error.
-- `cast T(...)` doesn't give its result type `T`.
+- Casts are only checked between the types the checker has. Pointers are
+  still `ty_unknown`, so their rows in the cast table aren't enforced, and
+  constant range checks wait for constant folding.
 
 ---
 

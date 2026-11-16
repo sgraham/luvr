@@ -683,6 +683,15 @@ static bool assignable(TypeId from, TypeId to) {
          (from.idx == TY_UNTYPED_FLOAT && is_float(to));
 }
 
+// Whether `cast to(...)` accepts a value of type `from`. Pointers aren't
+// checker types yet, so they pass as unknown.
+static bool castable(TypeId from, TypeId to) {
+  bool from_num = is_integer(from) || is_float(from);
+  bool to_num = is_integer(to) || is_float(to);
+  return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
+         (from_num && to_num);
+}
+
 // Checks that a value can be assigned to something of type `to`.
 static void check_assign(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
   if (!assignable(e->type, to)) {
@@ -1264,8 +1273,13 @@ static void primary(Parser* p, ExpDesc* e) {
       TypeId t = type(p);
       at = p->ls.pos.t.offset;
       check(p, TK_LPAREN);
-      expr(p);
+      u32 value_at = p->ls.pos.t.offset;
+      subexpr(p, -1, e);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
+      if (!castable(e->type, t)) {
+        error_at(p, value_at, "Can't cast %s to %s.", describe_type(e->type), describe_type(t));
+      }
+      e->shape = SH_VALUE;
       e->type = t;
       break;
     }
