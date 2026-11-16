@@ -748,6 +748,10 @@ static TypeId default_type_for_variable(TypeId t) {
   }
 }
 
+static bool type_is_function(Parser* p, TypeId t) {
+  return t.idx >= TY_NUM_FIXED && p->types.v[t.idx].kind == TYPE_FUNC;
+}
+
 static bool type_is_untyped(TypeId t) {
   return t.idx == TY_UNTYPED_INT || t.idx == TY_UNTYPED_FLOAT;
 }
@@ -818,7 +822,8 @@ static const char* const_value_as_str(const ExpDesc* e, char* buf) {
 // expected. An integer constant can become a float, but not the reverse, even
 // when the float constant is integral.
 static bool assignable(TypeId from, TypeId to) {
-  return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
+  return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN ||
+         (to.idx == from.idx && from.idx != TY_VOID) ||
          (from.idx == TY_UNTYPED_INT && (type_is_integer(to) || type_is_float(to))) ||
          (from.idx == TY_UNTYPED_FLOAT && type_is_float(to));
 }
@@ -889,6 +894,22 @@ static void array_size(Parser* p) {
     error_at(p, at, "Array size can't be negative.");
   }
   check_const_fits(p, &e, ty_i64, at);
+}
+
+// There's no syntax for function types, so functions can't be values. Out of
+// line, since it's only for names whose type isn't builtin.
+static NOINLINE void check_function_called(Parser* p, const ExpDesc* e, u32 at) {
+  if (T(p) != TK_LPAREN && type_is_function(p, e->type)) {
+    error_at(p, at, "A function can only be called.");
+  }
+}
+
+// Most uses of a void result are caught as type mismatches. This is for the
+// uses that accept any type.
+static void check_not_void(Parser* p, const ExpDesc* e, u32 at) {
+  if (e->type.idx == TY_VOID) {
+    error_at(p, at, "Can't use the result of a function with no return type.");
+  }
 }
 
 // Checks that a value can be assigned to something of type `to`.
@@ -1669,9 +1690,10 @@ static void postfix(Parser* p, ExpDesc* e) {
         break;
       case TK_LPAREN: {
         bool is_struct_literal = e->shape == SH_TYPE;
+        TypeId callee = e->type;
         call_args(p, is_struct_literal);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
-        e->type = ty_unknown;
+        e->type = type_is_function(p, callee) ? p->types.v[callee.idx].ret : ty_unknown;
         e->is_const = false;
         break;
       }
@@ -1787,6 +1809,9 @@ static void primary(Parser* p, ExpDesc* e) {
         load_named_const(e, &p->global_consts.v[info >> GLOBAL_KIND_BITS]);
       } else if (kind == GK_FUNC) {
         e->type.idx = info >> GLOBAL_KIND_BITS;
+      }
+      if (e->type.idx >= TY_NUM_FIXED) {
+        check_function_called(p, e, at);
       }
       e->shape = SH_NAME;
       break;
@@ -2013,6 +2038,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         // A constant keeps the type of its initializer, which can be untyped.
         declare_const(p, name, at, toplevel, v.type, &v, value_at);
       } else if (declares) {
+        check_not_void(p, &v, value_at);
         TypeId t = default_type_for_variable(v.type);
         check_const_conversion(p, t, &v, value_at);
         if (toplevel && !v.is_const) {
@@ -2079,10 +2105,14 @@ static void simple_stat(Parser* p) {
     case TK_PASS:
       next(p);
       return;
-    case TK_PRINT:
+    case TK_PRINT: {
       next(p);
-      expr(p);
+      u32 at = p->ls.pos.t.offset;
+      ExpDesc e;
+      subexpr(p, -1, &e);
+      check_not_void(p, &e, at);
       return;
+    }
     case TK_CHECK: {
       next(p);
       u32 at = p->ls.pos.t.offset;
