@@ -1,8 +1,8 @@
 # CRET: 1
-# CERR: {self}:5:12:    return 32768i32
-# CERR: {ssss}                 ^ error: Overflow converting constant to i16.
+# CERR: {self}:5:12:    return 32768
+# CERR: {ssss}                 ^ error: 32768 doesn't fit in i16.
 def i16 func16():
-    return 32768i32
+    return 32768
 
 def i16 main():
     return func16()

@@ -36,12 +36,17 @@ typedef enum FixedType {
   TY_BOOL,
   TY_STR,
   // Integer types are contiguous, from TY_FIRST_INT to TY_LAST_INT.
+  TY_I8,
+  TY_I16,
   TY_I32,
   TY_I64,
+  TY_U8,
+  TY_U16,
+  TY_U32,
   TY_U64,
   TY_F32,
   TY_F64,
-  TY_FIRST_INT = TY_I32,
+  TY_FIRST_INT = TY_I8,
   TY_LAST_INT = TY_U64,
 } FixedType;
 
@@ -51,8 +56,13 @@ static const TypeId ty_untyped_float = {TY_UNTYPED_FLOAT};
 static const TypeId ty_void = {TY_VOID};
 static const TypeId ty_bool = {TY_BOOL};
 static const TypeId ty_str = {TY_STR};
+static const TypeId ty_i8 = {TY_I8};
+static const TypeId ty_i16 = {TY_I16};
 static const TypeId ty_i32 = {TY_I32};
 static const TypeId ty_i64 = {TY_I64};
+static const TypeId ty_u8 = {TY_U8};
+static const TypeId ty_u16 = {TY_U16};
+static const TypeId ty_u32 = {TY_U32};
 static const TypeId ty_u64 = {TY_U64};
 static const TypeId ty_f32 = {TY_F32};
 static const TypeId ty_f64 = {TY_F64};
@@ -157,10 +167,20 @@ static const char* describe_type(TypeId t) {
       return "bool";
     case TY_STR:
       return "str";
+    case TY_I8:
+      return "i8";
+    case TY_I16:
+      return "i16";
     case TY_I32:
       return "i32";
     case TY_I64:
       return "int";
+    case TY_U8:
+      return "u8";
+    case TY_U16:
+      return "u16";
+    case TY_U32:
+      return "u32";
     case TY_U64:
       return "u64";
     case TY_F32:
@@ -474,11 +494,21 @@ static TypeId builtin_type(TokenKind kind) {
       return ty_bool;
     case TK_STR:
       return ty_str;
+    case TK_I8:
+      return ty_i8;
+    case TK_I16:
+      return ty_i16;
     case TK_I32:
       return ty_i32;
     case TK_I64:
     case TK_INT:
       return ty_i64;
+    case TK_U8:
+      return ty_u8;
+    case TK_U16:
+      return ty_u16;
+    case TK_U32:
+      return ty_u32;
     case TK_U64:
       return ty_u64;
     case TK_F32:
@@ -1147,28 +1177,21 @@ static void postfix(Parser* p, ExpDesc* e) {
   }
 }
 
+// Suffixed literals map directly to a FixedType, which is in the same order.
+static_assert(TY_F64 - TY_I8 == SUF_F64 - SUF_I8, "NumSuffix and FixedType out of sync");
+static_assert(TY_U8 - TY_I8 == SUF_U8 - SUF_I8, "NumSuffix and FixedType out of sync");
+
+static TypeId literal_type(Parser* p) {
+  NumSuffix suf = (NumSuffix)(p->ls.pos.t.flags & TF_SUFFIX_MASK);
+  if (suf == SUF_NONE) {
+    return T(p) == TK_INTLIT ? ty_untyped_int : ty_untyped_float;
+  }
+  return (TypeId){TY_I8 + (suf - SUF_I8)};
+}
+
 // primary -> literal | string | name | TypeName | '(' expr ')'
 //          | list | dict | sizeof | alignof | offsetof | cast
 //          followed by postfix
-static TypeId literal_type(Parser* p) {
-  switch ((NumSuffix)(p->ls.pos.t.flags & TF_SUFFIX_MASK)) {
-    case SUF_NONE:
-      return T(p) == TK_INTLIT ? ty_untyped_int : ty_untyped_float;
-    case SUF_I32:
-      return ty_i32;
-    case SUF_I64:
-      return ty_i64;
-    case SUF_U64:
-      return ty_u64;
-    case SUF_F32:
-      return ty_f32;
-    case SUF_F64:
-      return ty_f64;
-    default:
-      return ty_unknown;
-  }
-}
-
 static void primary(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
   e->shape = SH_VALUE;

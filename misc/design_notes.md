@@ -2856,10 +2856,6 @@ Steps 1, 2, 3 and 5 are done, and step 4 only for `sizeof`, `alignof` and
 - Range checks on constants: `u8 x = 300`, `u32 x = -1`, and overflow of
   an `f32` or `f64` target. These need the constant's value in `ExpDesc`,
   and unary `-` folded, since it currently gives an unknown type.
-- `i8`, `i16`, `u8`, `u16` and `u32` as checker types. They're parsed but
-  give `ty_unknown`, as do literals with those suffixes.
-- Parameter types. `funcsig()` doesn't record the type of a parameter, so
-  checks inside a function don't see them.
 - Casts are only checked between the types the checker has. Pointers are
   still `ty_unknown`, so their rows in the cast table aren't enforced, and
   constant range checks wait for constant folding.

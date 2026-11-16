@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:12:    u8 x = 1u16
+# CERR: {ssss}                 ^ error: Can't assign u16 to u8.
+def int main():
+    u8 x = 1u16
+    return 0
