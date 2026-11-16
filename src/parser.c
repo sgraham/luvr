@@ -1230,8 +1230,9 @@ static void primary(Parser* p, ExpDesc* e) {
       break;
     case TK_LPAREN:
       next(p);
-      expr(p);
+      subexpr(p, -1, e);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
+      e->shape = SH_VALUE;
       break;
     case TK_LSQUARE:
       list_literal(p);

@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:5:    (f())
+# CERR: {ssss}         ^ error: Expected statement, found '('.
+def f():
+    pass
+
+def int main():
+    (f())
+    return 0
