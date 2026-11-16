@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:11:    x = n / 0
+# CERR: {ssss}                ^ error: Divide by zero.
+def int f(int n):
+    x = n / 0
+    return 0

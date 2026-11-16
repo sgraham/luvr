@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:12:    i8 x = 7 % -2 * 128
+# CERR: {ssss}                 ^ error: 128 doesn't fit in i8.
+def int main():
+    i8 x = 7 % -2 * 128
+    return 0

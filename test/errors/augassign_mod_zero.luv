@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:7:    x %= 0
+# CERR: {ssss}           ^ error: Divide by zero.
+def int main():
+    x = 10
+    x %= 0
+    return 0

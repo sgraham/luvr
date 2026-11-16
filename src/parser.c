@@ -865,20 +865,37 @@ static void expect_bool(Parser* p, const ExpDesc* e, u32 at, const char* what) {
 }
 
 // Messages for constant overflow, taking the operands in order, except for
-// addition and subtraction, which read better with them swapped.
+// addition and subtraction, which read better with them swapped. Only
+// division can overflow out of / and %, for MIN / -1.
 // clang-format off
 static const char* const overflow_error[] = {
     [OPR_ADD] = "%s added to %s overflows.",
     [OPR_SUB] = "%s subtracted from %s overflows.",
     [OPR_MUL] = "%s multiplied by %s overflows.",
+    [OPR_DIV] = "%s divided by %s overflows.",
 };
 // clang-format on
 
-// Folds constants `e op rhs` into e for +, - and *, giving a value of type t.
-// Typed results overflow at their own width, and untyped ones past ConstInt
-// or double.
+static bool const_is_zero(const ExpDesc* e) {
+  ASSERT(e->is_const);
+  if (type_is_integer(e->type)) {
+    return e->v.i == 0;
+  }
+  return type_is_float(e->type) && e->v.f == 0;
+}
+
+// A constant zero divisor is an error even when the dividend isn't constant.
+static void check_divisor(Parser* p, BinOpr op, const ExpDesc* rhs, u32 at) {
+  if ((op == OPR_DIV || op == OPR_MOD) && rhs->is_const && const_is_zero(rhs)) {
+    error_at(p, at, "Divide by zero.");
+  }
+}
+
+// Folds constants `e op rhs` into e for +, -, *, / and %, giving a value of
+// type t. Typed results overflow at their own width, and untyped ones past
+// ConstInt or double. The divisor has already been checked for zero.
 static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc* rhs, u32 at) {
-  bool overflow;
+  bool overflow = false;
   double fr = 0;
   ConstInt ir = 0;
   if (type_is_float(t)) {
@@ -891,8 +908,14 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
       case OPR_SUB:
         fr = a - b;
         break;
-      default:
+      case OPR_MUL:
         fr = a * b;
+        break;
+      case OPR_DIV:
+        fr = a / b;
+        break;
+      default:
+        ASSERT(false && "not a folded float operator");
         break;
     }
     if (t.idx == TY_F32) {
@@ -900,15 +923,32 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
     }
     overflow = isinf(fr);
   } else {
+    ConstInt a = e->v.i;
+    ConstInt b = rhs->v.i;
     switch (op) {
       case OPR_ADD:
-        overflow = __builtin_add_overflow(e->v.i, rhs->v.i, &ir);
+        overflow = __builtin_add_overflow(a, b, &ir);
         break;
       case OPR_SUB:
-        overflow = __builtin_sub_overflow(e->v.i, rhs->v.i, &ir);
+        overflow = __builtin_sub_overflow(a, b, &ir);
+        break;
+      case OPR_MUL:
+        overflow = __builtin_mul_overflow(a, b, &ir);
+        break;
+      // C's / and % truncate toward zero, but are undefined for the minimum
+      // ConstInt and -1.
+      case OPR_DIV:
+        if (b == -1) {
+          overflow = __builtin_sub_overflow((ConstInt)0, a, &ir);
+        } else {
+          ir = a / b;
+        }
+        break;
+      case OPR_MOD:
+        ir = b == -1 ? 0 : a % b;
         break;
       default:
-        overflow = __builtin_mul_overflow(e->v.i, rhs->v.i, &ir);
+        ASSERT(false && "not a folded integer operator");
         break;
     }
     overflow = overflow || (!type_is_untyped(t) && !const_fits_in_type(ir, t));
@@ -917,7 +957,7 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
     char a[CONST_STR_SIZE], b[CONST_STR_SIZE];
     const char* as = const_value_as_str(e, a);
     const char* bs = const_value_as_str(rhs, b);
-    bool swap = op != OPR_MUL;
+    bool swap = op == OPR_ADD || op == OPR_SUB;
     error_at(p, at, overflow_error[op], swap ? bs : as, swap ? as : bs);
   }
   if (type_is_float(t)) {
@@ -1055,7 +1095,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
         check_const_conversion(p, t, e, start);
         check_const_conversion(p, t, &rhs, rhs_at);
       }
-      e->is_const = e->is_const && rhs.is_const && op >= OPR_ADD && op <= OPR_MUL &&
+      check_divisor(p, op, &rhs, at);
+      e->is_const = e->is_const && rhs.is_const && op >= OPR_ADD && op <= OPR_MOD &&
                     t.idx != TY_UNKNOWN && t.idx != TY_STR;
       if (e->is_const) {
         fold_arith(p, op, t, e, &rhs, at);
@@ -1644,6 +1685,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         if (op != OPR_SHL && op != OPR_SHR) {
           check_const_conversion(p, e.type, &v, value_at);
         }
+        check_divisor(p, op, &v, op_at);
       }
       // After the expression, so that it can't see the new local.
       if (declares && toplevel) {

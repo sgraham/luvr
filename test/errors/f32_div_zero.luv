@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:11:    x = g / 0.0
+# CERR: {ssss}                ^ error: Divide by zero.
+def int f(f32 g):
+    x = g / 0.0
+    return 0

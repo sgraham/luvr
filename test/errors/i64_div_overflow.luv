@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:39:    x = (-9223372036854775807i64 - 1) / -1
+# CERR: {ssss}                                            ^ error: -9223372036854775808 divided by -1 overflows.
+def int main():
+    x = (-9223372036854775807i64 - 1) / -1
+    return 0
