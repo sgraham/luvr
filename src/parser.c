@@ -784,8 +784,10 @@ static bool const_exact_in_float(ConstInt v, TypeId t) {
   return d < 0x1p127 && (ConstInt)d == v;
 }
 
-// Float constants are rounded, and only an error if they round to infinity.
-static void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
+// Out of line, since check_const_conversion() handles nearly all constants
+// without it. Float constants are rounded, and are only out of range if they
+// round to infinity.
+static NOINLINE void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
   char buf[CONST_STR_SIZE];
   if (!type_is_integer(e->type)) {
     float f = (float)e->v.f;
@@ -801,16 +803,26 @@ static void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
 }
 
 // Untyped constants are only range checked when they're given a type.
+// Integers from 0 to 127 fit in every numeric type, and nearly all constants
+// are in that range, so they skip the full check.
 static void check_const_conversion(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
-  if (e->is_const && type_is_untyped(e->type)) {
+  if (!e->is_const || !type_is_untyped(e->type)) {
+    return;
+  }
+  if (e->type.idx != TY_UNTYPED_INT || (ConstUInt)e->v.i >= 128) {
     check_const_fits(p, e, to, at);
   }
+}
+
+// Out of line so that check_assign() is small enough to be inlined.
+static NOINLINE NORETURN void assign_type_error(Parser* p, TypeId from, TypeId to, u32 at) {
+  error_at(p, at, "Can't assign %s to %s.", describe_type(from), describe_type(to));
 }
 
 // Checks that a value can be assigned to something of type `to`.
 static void check_assign(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
   if (!assignable(e->type, to)) {
-    error_at(p, at, "Can't assign %s to %s.", describe_type(e->type), describe_type(to));
+    assign_type_error(p, e->type, to, at);
   }
   check_const_conversion(p, to, e, at);
 }
@@ -907,6 +919,25 @@ static void check_shift_count(Parser* p, BinOpr op, TypeId t, const ExpDesc* rhs
     error_at(p, at, "Shift count %s is too large for %s.", const_int_as_str(rhs->v.i, buf),
              describe_type(t));
   }
+}
+
+// Checks constant operands of an arithmetic or bitwise op whose result has
+// type t. Out of line, since most operands aren't constants.
+static NOINLINE void check_const_operands(Parser* p,
+                                          BinOpr op,
+                                          TypeId t,
+                                          const ExpDesc* lhs,
+                                          u32 lhs_at,
+                                          const ExpDesc* rhs,
+                                          u32 rhs_at,
+                                          u32 at) {
+  // A shift count keeps its own type.
+  if (op != OPR_SHL && op != OPR_SHR && !type_is_untyped(t)) {
+    check_const_conversion(p, t, lhs, lhs_at);
+    check_const_conversion(p, t, rhs, rhs_at);
+  }
+  check_divisor(p, op, rhs, at);
+  check_shift_count(p, op, t, rhs, at);
 }
 
 // Folds constants `e op rhs` into e for an arithmetic or bitwise op, giving a
@@ -1137,13 +1168,9 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       e->is_const = false;
     } else if (is_arith) {
       TypeId t = type_for_arith(p, op, e->type, rhs.type, at);
-      // A shift count keeps its own type.
-      if (op != OPR_SHL && op != OPR_SHR && !type_is_untyped(t)) {
-        check_const_conversion(p, t, e, start);
-        check_const_conversion(p, t, &rhs, rhs_at);
+      if (e->is_const || rhs.is_const) {
+        check_const_operands(p, op, t, e, start, &rhs, rhs_at, at);
       }
-      check_divisor(p, op, &rhs, at);
-      check_shift_count(p, op, t, &rhs, at);
       e->is_const = e->is_const && rhs.is_const && t.idx != TY_UNKNOWN && t.idx != TY_STR;
       if (e->is_const) {
         fold_arith(p, op, t, e, &rhs, at);
@@ -1729,11 +1756,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         // checked again.
         BinOpr op = augassign_opr[op_kind - TK_PLUSEQ];
         type_for_arith(p, op, e.type, v.type, op_at);
-        if (op != OPR_SHL && op != OPR_SHR) {
-          check_const_conversion(p, e.type, &v, value_at);
+        if (v.is_const) {
+          check_const_operands(p, op, e.type, &e, at, &v, value_at, op_at);
         }
-        check_divisor(p, op, &v, op_at);
-        check_shift_count(p, op, e.type, &v, op_at);
       }
       // After the expression, so that it can't see the new local.
       if (declares && toplevel) {

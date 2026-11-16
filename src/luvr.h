@@ -113,6 +113,12 @@ typedef struct Token Token;
 #endif
 
 #if COMPILER_MSVC
+#  define NOINLINE __declspec(noinline)
+#elif COMPILER_CLANG || COMPILER_GCC
+#  define NOINLINE __attribute__((noinline))
+#endif
+
+#if COMPILER_MSVC
 #  define NORETURN __declspec(noreturn)
 #elif COMPILER_CLANG || COMPILER_GCC
 #  define NORETURN __attribute__((noreturn))
