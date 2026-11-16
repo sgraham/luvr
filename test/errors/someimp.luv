@@ -1,3 +1,8 @@
 # IMPORTED
 def int func():
     return 123
+
+LIMIT = 300
+
+def take(u8 a):
+    pass

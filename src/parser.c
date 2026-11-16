@@ -1813,8 +1813,17 @@ static void primary(Parser* p, ExpDesc* e) {
           error_expected(p, "name after module name");
         }
         check_module_member(p, m, name);
+        GlobalInfo member = module_global_info(m, p->ls.pos.t.v.name);
+        GlobalKind member_kind = (GlobalKind)(member & GLOBAL_KIND_MASK);
+        u32 member_at = p->ls.pos.t.offset;
         e->shape = T(p) == TK_TYPENAME ? SH_TYPE : SH_LVALUE;
         next(p);
+        if (member_kind == GK_CONST) {
+          load_named_const(e, &p->global_consts.v[member >> GLOBAL_KIND_BITS]);
+        } else if (member_kind == GK_FUNC) {
+          e->type.idx = member >> GLOBAL_KIND_BITS;
+          check_function_called(p, e, member_at);
+        }
         break;
       }
       bool defined = n->binding || n->is_builtin || kind != GK_NONE;

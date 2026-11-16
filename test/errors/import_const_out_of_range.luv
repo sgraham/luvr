@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:12:    u8 x = someimp.LIMIT
+# CERR: {ssss}                 ^ error: 300 doesn't fit in u8.
+import "someimp"
+
+def int main():
+    u8 x = someimp.LIMIT
+    return 0

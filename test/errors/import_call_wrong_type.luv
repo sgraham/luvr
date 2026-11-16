@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:18:    someimp.take("a")
+# CERR: {ssss}                       ^ error: Argument 1 is str, but the parameter is u8.
+import "someimp"
+
+def int main():
+    someimp.take("a")
+    return 0
