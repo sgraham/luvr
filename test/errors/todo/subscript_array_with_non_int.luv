@@ -4,3 +4,4 @@
 def int main():
     x = [1,2,3]
     print x["stuff"]
+    return 0

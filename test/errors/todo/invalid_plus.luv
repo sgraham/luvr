@@ -3,3 +3,4 @@
 # CERR: {ssss}                ^ error: Cannot add i32 to range
 def int main():
     x = 4 + range(3)
+    return 0

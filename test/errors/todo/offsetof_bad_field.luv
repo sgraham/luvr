@@ -7,3 +7,4 @@ struct Stuff:
 
 def int main():
     print offsetof(Stuff, q)
+    return 0

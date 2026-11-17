@@ -164,6 +164,13 @@ typedef enum Shape {
   SH_STRUCT_LITERAL,  // Stuff(...): '&' allocates it in the current arena
 } Shape;
 
+// How control leaves a statement or block. A block's flow is its last
+// statement's, since a return has to be last.
+typedef enum Flow {
+  FLOW_FALLS_THROUGH,  // can reach whatever follows
+  FLOW_RETURNS,        // always returns
+} Flow;
+
 // What is known about an expression that has been parsed but not yet emitted.
 struct ExpDesc {
   Shape shape;
@@ -178,8 +185,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start);
 static void primary(Parser* p, ExpDesc* e);
 static TypeId type(Parser* p);
 static void array_size(Parser* p);
-static void stat(Parser* p);
-static void suite(Parser* p);
+static Flow stat(Parser* p);
+static Flow suite(Parser* p);
 static void parse_module(Parser* p);
 
 // Token helpers
@@ -2194,11 +2201,12 @@ static void simple_stat(Parser* p) {
 }
 
 // block -> INDENT stat {stat} DEDENT
-static void block(Parser* p) {
+static Flow block(Parser* p) {
   next(p);  // INDENT
+  Flow flow;
   for (;;) {
     TokenKind k = T(p);
-    stat(p);
+    flow = stat(p);
     if (block_follow(T(p))) {
       break;
     }
@@ -2207,19 +2215,22 @@ static void block(Parser* p) {
     }
   }
   check(p, TK_DEDENT);
+  return flow;
 }
 
 // The body after a ':'. Either an indented block, or a single simple
 // statement on the same line (`if x: return 1`).
-static void suite(Parser* p) {
+static Flow suite(Parser* p) {
   if (T(p) == TK_INDENT) {
-    block(p);
-  } else if (T(p) == TK_NEWLINE || block_follow(T(p))) {
-    error_expected(p, "an indented block");
-  } else {
-    simple_stat(p);
-    end_of_stat(p);
+    return block(p);
   }
+  if (T(p) == TK_NEWLINE || block_follow(T(p))) {
+    error_expected(p, "an indented block");
+  }
+  Flow flow = T(p) == TK_RETURN ? FLOW_RETURNS : FLOW_FALLS_THROUGH;
+  simple_stat(p);
+  end_of_stat(p);
+  return flow;
 }
 
 // funcsig -> [type] name '(' [param {',' param}] ')'
@@ -2233,7 +2244,7 @@ static void suite(Parser* p) {
 // A top-level function's name is a global, and a nested function's name is a
 // local of the enclosing function. The new function's scope is opened after
 // the name, and the return value is for func_close().
-static u32 funcsig(Parser* p, bool is_method) {
+static u32 funcsig(Parser* p, bool is_method, u32* name_at) {
   NameId name = p->ls.pos.t.v.name;
   u32 at = p->ls.pos.t.offset;
   TypeId ret = ty_void;
@@ -2253,6 +2264,7 @@ static u32 funcsig(Parser* p, bool is_method) {
   if (name_of(p, name)->is_const) {
     error_at(p, at, "A constant can't be a function name.");
   }
+  *name_at = at;
   // The type is created before the name is declared, and the parameters are
   // added to it as they're parsed.
   TypeId ft = {p->types.num};
@@ -2306,7 +2318,8 @@ static u32 funcsig(Parser* p, bool is_method) {
 // foreign_decl -> funcsig end   (after 'foreign')
 static void foreign_decl(Parser* p, bool is_method) {
   p->in_foreign = true;
-  func_close(p, funcsig(p, is_method));
+  u32 name_at;
+  func_close(p, funcsig(p, is_method, &name_at));
   p->in_foreign = false;
   end_of_stat(p);
 }
@@ -2314,9 +2327,13 @@ static void foreign_decl(Parser* p, bool is_method) {
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, bool is_method) {
   TypeId outer_ret = p->ret_type;
-  u32 outer = funcsig(p, is_method);
+  u32 name_at;
+  u32 outer = funcsig(p, is_method, &name_at);
   check(p, TK_COLON);
-  suite(p);
+  if (suite(p) == FLOW_FALLS_THROUGH && p->ret_type.idx != TY_VOID) {
+    error_at(p, name_at, "Missing return at the end of a function returning %s.",
+             describe_type(p->ret_type));
+  }
   func_close(p, outer);
   p->ret_type = outer_ret;
 }
@@ -2326,23 +2343,33 @@ static void funcdef(Parser* p, bool is_method) {
 //       | 'with' expr ['as' name] ':' suite
 //       | 'def' funcdef
 //       | simple_stat end
-static void stat(Parser* p) {
+//
+//
+// An 'if' only always returns if it has an 'else' and all of its branches
+// always return. A 'for' never does, since its body might not run.
+static Flow stat(Parser* p) {
   switch (T(p)) {
-    case TK_IF:
+    case TK_IF: {
       next(p);
       cond(p);
       check(p, TK_COLON);
-      suite(p);
+      Flow flow = suite(p);
       while (optional(p, TK_ELIF)) {
         cond(p);
         check(p, TK_COLON);
-        suite(p);
+        if (suite(p) == FLOW_FALLS_THROUGH) {
+          flow = FLOW_FALLS_THROUGH;
+        }
       }
-      if (optional(p, TK_ELSE)) {
-        check(p, TK_COLON);
-        suite(p);
+      if (!optional(p, TK_ELSE)) {
+        return FLOW_FALLS_THROUGH;
       }
-      return;
+      check(p, TK_COLON);
+      if (suite(p) == FLOW_FALLS_THROUGH) {
+        flow = FLOW_FALLS_THROUGH;
+      }
+      return flow;
+    }
     case TK_FOR: {
       Targets t;
       next(p);
@@ -2354,7 +2381,7 @@ static void stat(Parser* p) {
       }
       check(p, TK_COLON);
       suite(p);
-      return;
+      return FLOW_FALLS_THROUGH;
     }
     case TK_WITH:
       next(p);
@@ -2368,16 +2395,17 @@ static void stat(Parser* p) {
         declare_if_new(p, name, at, ty_unknown);
       }
       check(p, TK_COLON);
-      suite(p);
-      return;
+      return suite(p);
     case TK_DEF:
       next(p);
       funcdef(p, /*is_method=*/false);
-      return;
-    default:
+      return FLOW_FALLS_THROUGH;
+    default: {
+      Flow flow = T(p) == TK_RETURN ? FLOW_RETURNS : FLOW_FALLS_THROUGH;
       simple_stat(p);
       end_of_stat(p);
-      return;
+      return flow;
+    }
   }
 }
 

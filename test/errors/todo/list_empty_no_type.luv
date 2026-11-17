@@ -3,3 +3,4 @@
 # CERR: {ssss}             ^ error: Cannot deduce type of empty list with no explicit type on left-hand side.
 def int main():
     x = []
+    return 0

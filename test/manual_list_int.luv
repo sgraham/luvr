@@ -53,3 +53,4 @@ def int main():
     lst.append(30)
     print len(lst)
     print lst
+    return 0

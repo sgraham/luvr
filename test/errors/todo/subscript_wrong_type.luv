@@ -4,3 +4,4 @@
 def int main():
     y = 4
     x = y[7]
+    return 0
