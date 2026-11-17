@@ -110,43 +110,15 @@ static TokenKind classify_ident(const u8* s, u32 len, bool* is_const) {
   return TK_NAME;
 }
 
-static void intern_rehash(Ctx* ctx) {
-  u32 new_size = (ctx->slot_mask + 1) * 2;
-  u64* slots = (u64*)calloc(new_size, sizeof(u64));
-  if (!slots) {
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
-  }
-  u32 mask = new_size - 1;
-  for (u32 i = 0; i < ctx->names.num; ++i) {
-    u64 h = ctx->names.v[i].hash;
-    u32 pos = (u32)h & mask;
-    while (slots[pos]) {
-      pos = (pos + 1) & mask;
-    }
-    slots[pos] = (h & 0xffffffff00000000ull) | (u64)(i + 1);
-  }
-  free(ctx->slots);
-  ctx->slots = slots;
-  ctx->slot_mask = mask;
-}
-
 static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) {
-  u64 tag = h & 0xffffffff00000000ull;
-  u32 mask = ctx->slot_mask;
-  u32 pos = (u32)h & mask;
-  for (;;) {
-    u64 slot = ctx->slots[pos];
-    if (!slot) {
-      break;
+  HashTable* t = &ctx->name_table;
+  u32 tag = hashtable_tag(h);
+  HashSlot* slot = hashtable_first(t, tag);
+  for (; slot->tag != 0; slot = hashtable_next(t, slot, tag)) {
+    const Name* n = &ctx->names.v[slot->val];
+    if (n->len == len && memcmp(n->str, s, len) == 0) {
+      return slot->val;
     }
-    if ((slot & 0xffffffff00000000ull) == tag) {
-      u32 idx = (u32)slot - 1;
-      const Name* n = &ctx->names.v[idx];
-      if (n->len == len && memcmp(n->str, s, len) == 0) {
-        return idx;
-      }
-    }
-    pos = (pos + 1) & mask;
   }
   u32 idx = ctx->names.num;
   Name* n = vec_push(ctx, &ctx->names);
@@ -155,23 +127,18 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) 
   n->is_const = false;
   n->is_builtin = false;
   n->kind = kind_if_new ? kind_if_new : classify_ident(s, len, &n->is_const);
-  n->hash = h;
   n->binding = NULL;
-  ctx->slots[pos] = tag | (u64)(idx + 1);
-  if (ctx->names.num * 2 > mask + 1) {
-    intern_rehash(ctx);
-  }
+  hashtable_insert(ctx, t, slot, tag, idx);
   return idx;
 }
 
 // Context
 
 bool lex_intern_init(Ctx* ctx) {
-  ctx->slot_mask = (1u << 12) - 1;
-  ctx->slots = (u64*)calloc(ctx->slot_mask + 1, sizeof(u64));
+  bool table_ok = hashtable_init(&ctx->name_table, 1u << 12);
   ctx->names.cap = 1u << 10;
   ctx->names.v = (Name*)malloc(ctx->names.cap * sizeof(Name));
-  if (!ctx->slots || !ctx->names.v) {
+  if (!table_ok || !ctx->names.v) {
     return false;
   }
   // Keywords and builtin types are in the same table, so one lookup is

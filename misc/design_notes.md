@@ -96,7 +96,7 @@ grammar is LL(1). The rest are local.
 | D12 | **decided** 2026-11-07 | Implicit capture **by value at definition time**, multi-level, via the `FuncState->prev` chain. Pointers, escaping and name-resolution details are for later. |
 | D13 | **decided** 2026-11-07 | Floats as in the D13 table (digit after `.` or exponent; `f32`/`f64` suffixes; no `1.f`). Strings `"` only. **Swift-style `\(expr)` interpolation** via a lexer mode stack (`STRING_BEGIN`/`MID`/`END`, details in D13). Raw newlines are errors anywhere in a string, including inside `\( )`. **`fmt(...)` is dropped**: it was compile-time only, so interpolation covers it. Manual argument reordering (`fmt("{1} {0}")`) is accepted as lost. Format specs deferred. Escapes: `\n \t \r \\ \" \0 \xHH \u{...}` and `\(`, none of Lua 4's `\a \b \f \v \ddd`. **No raw or multiline strings** for now (`r"..."`/`"""..."""` can be added later without conflict). |
 | D14 | **decided** 2026-11-07 | `#` to end of line, skipped with `memchr`. **Trailing comments allowed** (luv60 rejected them only because of its SIMD indexer). No block comments. |
-| D15 | **deferred to measurement** | Hash table implementation chosen in step 1 by benchmarking on real lexer traffic: luv60 swisstable (`dict.h`), open addressing with stored hash, Lua-style chaining. Kept as design regardless: one table for keywords and identifiers (Lua `marked`-style), and a `binding` pointer on each `Name` for one-load scope lookup (to be benchmarked in step 3 against a Lua-style fixed per-function locals table with a linear scan). |
+| D15 | **decided** 2026-11-17 | One table for keywords and identifiers (Lua `marked`-style), and a `binding` pointer on each `Name` for one-load scope lookup (chosen over a fixed per-function locals table with a linear scan, 2026-11-08). The intern table is one shared open-addressing table of `{tag, val}` slots, positioned by the tag, which is also used for `NameMap` and IL constants. Benchmarked layouts, load factors and Verstable all came out the same or slower. |
 | D16 | **decided** 2026-11-07 | Line counter **in the lexer only** (free, since layout already visits every `\n`). Used for errors and debug line info. Tokens carry only a `u32` offset, and columns are computed lazily on error. Errors: first error → `longjmp` to the handler. **Library-safe**: all state lives in a context struct (no mutable globals, unlike luv60's `glob`/`tu`), all allocation comes from context-owned arenas reset by the handler, no `exit`/`abort`/stdio in the library (message + offset stored in the context, internal asserts take the same path), keywords interned per context (Lua 4's `luaX_init` per `lua_State`). |
 | D17 | **decided** 2026-11-07 | Separate `toplevel_stat()` and `stat()` switches instead of luv60's repeated `if (toplevel) error(...)`. `module -> { import } { toplevel_stat } EOS`. Nested `def` allowed; `struct`/`on`/`foreign`/`import` top-level only. |
 | D18 | n/a | Guidance for future syntax, nothing to decide now. |
@@ -756,6 +756,51 @@ supports (`nested_two_levels.luv`). Use Lua's `FuncState` chain directly.
     are shared by every file parsed with the same `Ctx`.
 - Hash: something cheap over the bytes already being scanned (FNV-1a,
   or wyhash on ≤16-byte loads given the padding).
+- **Result (2026-11-17): the table's layout doesn't matter, so it's shared.**
+  The IL needs to intern constants, and `NameMap` was already a second
+  open-addressing table, so the intern table was measured to choose one
+  layout for all three. Desktop, `lexdump` (the lexer alone, which spends
+  about 35% of its time in `intern` on dumbbench), `-falign-functions=64`,
+  user cycles averaged over interleaved `perf stat` runs:
+
+  | | dumbbench | betterbench |
+  |---|---|---|
+  | A: HEAD. `u64` slots of hash tag and index, positioned by the hash's low bits, rehashed from `Name.hash` | 1720M | 2824M |
+  | B: as A, but positioned by the tag, rehashed from the slots alone, no `Name.hash` | 1724–1756M | 2782–2841M |
+  | D: `u32` slots of only the index, compared through `Name.hash` | 1694–1765M | 2810–2824M |
+  | E: B with a ¾ load factor instead of ½ | 1619M | 2863–2903M |
+  | F: Verstable, a set of name indices, at ½, ¾ and ⅞ load | 2229–2343M | 3073–3127M |
+
+  - A, B and D are within noise of each other. The spread on dumbbench
+    follows code layout: with `-falign-loops=64` too, B is within 0.3% of
+    A. All three do the same 19.7M probes on dumbbench. The cost of
+    interning is the cache miss on each new name, which none of these
+    layouts avoids.
+  - The tag in the slot isn't measurable. At half load, there are too few
+    collisions on the probe path for skipping the `Name` load to matter.
+  - B has 62% fewer dTLB misses than A on dumbbench, from the smaller
+    `Name` (24 bytes without `hash`). It also has 1.8M more branch misses,
+    from the rehash's test for empty slots, which is a coin flip at half
+    load. They roughly cancel.
+  - E is faster or slower depending on where a file's name count falls
+    relative to a power of 2. dumbbench's 1.25M names fit in 2M slots
+    instead of 4M, while betterbench's 206k end at the same size as B and
+    probe for longer. Not a general win.
+  - Verstable runs 15–23% more instructions. Part of that is its rehash
+    calling the hash function, which reads a random `Name`, for every key.
+    It also has deletion, high load factors and short chains, which an
+    insert-only table at half load doesn't need.
+  - Not tried: prefetching the slot when the hash is known (there's
+    little lexer work between hashing and probing to overlap it with) and
+    Swiss-style control bytes (probes are already about 1.05 slots).
+
+  Decided: B's layout, as one table used for interning, `NameMap` and IL
+  constants. A slot is `{u32 tag, u32 val}`, positioned by `tag & mask`, and
+  tag 0 is empty. For `NameMap` the tag is the `NameId` + 1, so a matching
+  tag is a matching key, and consecutive ids are still in consecutive slots.
+  For interning, the tag is 32 bits of the hash and a match is confirmed
+  against the key. Growing only needs the slots. Scratch builds are in
+  `~/luvr/scratch/d15` on the desktop.
 
 ### D16 Errors and positions
 

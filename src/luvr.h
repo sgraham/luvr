@@ -2,6 +2,8 @@
 
 typedef struct Ctx Ctx;
 typedef struct FileBuf FileBuf;
+typedef struct HashSlot HashSlot;
+typedef struct HashTable HashTable;
 typedef struct LexPos LexPos;
 typedef struct LexState LexState;
 typedef struct Module Module;
@@ -176,6 +178,60 @@ typedef uint64_t u64;
 // Grows *cap to at least need, and returns v reallocated to match. Running out
 // of memory, or needing more than 2^32 elements, is an error.
 void* vec_grow_(Ctx* ctx, void* v, u32* cap, size_t need, size_t elem_size);
+
+// A hash table using open addressing and linear probing. A slot's position
+// is its tag & mask, so growing only needs the slots. The tag can be the
+// whole key, or part of a hash with the key stored elsewhere, in which case
+// a slot with a matching tag still has to be compared with the key.
+struct HashTable {
+  HashSlot* v;
+  u32 num;
+  // One less than a power of 2. The table is kept at most half full, so a
+  // probe always reaches an empty slot.
+  u32 mask;
+};
+
+struct HashSlot {
+  u32 tag;  // 0 is empty
+  u32 val;
+};
+
+// cap must be a power of 2. Returns false if allocation fails.
+bool hashtable_init(HashTable* t, u32 cap);
+void hashtable_free(HashTable* t);
+
+// A tag from a 64-bit hash. 0 is empty, so it's mapped to 1.
+static inline u32 hashtable_tag(u64 h) {
+  u32 tag = (u32)(h >> 32);
+  return tag ? tag : 1;
+}
+
+static inline HashSlot* hashtable_probe_(const HashTable* t, u32 tag, u32 pos) {
+  for (;;) {
+    HashSlot* s = &t->v[pos];
+    if (s->tag == tag || s->tag == 0) {
+      return s;
+    }
+    pos = (pos + 1) & t->mask;
+  }
+}
+
+// Returns the first slot with tag, or the empty slot where it would be
+// inserted.
+static inline HashSlot* hashtable_first(const HashTable* t, u32 tag) {
+  return hashtable_probe_(t, tag, tag & t->mask);
+}
+
+// Returns the next slot after s with tag, or the empty slot where it would be
+// inserted.
+static inline HashSlot* hashtable_next(const HashTable* t, const HashSlot* s, u32 tag) {
+  return hashtable_probe_(t, tag, (u32)(s - t->v + 1) & t->mask);
+}
+
+// Fills the empty slot s, which was returned by hashtable_first() or
+// hashtable_next() for tag. s can't be used afterwards, because the table
+// might have grown.
+void hashtable_insert(Ctx* ctx, HashTable* t, HashSlot* s, u32 tag, u32 val);
 
 // Index of an interned Name in Ctx.names. It's a struct so that it can't be
 // mixed up with offsets or other indices.
@@ -365,11 +421,9 @@ struct Ctx {
   const u8* err_buf;
   u32 err_offset;
 
-  // Intern table, using open addressing and linear probing. Each slot is the
-  // upper 32 bits of the hash, and the name index + 1 in the lower 32 bits, so
-  // that 0 is empty.
-  u64* slots;
-  u32 slot_mask;
+  // Intern table. A slot's tag is from the hash of the name, and its val is
+  // the index in names.
+  HashTable name_table;
   VEC(Name) names;
 
   // Decoded copies of string literals that contained escapes.
@@ -508,8 +562,7 @@ struct Name {
   u8 kind;          // TK_NAME, TK_TYPENAME, TK_TYPEPARAM, or a keyword kind
   bool is_const;    // kind=TK_NAME: an ALL_CAPS constant
   bool is_builtin;  // kind=TK_NAME: a builtin function such as len
-  u64 hash;
-  void* binding;  // parser: current symbol for this name, or NULL
+  void* binding;    // parser: current symbol for this name, or NULL
 };
 
 // Decoded copy of a string literal that contained escapes.

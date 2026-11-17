@@ -10,7 +10,7 @@ bool ctx_init(Ctx* ctx) {
 }
 
 void ctx_free(Ctx* ctx) {
-  free(ctx->slots);
+  hashtable_free(&ctx->name_table);
   free(ctx->names.v);
   free(ctx->strs.v);
   free(ctx->strbytes.v);
@@ -75,6 +75,49 @@ void ctx_error_unclosed(const LexState* ls,
   ctx_error(ls->ctx, ls->src.filename, ls->src.buf, ls->pos.t.offset,
             "Expected '%s' (to close '%s' at line %u), found %s.", tok_kind_name(what),
             tok_kind_name(who), who_line, found);
+}
+
+bool hashtable_init(HashTable* t, u32 cap) {
+  t->v = (HashSlot*)calloc(cap, sizeof(HashSlot));
+  t->num = 0;
+  t->mask = cap - 1;
+  return t->v != NULL;
+}
+
+void hashtable_free(HashTable* t) {
+  free(t->v);
+  memset(t, 0, sizeof(*t));
+}
+
+static void hashtable_grow(Ctx* ctx, HashTable* t) {
+  u32 mask = t->mask * 2 + 1;
+  // Testing whether each slot is empty is unpredictable at half load. Instead,
+  // empty slots are all copied to an extra slot after the end, which stays
+  // empty.
+  HashSlot* v = (HashSlot*)calloc((size_t)mask + 2, sizeof(HashSlot));
+  if (!v) {
+    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+  }
+  for (u32 j = 0; j <= t->mask; ++j) {
+    HashSlot s = t->v[j];
+    u32 i = s.tag != 0 ? s.tag & mask : mask + 1;
+    while (v[i].tag != 0) {
+      i = (i + 1) & mask;
+    }
+    v[i] = s;
+  }
+  free(t->v);
+  t->v = v;
+  t->mask = mask;
+}
+
+void hashtable_insert(Ctx* ctx, HashTable* t, HashSlot* s, u32 tag, u32 val) {
+  ASSERT(s->tag == 0 && tag != 0);
+  s->tag = tag;
+  s->val = val;
+  if (++t->num * 2 > t->mask + 1) {
+    hashtable_grow(ctx, t);
+  }
 }
 
 bool namemap_init(NameMap* m, u32 cap) {
