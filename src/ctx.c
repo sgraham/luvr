@@ -120,60 +120,14 @@ void hashtable_insert(Ctx* ctx, HashTable* t, HashSlot* s, u32 tag, u32 val) {
   }
 }
 
-bool namemap_init(NameMap* m, u32 cap) {
-  m->v = (NameMapSlot*)calloc(cap, sizeof(NameMapSlot));
-  m->num = 0;
-  m->cap = cap;
-  return m->v != NULL;
-}
-
-void namemap_free(NameMap* m) {
-  free(m->v);
-  memset(m, 0, sizeof(*m));
-}
-
-static void namemap_grow(Ctx* ctx, NameMap* m) {
-  u32 cap = m->cap * 2;
-  NameMapSlot* v = (NameMapSlot*)calloc(cap, sizeof(NameMapSlot));
-  if (!v) {
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
-  }
-  u32 mask = cap - 1;
-  for (u32 j = 0; j < m->cap; ++j) {
-    const NameMapSlot* s = &m->v[j];
-    if (s->key == 0) {
-      continue;
-    }
-    u32 i = (s->key - 1) & mask;
-    while (v[i].key != 0) {
-      i = (i + 1) & mask;
-    }
-    v[i] = *s;
-  }
-  free(m->v);
-  m->v = v;
-  m->cap = cap;
-}
-
 void namemap_set(Ctx* ctx, NameMap* m, NameId name, u32 val) {
-  u32 mask = m->cap - 1;
-  u32 i = name.idx & mask;
-  for (;;) {
-    NameMapSlot* s = &m->v[i];
-    if (s->key == name.idx + 1) {
-      s->val = val;
-      return;
-    }
-    if (s->key == 0) {
-      s->key = name.idx + 1;
-      s->val = val;
-      if (++m->num * 2 > m->cap) {
-        namemap_grow(ctx, m);
-      }
-      return;
-    }
-    i = (i + 1) & mask;
+  u32 tag = name.idx + 1;
+  HashSlot* s = hashtable_first(&m->table, tag);
+  if (s->tag != 0) {
+    s->val = val;
+    return;
   }
+  hashtable_insert(ctx, &m->table, s, tag, val);
 }
 
 void* vec_grow_(Ctx* ctx, void* v, u32* cap, size_t need, size_t elem_size) {
