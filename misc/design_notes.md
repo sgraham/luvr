@@ -110,6 +110,7 @@ grammar is LL(1). The rest are local.
 | D26 | **provisional** 2026-11-14 | The IL. Per-function flat array of 8-byte instructions (opcode, type, two 24-bit references, constants below a bias), value types `i32`/`i64`/`f32`/`f64`, aggregates as memory. Two stages: the parser appends raw instructions with every local as a frame slot, then one forward pass at the end of the function promotes slots whose address wasn't taken to SSA and does folding and CSE. Blocks in source order with structured control flow. C calling convention for luv functions, QBE-style aggregate arguments, and the luv context pointer in a pinned callee-saved register. |
 | D27 | **decided** 2026-11-15 | Numeric types and conversions, as in Go. `int` is an alias of `i64`, and error messages say `int`. `len` and indexes are `int`, and `sizeof` is an untyped constant (D28). No other aliases: no `uint`, `byte`, `float` or `double`, and no `f16` for now. `int` is an error in `foreign` signatures, since C's `int` is 32 bits. There are no foreign-only types, and `foreign` signatures match C by ABI, not by C type. No `void` in luv code. `codept` is left for D23. Untyped constants adapt to context, defaulting to `int` and `f64`, with range checks. No implicit conversions between numeric types (widths, signedness, `f32`/`f64`, int/float). Any integer type is accepted as an index or shift count. Lossless widening was rejected because it hides where arithmetic wraps, and is revisited only if the casts prove too painful. `cast` converts between any numeric types, between pointers, and between pointers and 64-bit integers. Float to integer out of range is unspecified, and constants must be in range for the target. |
 | D28 | **decided** 2026-11-15 | Constants and folding, as in Go. Constant expressions are folded in `ExpDesc` as they're parsed. Untyped integer constants are `__int128` (a two-`u64` implementation later for MSVC), untyped floats are `double`, and they're range checked only when converted to a type. Typed constants fold at their width, and overflow is an error. A constant zero divisor is an error. ALL_CAPS constants keep their initializer's untypedness, and a type or suffix makes them typed. `~` on an untyped constant is `-x - 1`. |
+| D29 | **deferred** 2026-11-16 | Tests as ninja targets. `m` would pass all of its arguments to ninja, with `test` and each test's name as phony targets. Waits until there's one compiler binary to run on every input, so that one generic rule covers every test. `m` reruns the generator each time to pick up new tests, and test edges have no stamp files, so they always run. |
 
 ### D1 ★ Single-pass emit vs. building an AST
 
@@ -2995,6 +2996,33 @@ Strings as constants, and `sizeof` of structs, which needs their layout,
 come later.
 
 ---
+
+### D29 Tests as ninja targets (deferred)
+
+`m <config> [targets...]` builds with ninja into `out/<platform><config>/`
+(e.g. `out/wd`, `out/lr`), from a `build.ninja` written by
+`misc/gen_ninja.py`. Ninja only builds binaries. `m` handles `test` and test
+names itself, and passes anything else on to ninja.
+
+Instead, the generator could write the runs as ninja targets too, so that `m`
+passes every argument through and `ninja -f out/mr/build.ninja test` works
+without `m`:
+
+- A `test` phony that depends on an edge per test, and a phony per test named
+  after its file (e.g. `add_int`), so that a single test is just a target.
+- One generic rule that runs the compiler on one input and compares against
+  its `CRET`/`CERR` header. This is only worth doing once there's a single
+  compiler to run on every input. Until then, parsecheck, lexdump and
+  unittest each need a separate kind of edge.
+- Ninja can't glob, so `m` reruns the generator at the start of every run to
+  pick up added or renamed tests. Writing the file only when its contents
+  change keeps this from triggering ninja's regeneration.
+- Test edges have no outputs or stamp files, so they always run. Running the
+  same tests repeatedly is useful for profiling and for finding flaky tests.
+  A test's result also depends on the modules it imports, which a stamp
+  wouldn't track.
+- Test edges use `pool = console` so their output isn't buffered, at the
+  cost of ninja's own status and `FAILED:` lines in between.
 
 ## 3. Grammar sketch (with the recommendations applied)
 
