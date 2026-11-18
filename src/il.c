@@ -1,19 +1,19 @@
 #include "luvr.h"
 
 static const char* const il_op_names[] = {
-#define IL_NAME_(name, max_operands, has_result) #name,
+#define IL_NAME_(name, a, b, has_result) #name,
     IL_OPS(IL_NAME_)
 #undef IL_NAME_
 };
 
-static const u8 il_op_max_operands[] = {
-#define IL_MAX_OPERANDS_(name, max_operands, has_result) max_operands,
-    IL_OPS(IL_MAX_OPERANDS_)
-#undef IL_MAX_OPERANDS_
+static const u8 il_op_operands[][2] = {
+#define IL_OPERANDS_(name, a, b, has_result) {OPND_##a, OPND_##b},
+    IL_OPS(IL_OPERANDS_)
+#undef IL_OPERANDS_
 };
 
 static const bool il_op_has_result[] = {
-#define IL_HAS_RESULT_(name, max_operands, has_result) has_result,
+#define IL_HAS_RESULT_(name, a, b, has_result) has_result,
     IL_OPS(IL_HAS_RESULT_)
 #undef IL_HAS_RESULT_
 };
@@ -43,6 +43,7 @@ void il_free(IlFunc* f) {
   free(f->consts.v);
   free(f->const_types.v);
   hashtable_free(&f->const_map);
+  free(f->block_starts.v);
   memset(f, 0, sizeof(*f));
 }
 
@@ -51,6 +52,7 @@ void il_reset(IlFunc* f) {
   f->consts.num = 0;
   f->const_types.num = 0;
   hashtable_clear(&f->const_map);
+  f->block_starts.num = 0;
 }
 
 static NORETURN void il_error_too_large(IlFunc* f) {
@@ -90,6 +92,30 @@ Ref il_const_int(IlFunc* f, IlType ty, u64 v) {
   return idx + 1;
 }
 
+u32 il_block_declare(IlFunc* f) {
+  // Block numbers are stored in an operand.
+  if (f->block_starts.num >= (1u << 24)) {
+    il_error_too_large(f);
+  }
+  *vec_push(f->ctx, &f->block_starts) = IL_BLOCK_UNSTARTED;
+  return f->block_starts.num - 1;
+}
+
+void il_block_start(IlFunc* f, u32 b) {
+  ASSERT(f->block_starts.v[b] == IL_BLOCK_UNSTARTED);
+  f->block_starts.v[b] = f->ins.num;
+  il_emit(f, OP_BLOCK, IT_VOID, b, 0);
+}
+
+void il_jump(IlFunc* f, u32 b) {
+  il_emit(f, OP_JMP, IT_VOID, b, 0);
+}
+
+void il_branch(IlFunc* f, Ref cond, u32 b) {
+  il_emit(f, OP_BR, IT_VOID, cond, b);
+  il_block_start(f, il_block_declare(f));
+}
+
 static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
   if (r & REF_INS) {
     fprintf(out, "%%%u", r & ~REF_INS);
@@ -103,6 +129,10 @@ void il_dump(const IlFunc* f, FILE* out) {
     Ins ins = f->ins.v[i];
     IlOp op = ins_op(ins);
     IlType ty = ins_type(ins);
+    if (op == OP_BLOCK) {
+      fprintf(out, ":%u\n", ins_a(ins));
+      continue;
+    }
     fputs("  ", out);
     if (il_op_has_result[op]) {
       fprintf(out, "%%%u = ", i);
@@ -111,10 +141,18 @@ void il_dump(const IlFunc* f, FILE* out) {
     if (ty != IT_VOID) {
       fprintf(out, " %s", il_type_names[ty]);
     }
-    Ref operands[2] = {ins_a(ins), ins_b(ins)};
-    for (u32 j = 0; j < il_op_max_operands[op] && operands[j]; ++j) {
+    u32 operands[2] = {ins_a(ins), ins_b(ins)};
+    for (u32 j = 0; j < 2; ++j) {
+      IlOperand kind = (IlOperand)il_op_operands[op][j];
+      if (kind == OPND_NONE || (kind == OPND_REF && operands[j] == 0)) {
+        break;
+      }
       fputs(j ? ", " : " ", out);
-      il_dump_ref(f, operands[j], out);
+      if (kind == OPND_BLOCK) {
+        fprintf(out, ":%u", operands[j]);
+      } else {
+        il_dump_ref(f, operands[j], out);
+      }
     }
     fputc('\n', out);
   }

@@ -662,17 +662,28 @@ typedef u64 Ins;
 typedef u32 Ref;
 #define REF_INS (1u << 23)
 
-// X(name, max_operands, has_result)
-#define IL_OPS(X) \
-  X(ADD, 2, true) \
-  X(SUB, 2, true) \
-  X(MUL, 2, true) \
-  X(NEG, 1, true) \
-  X(RET, 1, false)
+// What an instruction's a or b field holds. A Ref of 0 is no operand, so a
+// REF operand can be left out, as in RET with no value.
+typedef enum IlOperand {
+  OPND_NONE,
+  OPND_REF,
+  OPND_BLOCK,  // an index in IlFunc.block_starts
+} IlOperand;
+
+// X(name, a, b, has_result), where a and b are IlOperands without OPND_.
+#define IL_OPS(X)              \
+  X(ADD, REF, REF, true)       \
+  X(SUB, REF, REF, true)       \
+  X(MUL, REF, REF, true)       \
+  X(NEG, REF, NONE, true)      \
+  X(BLOCK, BLOCK, NONE, false) \
+  X(JMP, BLOCK, NONE, false)   \
+  X(BR, REF, BLOCK, false)     \
+  X(RET, REF, NONE, false)
 
 // clang-format off
 typedef enum IlOp {
-#define IL_ENUM_(name, max_operands, has_result) OP_##name,
+#define IL_ENUM_(name, a, b, has_result) OP_##name,
   IL_OPS(IL_ENUM_)
 #undef IL_ENUM_
   OP_NUM_OPS,
@@ -725,7 +736,12 @@ struct IlFunc {
   // table slot's tag is from the hash of the value and type, and its val is
   // the index in consts.
   HashTable const_map;
+  // The index in ins of each block's BLOCK, or IL_BLOCK_UNSTARTED if it
+  // hasn't been started yet.
+  VEC(u32) block_starts;
 };
+
+#define IL_BLOCK_UNSTARTED UINT32_MAX
 
 void il_init(IlFunc* f, Ctx* ctx);
 void il_free(IlFunc* f);
@@ -738,6 +754,18 @@ Ref il_emit(IlFunc* f, IlOp op, IlType ty, Ref a, Ref b);
 // ty is IT_I32 or IT_I64. An i32 constant is stored sign-extended, so that
 // both its signed and unsigned spellings are the same constant.
 Ref il_const_int(IlFunc* f, IlType ty, u64 v);
+
+// Returns a new block, which can be jumped to before it's started.
+u32 il_block_declare(IlFunc* f);
+
+// Starts block b at the end of the instructions.
+void il_block_start(IlFunc* f, u32 b);
+
+void il_jump(IlFunc* f, u32 b);
+
+// Goes to block b if cond is 0, and otherwise continues into a new block,
+// because a branch is always the last instruction of its block.
+void il_branch(IlFunc* f, Ref cond, u32 b);
 
 // Writes the text form of f's instructions.
 void il_dump(const IlFunc* f, FILE* out);

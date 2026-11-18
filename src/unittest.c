@@ -163,6 +163,29 @@ static void test_il_dump(void) {
   ctx_free(&ctx);
 }
 
+static void test_il_blocks(void) {
+  Ctx ctx;
+  CHECK(ctx_init(&ctx));
+  IlFunc f;
+  il_init(&f, &ctx);
+  il_block_start(&f, il_block_declare(&f));
+  u32 end = il_block_declare(&f);
+  il_branch(&f, il_const_int(&f, IT_I32, 1), end);
+  il_jump(&f, end);
+  il_block_start(&f, end);
+  il_emit(&f, OP_RET, IT_VOID, 0, 0);
+  expect_il_dump(&f,
+                 ":0\n"
+                 "  BR 1, :1\n"
+                 ":2\n"
+                 "  JMP :1\n"
+                 ":1\n"
+                 "  RET\n",
+                 "test_il_blocks");
+  il_free(&f);
+  ctx_free(&ctx);
+}
+
 int main(void) {
   test_path_dir_len();
   test_path_stem();
@@ -170,5 +193,6 @@ int main(void) {
   test_path_normalize();
   test_il_const_int();
   test_il_dump();
+  test_il_blocks();
   return failures ? 1 : 0;
 }

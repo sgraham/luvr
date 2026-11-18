@@ -3244,13 +3244,13 @@ ones later.
 #### Blocks and jumps
 
 A block number is handed out when something first needs to refer to it,
-and the block is placed later. The block table holds where each one starts.
+and the block is started later. The block table holds where each one starts.
 Blocks are then not numbered in source order, which only matters to the SSA
 pass, and can be fixed there or by switching to Lua-style pending jump
 lists when it's written.
 
-- `il_new_block(f)` returns a block number that isn't placed yet.
-- `il_place_block(f, b)` starts block `b` at the current position.
+- `il_block_declare(f)` returns a block number that isn't started yet.
+- `il_block_start(f, b)` starts block `b` at the current position.
 - `il_jump(f, b)` and `il_branch(f, cond, b)` are `JMP` and `BR`. `BR`
   ends its block, so `il_branch` also starts the fall-through block.
 
