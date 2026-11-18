@@ -45,6 +45,7 @@ void il_free(IlFunc* f) {
   hashtable_free(&f->const_map);
   free(f->block_starts.v);
   free(f->slots.v);
+  free(f->source_pos.v);
   memset(f, 0, sizeof(*f));
 }
 
@@ -55,6 +56,7 @@ void il_reset(IlFunc* f) {
   hashtable_clear(&f->const_map);
   f->block_starts.num = 0;
   f->slots.num = 0;
+  f->source_pos.num = 0;
 }
 
 static NORETURN void il_error_too_large(IlFunc* f) {
@@ -129,6 +131,25 @@ u32 il_slot_add(IlFunc* f, IlType ty, NameId name) {
   return f->slots.num - 1;
 }
 
+void il_source_pos(IlFunc* f, u32 offset) {
+  IlSourcePos* p = vec_push(f->ctx, &f->source_pos);
+  p->ins = f->ins.num;
+  p->offset = offset;
+}
+
+// Writes the line of src that contains offset.
+static void il_dump_source_line(const u8* src, u32 offset, FILE* out) {
+  const u8* start = src + offset;
+  while (start > src && start[-1] != '\n') {
+    --start;
+  }
+  const u8* end = src + offset;
+  while (*end != '\n' && *end != '\r' && *end != 0) {
+    ++end;
+  }
+  fprintf(out, "  ; %.*s\n", (int)(end - start), start);
+}
+
 static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
   if (r & REF_INS) {
     fprintf(out, "%%%u", r & ~REF_INS);
@@ -137,7 +158,7 @@ static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
   fprintf(out, "%" PRId64, (int64_t)f->consts.v[r - 1]);
 }
 
-void il_dump(const IlFunc* f, FILE* out) {
+void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   for (u32 i = 0; i < f->slots.num; ++i) {
     const IlSlot* s = &f->slots.v[i];
     fprintf(out, "  slot $%u %s", i, il_type_names[s->type]);
@@ -147,7 +168,11 @@ void il_dump(const IlFunc* f, FILE* out) {
     }
     fputc('\n', out);
   }
+  u32 pos = 0;
   for (u32 i = 0; i < f->ins.num; ++i) {
+    for (; pos < f->source_pos.num && f->source_pos.v[pos].ins == i; ++pos) {
+      il_dump_source_line(src, f->source_pos.v[pos].offset, out);
+    }
     Ins ins = f->ins.v[i];
     IlOp op = ins_op(ins);
     IlType ty = ins_type(ins);
@@ -180,5 +205,9 @@ void il_dump(const IlFunc* f, FILE* out) {
       }
     }
     fputc('\n', out);
+  }
+  // Statements at the end that emitted nothing.
+  for (; pos < f->source_pos.num; ++pos) {
+    il_dump_source_line(src, f->source_pos.v[pos].offset, out);
   }
 }

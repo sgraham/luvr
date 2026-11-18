@@ -98,10 +98,10 @@ static void test_path_normalize(void) {
   }
 }
 
-static void expect_il_dump(const IlFunc* f, const char* want, const char* what) {
+static void expect_il_dump(const IlFunc* f, const char* src, const char* want, const char* what) {
   FILE* tmp = tmpfile();
   CHECK(tmp);
-  il_dump(f, tmp);
+  il_dump(f, (const u8*)src, tmp);
   rewind(tmp);
   char got[1024];
   size_t len = fread(got, 1, sizeof(got) - 1, tmp);
@@ -151,14 +151,14 @@ static void test_il_dump(void) {
   Ref sum = il_emit(&f, OP_ADD, IT_I64, il_const_int(&f, IT_I64, 1), il_const_int(&f, IT_I64, 2));
   Ref diff = il_emit(&f, OP_SUB, IT_I64, sum, il_const_int(&f, IT_I64, (u64)-3));
   il_emit(&f, OP_RET, IT_I64, diff, 0);
-  expect_il_dump(&f,
+  expect_il_dump(&f, "",
                  "  %0 = ADD i64 1, 2\n"
                  "  %1 = SUB i64 %0, -3\n"
                  "  RET i64 %1\n",
                  "test_il_dump");
   il_reset(&f);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);
-  expect_il_dump(&f, "  RET\n", "test_il_dump after il_reset");
+  expect_il_dump(&f, "", "  RET\n", "test_il_dump after il_reset");
   il_free(&f);
   ctx_free(&ctx);
 }
@@ -174,7 +174,7 @@ static void test_il_blocks(void) {
   il_jump(&f, end);
   il_block_start(&f, end);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);
-  expect_il_dump(&f,
+  expect_il_dump(&f, "",
                  ":0\n"
                  "  BR 1, :1\n"
                  ":2\n"
@@ -195,18 +195,25 @@ static void test_il_slots(void) {
   static const u8 x[8] = "x";
   u32 sx = il_slot_add(&f, IT_I64, lex_intern(&ctx, x, 1));
   il_slot_add(&f, IT_I32, (NameId){IL_SLOT_UNNAMED});
+  const char* src = "def int main():\n    int x = 5\n    pass\n    return x\n";
   il_block_start(&f, il_block_declare(&f));
+  il_source_pos(&f, (u32)(strstr(src, "int x") - src));
   Ref addr = il_emit(&f, OP_SLOT, IT_I64, sx, 0);
   il_emit(&f, OP_STORE, IT_I64, il_const_int(&f, IT_I64, 5), addr);
+  il_source_pos(&f, (u32)(strstr(src, "pass") - src));
+  il_source_pos(&f, (u32)(strstr(src, "return") - src));
   addr = il_emit(&f, OP_SLOT, IT_I64, sx, 0);
   Ref v = il_emit(&f, OP_LOAD, IT_I64, addr, 0);
   il_emit(&f, OP_RET, IT_I64, v, 0);
-  expect_il_dump(&f,
+  expect_il_dump(&f, src,
                  "  slot $0 i64 x\n"
                  "  slot $1 i32\n"
                  ":0\n"
+                 "  ;     int x = 5\n"
                  "  %1 = SLOT $0\n"
                  "  STORE i64 5, %1\n"
+                 "  ;     pass\n"
+                 "  ;     return x\n"
                  "  %3 = SLOT $0\n"
                  "  %4 = LOAD i64 %3\n"
                  "  RET i64 %4\n",

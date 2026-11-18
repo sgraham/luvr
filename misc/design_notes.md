@@ -3323,25 +3323,25 @@ func @add i64
 :0
   %1 = PARAM i64 0
   %2 = PARAM i64 1
-  ; 2: return a + b
+  ;     return a + b
   %3 = ADD i64 %1, %2
   RET i64 %3
 
 func @main i64
   slot $0 i64 x
 :0
-  ; 5: int x = add(1, 2)
+  ;     int x = add(1, 2)
   %1 = SLOT $0
   %2 = CALL i64 @add, 1, 2
   ; %3 EXT 1, 2
   STORE i64 %2, %1
-  ; 6: if x > 2:
+  ;     if x > 2:
   %5 = SLOT $0
   %6 = LOAD i64 %5
   %7 = GT i32 %6, 2
   BR %7, :2
 :3
-  ; 7: print "big \(x)"
+  ;         print "big \(x)"
   CALL @luv_print_str, @.str0, 4
   ...
 ```
@@ -3364,9 +3364,11 @@ func @main i64
   show the layout.
 - A comment is a whole line starting with `;`, so the reader can skip
   them without looking inside other lines. Besides `EXT`, comments give
-  each statement's source line, from the source position table (D26), and
-  above an instruction with float constants, their values in decimal
-  (`; 0x1.8p+0 = 1.5`).
+  the text of each statement's source line, with its indentation, from
+  the source position table (D26), and above an instruction with float
+  constants, their values in decimal (`; 0x1.8p+0 = 1.5`). Line numbers
+  aren't printed, because the lexer only keeps offsets, and finding a line
+  number means counting newlines from the start of the file.
 - In `data @name "bytes"`, printable ASCII is written as itself except for
   `"` and `\`. Everything else is `\n`, `\t`, `\\`, `\"` or `\xNN`.
 - Symbol names can't contain whitespace. String data is `@.strN`, which

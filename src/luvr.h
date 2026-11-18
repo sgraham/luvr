@@ -6,6 +6,7 @@ typedef struct HashSlot HashSlot;
 typedef struct HashTable HashTable;
 typedef struct IlFunc IlFunc;
 typedef struct IlSlot IlSlot;
+typedef struct IlSourcePos IlSourcePos;
 typedef struct LexPos LexPos;
 typedef struct LexState LexState;
 typedef struct Module Module;
@@ -739,6 +740,13 @@ struct IlSlot {
 
 #define IL_SLOT_UNNAMED UINT32_MAX
 
+// A statement's instructions are from its ins up to the next entry's. A
+// statement that emits nothing has an entry with the same ins as the next.
+struct IlSourcePos {
+  u32 ins;     // index in IlFunc.ins of the statement's first instruction
+  u32 offset;  // of the statement in the source
+};
+
 struct IlFunc {
   Ctx* ctx;
   VEC(Ins) ins;  // ins.v[i] is the instruction at REF_INS | i
@@ -753,6 +761,8 @@ struct IlFunc {
   // hasn't been started yet.
   VEC(u32) block_starts;
   VEC(IlSlot) slots;
+  // An entry for each statement, in the order they start.
+  VEC(IlSourcePos) source_pos;
 };
 
 #define IL_BLOCK_UNSTARTED UINT32_MAX
@@ -785,5 +795,10 @@ void il_branch(IlFunc* f, Ref cond, u32 b);
 // which LOAD and STORE use.
 u32 il_slot_add(IlFunc* f, IlType ty, NameId name);
 
-// Writes the text form of f's instructions.
-void il_dump(const IlFunc* f, FILE* out);
+// Records that a statement at offset in the source starts at the next
+// instruction.
+void il_source_pos(IlFunc* f, u32 offset);
+
+// Writes the text form of f's instructions. src is the source that the
+// offsets in f->source_pos are in.
+void il_dump(const IlFunc* f, const u8* src, FILE* out);
