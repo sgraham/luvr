@@ -89,6 +89,11 @@ void hashtable_free(HashTable* t) {
   memset(t, 0, sizeof(*t));
 }
 
+void hashtable_clear(HashTable* t) {
+  memset(t->v, 0, ((size_t)t->mask + 1) * sizeof(HashSlot));
+  t->num = 0;
+}
+
 static void hashtable_grow(Ctx* ctx, HashTable* t) {
   u32 mask = t->mask * 2 + 1;
   // Testing whether each slot is empty is unpredictable at half load. Instead,

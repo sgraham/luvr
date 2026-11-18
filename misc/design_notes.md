@@ -2417,11 +2417,12 @@ typedef u32 Ref;   // 24 bits used
 One `u64` with shifts, not bit-fields, so the layout doesn't depend on the
 compiler.
 
-`IL_BIAS` is `1 << 23`. A `Ref` at or above the bias is the instruction at
-`ins[ref]`, and below it is the constant at `ins[ref]`, with constants
-allocated downwards from `IL_BIAS - 1`. Reference 0 means no operand. That
-gives 8M instructions and 8M constants per function. Running out is an
-error, "function too large".
+Bit 23 of a `Ref` (`REF_INS`) says that it's an instruction, and the other
+23 bits are its index in `ins`. Otherwise, it's the constant at
+`consts[ref - 1]`, and reference 0 means no operand. Instructions and
+constants are in separate arrays. That gives 8M instructions and 8M constants per function. Running
+out is an error, "function too large". Every constant's reference is below
+every instruction's, which the CSE search relies on (see below).
 
 Smaller was considered. LuaJIT's 16-bit operands would cap a function at
 32k instructions, which generated code would hit. 16 bytes as in ir would
@@ -2459,6 +2460,29 @@ a chain step or an operand lookup touches one cache line, not two.
 
 Not measured. Decide with the long-function bench input once the SSA pass
 and a code generator exist.
+
+To revisit (2026-11-17): one array for both, with constants as
+instructions. LuaJIT's constants are IR instructions (`KINT` with the value
+inline, and an extra slot for 64-bit values), allocated downwards from the
+bias in the same buffer as the instructions, which grow upwards. It keeps a
+base pointer biased so that `ir[ref]` works for both. Growing at the bottom
+moves everything up by a quarter if the top is mostly free, and otherwise
+reallocates at double the size with new room below. The biased pointer is
+usually outside the allocation, which is undefined in C but works.
+Reserving the whole range of address space (2^24 × 8 bytes = 128 MB per
+buffer) and committing pages as they're used would give the same `ins[ref]`
+without moving or copying anything, and without the out-of-range pointer.
+
+- The benefit is that a constant would be an `Ins` with opcode `KINT` and
+  its type in the type field, with values that fit in the 48 operand bits
+  inline and others in a second slot. `ins_op()` and `ins_type()` would
+  then work on any operand without checking which kind it is, and the
+  separate type array goes away. That matters in passes that look at every
+  operand (folding, the code generator), not while emitting.
+- `Ref` is opaque outside `il.c`, so this only changes `il.c`: constants
+  would be allocated downwards from `REF_INS`, as LuaJIT's are from its
+  bias.
+- Decide when the SSA pass exists and can be measured.
 
 #### Types
 

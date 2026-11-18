@@ -4,6 +4,7 @@ typedef struct Ctx Ctx;
 typedef struct FileBuf FileBuf;
 typedef struct HashSlot HashSlot;
 typedef struct HashTable HashTable;
+typedef struct IlFunc IlFunc;
 typedef struct LexPos LexPos;
 typedef struct LexState LexState;
 typedef struct Module Module;
@@ -198,6 +199,9 @@ struct HashSlot {
 // cap must be a power of 2. Returns false if allocation fails.
 bool hashtable_init(HashTable* t, u32 cap);
 void hashtable_free(HashTable* t);
+
+// Empties t, keeping its allocation.
+void hashtable_clear(HashTable* t);
 
 // A tag from a 64-bit hash. 0 is empty, so it's mapped to 1.
 static inline u32 hashtable_tag(u64 h) {
@@ -637,3 +641,103 @@ static inline const Name* lex_name(const Ctx* ctx, NameId id) {
 
 // Content of a STRING* token (not NUL-terminated).
 const u8* lex_str(const LexState* ls, const Token* t, u32* len);
+
+// IL
+//
+// The IL for one function at a time. Instructions are appended to a flat
+// array, and operands refer to other instructions and to constants by index.
+
+// op:8 | ty:8 | a:24 | b:24
+typedef u64 Ins;
+
+// A reference to an instruction or a constant, in the low 24 bits. If
+// REF_INS is set, the other 23 bits are an index in IlFunc.ins. Otherwise
+// they're an index in IlFunc.consts + 1, so that 0 means no operand. For
+// example:
+//   0x000000  no operand
+//   0x000001  the first constant, IlFunc.consts.v[0]
+//   0x000002  the second constant, IlFunc.consts.v[1]
+//   0x800000  the first instruction, IlFunc.ins.v[0], dumped as %0
+//   0x800005  IlFunc.ins.v[5], dumped as %5
+typedef u32 Ref;
+#define REF_INS (1u << 23)
+
+// X(name, max_operands, has_result)
+#define IL_OPS(X) \
+  X(ADD, 2, true) \
+  X(SUB, 2, true) \
+  X(MUL, 2, true) \
+  X(NEG, 1, true) \
+  X(RET, 1, false)
+
+// clang-format off
+typedef enum IlOp {
+#define IL_ENUM_(name, max_operands, has_result) OP_##name,
+  IL_OPS(IL_ENUM_)
+#undef IL_ENUM_
+  OP_NUM_OPS,
+} IlOp;
+// clang-format on
+
+static_assert(OP_NUM_OPS <= 256, "IlOp doesn't fit in Ins");
+
+// Narrower integers than i32 are only the type of memory accesses and
+// extensions. Signedness is part of the operation, not the type.
+typedef enum IlType {
+  IT_VOID,
+  IT_I8,
+  IT_U8,
+  IT_I16,
+  IT_U16,
+  IT_I32,
+  IT_I64,
+  IT_F32,
+  IT_F64,
+  IT_NUM_TYPES,
+} IlType;
+
+static_assert(IT_NUM_TYPES <= 256, "IlType doesn't fit in Ins");
+
+static inline Ins ins_make(IlOp op, IlType ty, Ref a, Ref b) {
+  ASSERT(a < (1u << 24) && b < (1u << 24));
+  return (u64)op | (u64)ty << 8 | (u64)a << 16 | (u64)b << 40;
+}
+static inline IlOp ins_op(Ins i) {
+  return (IlOp)(i & 0xff);
+}
+static inline IlType ins_type(Ins i) {
+  return (IlType)(i >> 8 & 0xff);
+}
+static inline Ref ins_a(Ins i) {
+  return (Ref)(i >> 16 & 0xffffff);
+}
+static inline Ref ins_b(Ins i) {
+  return (Ref)(i >> 40);
+}
+
+struct IlFunc {
+  Ctx* ctx;
+  VEC(Ins) ins;  // ins.v[i] is the instruction at REF_INS | i
+  // The constant at i + 1 is consts.v[i], and its type is const_types.v[i].
+  VEC(u64) consts;
+  VEC(u8) const_types;  // IlType
+  // Interns constants, so that equal constants have the same Ref. A hash
+  // table slot's tag is from the hash of the value and type, and its val is
+  // the index in consts.
+  HashTable const_map;
+};
+
+void il_init(IlFunc* f, Ctx* ctx);
+void il_free(IlFunc* f);
+
+// Empties f for the next function, keeping its allocations.
+void il_reset(IlFunc* f);
+
+Ref il_emit(IlFunc* f, IlOp op, IlType ty, Ref a, Ref b);
+
+// ty is IT_I32 or IT_I64. An i32 constant is stored sign-extended, so that
+// both its signed and unsigned spellings are the same constant.
+Ref il_const_int(IlFunc* f, IlType ty, u64 v);
+
+// Writes the text form of f's instructions.
+void il_dump(const IlFunc* f, FILE* out);

@@ -98,10 +98,77 @@ static void test_path_normalize(void) {
   }
 }
 
+static void expect_il_dump(const IlFunc* f, const char* want, const char* what) {
+  FILE* tmp = tmpfile();
+  CHECK(tmp);
+  il_dump(f, tmp);
+  rewind(tmp);
+  char got[1024];
+  size_t len = fread(got, 1, sizeof(got) - 1, tmp);
+  got[len] = 0;
+  fclose(tmp);
+  if (strcmp(got, want) != 0) {
+    printf("%s: il_dump gave\n%swant\n%s", what, got, want);
+    ++failures;
+  }
+}
+
+static void test_il_const_int(void) {
+  Ctx ctx;
+  CHECK(ctx_init(&ctx));
+  IlFunc f;
+  il_init(&f, &ctx);
+  Ref one = il_const_int(&f, IT_I64, 1);
+  if (il_const_int(&f, IT_I64, 1) != one || il_const_int(&f, IT_I32, 1) == one) {
+    printf("il_const_int: constants aren't interned by value and type\n");
+    ++failures;
+  }
+  if (il_const_int(&f, IT_I32, 0xffffffff) != il_const_int(&f, IT_I32, (u64)-1)) {
+    printf("il_const_int: i32 0xffffffff and -1 aren't the same constant\n");
+    ++failures;
+  }
+  // Enough to grow the table a few times.
+  Ref refs[1000];
+  for (u32 i = 0; i < COUNTOF(refs); ++i) {
+    refs[i] = il_const_int(&f, IT_I64, i * 1000);
+  }
+  for (u32 i = 0; i < COUNTOF(refs); ++i) {
+    if (il_const_int(&f, IT_I64, i * 1000) != refs[i]) {
+      printf("il_const_int: %u isn't the same constant after growing\n", i * 1000);
+      ++failures;
+      break;
+    }
+  }
+  il_free(&f);
+  ctx_free(&ctx);
+}
+
+static void test_il_dump(void) {
+  Ctx ctx;
+  CHECK(ctx_init(&ctx));
+  IlFunc f;
+  il_init(&f, &ctx);
+  Ref sum = il_emit(&f, OP_ADD, IT_I64, il_const_int(&f, IT_I64, 1), il_const_int(&f, IT_I64, 2));
+  Ref diff = il_emit(&f, OP_SUB, IT_I64, sum, il_const_int(&f, IT_I64, (u64)-3));
+  il_emit(&f, OP_RET, IT_I64, diff, 0);
+  expect_il_dump(&f,
+                 "  %0 = ADD i64 1, 2\n"
+                 "  %1 = SUB i64 %0, -3\n"
+                 "  RET i64 %1\n",
+                 "test_il_dump");
+  il_reset(&f);
+  il_emit(&f, OP_RET, IT_VOID, 0, 0);
+  expect_il_dump(&f, "  RET\n", "test_il_dump after il_reset");
+  il_free(&f);
+  ctx_free(&ctx);
+}
+
 int main(void) {
   test_path_dir_len();
   test_path_stem();
   test_path_import_is_invalid();
   test_path_normalize();
+  test_il_const_int();
+  test_il_dump();
   return failures ? 1 : 0;
 }

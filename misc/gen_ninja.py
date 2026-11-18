@@ -13,7 +13,7 @@ TARGETS = {
     "lexdump": ["src/lexdump.c", "src/lex.c", "src/ctx.c"],
     "lexfloor": ["bench/lexfloor.c", "src/lex.c", "src/ctx.c"],
     "parsecheck": ["src/parsecheck.c", "src/parser.c", "src/path.c", "src/lex.c", "src/ctx.c"],
-    "unittest": ["src/unittest.c", "src/path.c"],
+    "unittest": ["src/unittest.c", "src/il.c", "src/path.c", "src/lex.c", "src/ctx.c"],
 }
 
 
