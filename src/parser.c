@@ -171,11 +171,17 @@ typedef enum Flow {
   FLOW_RETURNS,        // always returns
 } Flow;
 
+// Where an expression's value is.
+typedef enum ExpKind {
+  EK_REF,    // the result of an instruction or constant
+  EK_CONST,  // in ExpDesc.v
+} ExpKind;
+
 // What is known about an expression that has been parsed but not yet emitted.
 struct ExpDesc {
   Shape shape;
   TypeId type;
-  bool is_const;  // When set, the expression's value is in v.
+  ExpKind kind;
   ConstValue v;
 };
 
@@ -349,7 +355,7 @@ static void declare_global(Parser* p, NameId name, GlobalInfo info) {
 // Out of line, since uses of constants are rare compared to variables.
 static NOINLINE void load_named_const(ExpDesc* e, const NamedConst* c) {
   e->type = c->type;
-  e->is_const = true;
+  e->kind = EK_CONST;
   e->v = c->v;
 }
 
@@ -875,7 +881,7 @@ static NOINLINE void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32
 // Integers from 0 to 127 fit in every numeric type, and nearly all constants
 // are in that range, so they skip the full check.
 static void check_const_conversion(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
-  if (!e->is_const || !type_is_untyped(e->type)) {
+  if (e->kind != EK_CONST || !type_is_untyped(e->type)) {
     return;
   }
   if (e->type.idx != TY_UNTYPED_INT || (ConstUInt)e->v.i >= 128) {
@@ -894,7 +900,7 @@ static void array_size(Parser* p) {
   u32 at = p->ls.pos.t.offset;
   ExpDesc e;
   subexpr(p, -1, &e);
-  if (!e.is_const || !type_is_integer(e.type)) {
+  if (e.kind != EK_CONST || !type_is_integer(e.type)) {
     error_at(p, at, "Array size must be a constant integer.");
   }
   if (e.v.i < 0) {
@@ -991,7 +997,7 @@ static const char* const overflow_error[] = {
 // clang-format on
 
 static bool const_is_zero(const ExpDesc* e) {
-  ASSERT(e->is_const);
+  ASSERT(e->kind == EK_CONST);
   if (type_is_integer(e->type)) {
     return e->v.i == 0;
   }
@@ -1000,7 +1006,7 @@ static bool const_is_zero(const ExpDesc* e) {
 
 // A constant zero divisor is an error even when the dividend isn't constant.
 static void check_divisor(Parser* p, BinOpr op, const ExpDesc* rhs, u32 at) {
-  if ((op == OPR_DIV || op == OPR_MOD) && rhs->is_const && const_is_zero(rhs)) {
+  if ((op == OPR_DIV || op == OPR_MOD) && rhs->kind == EK_CONST && const_is_zero(rhs)) {
     error_at(p, at, "Divide by zero.");
   }
 }
@@ -1008,7 +1014,7 @@ static void check_divisor(Parser* p, BinOpr op, const ExpDesc* rhs, u32 at) {
 // A constant shift count can't be negative, or at least the width of a typed
 // value being shifted. `t` is the type of the value being shifted.
 static void check_shift_count(Parser* p, BinOpr op, TypeId t, const ExpDesc* rhs, u32 at) {
-  if ((op != OPR_SHL && op != OPR_SHR) || !rhs->is_const || !type_is_integer(rhs->type)) {
+  if ((op != OPR_SHL && op != OPR_SHR) || rhs->kind != EK_CONST || !type_is_integer(rhs->type)) {
     return;
   }
   char buf[CONST_STR_SIZE];
@@ -1224,7 +1230,7 @@ static NOINLINE bool fold_compare(BinOpr op, const ExpDesc* a, const ExpDesc* b)
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
   TypeId t = e->type;
   if (t.idx == TY_UNKNOWN) {
-    e->is_const = false;
+    e->kind = EK_REF;
     return;
   }
   if (neg && !type_is_integer(t) && !type_is_float(t)) {
@@ -1233,7 +1239,7 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
   if (!neg && !type_is_integer(t)) {
     error_at(p, at, "'~' expects an integer, not %s.", describe_type(t));
   }
-  if (!e->is_const) {
+  if (e->kind != EK_CONST) {
     return;
   }
   if (type_is_float(t)) {
@@ -1269,9 +1275,10 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       subexpr(p, PRIORITY_NOT, e);
       expect_bool(p, e, at, "'not'");
       e->shape = SH_VALUE;
-      e->is_const = e->is_const && e->type.idx == TY_BOOL;
-      if (e->is_const) {
+      if (e->kind == EK_CONST && e->type.idx == TY_BOOL) {
         e->v.b = !e->v.b;
+      } else {
+        e->kind = EK_REF;
       }
       e->type = ty_bool;
       break;
@@ -1299,7 +1306,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       }
       e->shape = SH_VALUE;
       e->type = ty_unknown;
-      e->is_const = false;
+      e->kind = EK_REF;
       break;
     }
     default:
@@ -1343,40 +1350,42 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
     bool is_bool = binopr_is_comparison(op) || logical;
     bool is_arith = op >= OPR_BOR && op <= OPR_MOD;
     if (is_compare) {
-      bool is_const = false;
-      if (e->is_const || rhs.is_const) {
+      ExpKind kind = EK_REF;
+      if (e->kind == EK_CONST || rhs.kind == EK_CONST) {
         TypeId t = type_is_untyped(e->type) ? rhs.type : e->type;
         check_const_operands(p, op, t, e, start, &rhs, rhs_at, at);
         bool foldable = t.idx == TY_BOOL || type_is_integer(t) || type_is_float(t);
-        if (e->is_const && rhs.is_const && foldable) {
+        if (e->kind == EK_CONST && rhs.kind == EK_CONST && foldable) {
           e->v.b = fold_compare(op, e, &rhs);
-          is_const = true;
+          kind = EK_CONST;
         }
       }
       e->type = ty_bool;
-      e->is_const = is_const;
+      e->kind = kind;
     } else if (is_bool) {
       // Only 'and' and 'or' of two constants are constant, even when one
       // operand is enough to decide the value.
-      e->is_const = logical && e->is_const && rhs.is_const && e->type.idx == TY_BOOL &&
-                    rhs.type.idx == TY_BOOL;
-      if (e->is_const) {
+      if (logical && e->kind == EK_CONST && rhs.kind == EK_CONST && e->type.idx == TY_BOOL &&
+          rhs.type.idx == TY_BOOL) {
         e->v.b = op == OPR_AND ? e->v.b && rhs.v.b : e->v.b || rhs.v.b;
+      } else {
+        e->kind = EK_REF;
       }
       e->type = ty_bool;
     } else if (is_arith) {
       TypeId t = type_for_arith(p, op, e->type, rhs.type, at);
-      if (e->is_const || rhs.is_const) {
+      if (e->kind == EK_CONST || rhs.kind == EK_CONST) {
         check_const_operands(p, op, t, e, start, &rhs, rhs_at, at);
       }
-      e->is_const = e->is_const && rhs.is_const && t.idx != TY_UNKNOWN && t.idx != TY_STR;
-      if (e->is_const) {
+      if (e->kind == EK_CONST && rhs.kind == EK_CONST && t.idx != TY_UNKNOWN && t.idx != TY_STR) {
         fold_arith(p, op, t, e, &rhs, at);
+      } else {
+        e->kind = EK_REF;
       }
       e->type = t;
     } else {
       e->type = ty_unknown;
-      e->is_const = false;
+      e->kind = EK_REF;
     }
     op = nextop;
   }
@@ -1700,7 +1709,7 @@ static void postfix(Parser* p, ExpDesc* e) {
     switch (T(p)) {
       case TK_DOT:
         e->type = ty_unknown;
-        e->is_const = false;
+        e->kind = EK_REF;
         next(p);
         if (T(p) == TK_NAME) {
           e->shape = SH_LVALUE;
@@ -1717,7 +1726,7 @@ static void postfix(Parser* p, ExpDesc* e) {
           error_at(p, p->ls.pos.t.offset, "A type can't be indexed.");
         }
         e->type = ty_unknown;
-        e->is_const = false;
+        e->kind = EK_REF;
         index_or_slice(p, e);
         break;
       case TK_LPAREN: {
@@ -1726,7 +1735,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         call_args(p, is_struct_literal, callee);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
         e->type = type_is_function(p, callee) ? p->types.v[callee.idx].ret : ty_unknown;
-        e->is_const = false;
+        e->kind = EK_REF;
         break;
       }
       case TK_LBRACE:
@@ -1766,11 +1775,11 @@ static void primary(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
   e->shape = SH_VALUE;
   e->type = ty_unknown;
-  e->is_const = false;
+  e->kind = EK_REF;
   switch (T(p)) {
     case TK_INTLIT:
       e->type = literal_type(p);
-      e->is_const = true;
+      e->kind = EK_CONST;
       e->v.i = p->ls.pos.t.v.i;
       if (!type_is_untyped(e->type)) {
         check_const_fits(p, e, e->type, at);
@@ -1779,7 +1788,7 @@ static void primary(Parser* p, ExpDesc* e) {
       break;
     case TK_FLOATLIT:
       e->type = literal_type(p);
-      e->is_const = true;
+      e->kind = EK_CONST;
       e->v.f = p->ls.pos.t.v.f;
       if (!type_is_untyped(e->type)) {
         check_const_fits(p, e, e->type, at);
@@ -1793,7 +1802,7 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_TRUE:
     case TK_FALSE:
       e->type = ty_bool;
-      e->is_const = true;
+      e->kind = EK_CONST;
       e->v.b = T(p) == TK_TRUE;
       next(p);
       break;
@@ -1889,7 +1898,7 @@ static void primary(Parser* p, ExpDesc* e) {
       // A known size is an untyped constant, so that it can be used as any
       // integer type, such as a u64 size for C.
       e->type = size ? ty_untyped_int : ty_i64;
-      e->is_const = size != 0;
+      e->kind = size ? EK_CONST : EK_REF;
       e->v.i = size;
       break;
     case TK_OFFSETOF:
@@ -1914,11 +1923,11 @@ static void primary(Parser* p, ExpDesc* e) {
         error_at(p, value_at, "Can't cast %s to %s.", describe_type(e->type), describe_type(t));
       }
       e->shape = SH_VALUE;
-      if (e->is_const && (type_is_integer(t) || type_is_float(t)) &&
+      if (e->kind == EK_CONST && (type_is_integer(t) || type_is_float(t)) &&
           (type_is_integer(e->type) || type_is_float(e->type))) {
         fold_cast(p, e, t, value_at);
       } else {
-        e->is_const = false;
+        e->kind = EK_REF;
       }
       e->type = t;
       break;
@@ -1940,7 +1949,7 @@ static void declare_const(Parser* p,
                           TypeId t,
                           const ExpDesc* v,
                           u32 value_at) {
-  if (!v->is_const) {
+  if (v->kind != EK_CONST) {
     error_at(p, value_at, "Expected a constant expression.");
   }
   NamedConst c = {t, v->v};
@@ -1980,7 +1989,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
       declare_const(p, name, at, toplevel, t, &v, value_at);
       return;
     }
-    if (toplevel && !v.is_const) {
+    if (toplevel && v.kind != EK_CONST) {
       error_at(p, value_at, "Expected a constant expression.");
     }
   } else if (is_const) {
@@ -2072,7 +2081,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         // checked again.
         BinOpr op = augassign_opr[op_kind - TK_PLUSEQ];
         type_for_arith(p, op, e.type, v.type, op_at);
-        if (v.is_const) {
+        if (v.kind == EK_CONST) {
           check_const_operands(p, op, e.type, &e, at, &v, value_at, op_at);
         }
       }
@@ -2084,7 +2093,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         check_not_void(p, &v, value_at);
         TypeId t = default_type_for_variable(v.type);
         check_const_conversion(p, t, &v, value_at);
-        if (toplevel && !v.is_const) {
+        if (toplevel && v.kind != EK_CONST) {
           error_at(p, value_at, "Expected a constant expression.");
         }
         if (toplevel) {
