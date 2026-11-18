@@ -97,7 +97,7 @@ def find_test(name, ap):
 # Files that start with '# IMPORTED' are only imported by other tests, so they
 # aren't run on their own.
 def check_test(exe, path):
-    r = subprocess.run([exe, "-q", path], capture_output=True, text=True)
+    r = subprocess.run([exe, "parse", "-q", path], capture_output=True, text=True)
     if not is_error_test(path):
         if r.returncode != 0:
             return f"{path}: expected to parse\n  got: {r.stderr.strip()}"
@@ -115,7 +115,7 @@ def check_test(exe, path):
 
 
 def run_tests(out, paths, rewind, unittest):
-    exe = os.path.join(out, "parsecheck" + EXE)
+    exe = os.path.join(out, "luv" + EXE)
     failures = [f for f in (check_test(exe, p) for p in paths) if f]
     # Rewinding the lexer and lexing again must reach the same state. All of the
     # test files lex without error, including those in todo/.
@@ -141,7 +141,7 @@ def main():
         "targets",
         nargs="*",
         help="test: run all tests. A test path or name (e.g. add_int): run that test. "
-        "Anything else is a ninja target, e.g. parsecheck. With no targets, all binaries are built.",
+        "Anything else is a ninja target, e.g. luv. With no targets, all binaries are built.",
     )
     args = ap.parse_args()
 
@@ -165,7 +165,7 @@ def main():
         tests = all_tests()
         ninja_targets += ["unittest"]
     if tests:
-        ninja_targets += ["parsecheck", "lexdump"]
+        ninja_targets += ["luv", "lexdump"]
     build(args, out, ninja_targets)
     if tests:
         rewind = sorted(glob.glob("test/**/*.luv", recursive=True)) if all else tests

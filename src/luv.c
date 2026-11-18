@@ -1,7 +1,7 @@
-// Syntax-checks files with parser.c.
-//   parsecheck [-q] file...
-// Prints the first error in each failing file; -q suppresses the summary.
-// Exit status is 1 if any file failed.
+// The compiler driver.
+//   luv parse [-q] file...
+// parse checks each file, and prints the first error in each failing file.
+// -q suppresses the summary. Exit status is 1 if any file failed.
 
 #include "luvr.h"
 
@@ -35,16 +35,20 @@ static double now_sec(void) {
   return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
-int main(int argc, char** argv) {
+static int usage(void) {
+  fprintf(stderr, "usage: luv parse [-q] file...\n");
+  return 2;
+}
+
+static int cmd_parse(int argc, char** argv) {
   bool quiet = false;
-  int first = 1;
-  if (argc > 1 && strcmp(argv[1], "-q") == 0) {
+  int first = 0;
+  if (argc > 0 && strcmp(argv[0], "-q") == 0) {
     quiet = true;
-    first = 2;
+    first = 1;
   }
   if (first >= argc) {
-    fprintf(stderr, "usage: parsecheck [-q] file...\n");
-    return 2;
+    return usage();
   }
   int failures = 0;
   size_t nbytes = 0;
@@ -96,4 +100,11 @@ int main(int argc, char** argv) {
             nfiles, (double)nbytes / 1e6, secs, secs > 0 ? (double)nbytes / 1e6 / secs : 0.0);
   }
   return failures ? 1 : 0;
+}
+
+int main(int argc, char** argv) {
+  if (argc > 1 && strcmp(argv[1], "parse") == 0) {
+    return cmd_parse(argc - 2, argv + 2);
+  }
+  return usage();
 }
