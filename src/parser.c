@@ -162,6 +162,7 @@ struct Parser {
   u32 type_params;
   TypeId ret_type;  // of the current function
   bool in_foreign;  // in a foreign function's signature
+  IlFunc il;        // of the current function, only used when EMIT
 };
 
 // The syntactical shape of parsing an expression. Used to decide whether
@@ -1237,6 +1238,47 @@ static NOINLINE bool fold_compare(BinOpr op, const ExpDesc* a, const ExpDesc* b)
   }
 }
 
+// Emission
+
+// bool and integers up to 32 bits are i32, and the other integers are i64.
+static IlType il_type_of(Parser* p, TypeId t, u32 at) {
+  switch (t.idx) {
+    case TY_VOID:
+      return IT_VOID;
+    case TY_BOOL:
+    case TY_I8:
+    case TY_I16:
+    case TY_I32:
+    case TY_U8:
+    case TY_U16:
+    case TY_U32:
+      return IT_I32;
+    case TY_I64:
+    case TY_U64:
+      return IT_I64;
+    case TY_F32:
+      return IT_F32;
+    case TY_F64:
+      return IT_F64;
+    default:
+      error_at(p, at, "%s isn't supported yet.", describe_type(t));
+  }
+}
+
+// Emits whatever is needed to make e one value of type t, and returns its Ref.
+// t has already been checked against e's type. If e is an untyped constant
+// it will take on t's type.
+static Ref exp_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
+  IlType ty = il_type_of(p, t, at);
+  if (e->kind == EK_CONST && t.idx == TY_BOOL) {
+    return il_const_int(&p->il, ty, e->v.b);
+  }
+  if (e->kind == EK_CONST && type_is_integer(t)) {
+    return il_const_int(&p->il, ty, (u64)e->v.i);
+  }
+  error_at(p, at, "This expression isn't supported yet.");
+}
+
 // Unary '-' or '~', which give the operand's type. Constants are folded.
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
   TypeId t = e->type;
@@ -2139,6 +2181,12 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
 //              | ('global' | 'nonlocal') name {',' name}
 //              | decl_or_expr_stat
 static void simple_stat(Parser* p) {
+  if (EMIT) {
+    il_source_pos(&p->il, p->ls.pos.t.offset);
+    if (T(p) != TK_RETURN && T(p) != TK_PASS) {
+      error_at(p, p->ls.pos.t.offset, "This statement isn't supported yet.");
+    }
+  }
   switch (T(p)) {
     case TK_RETURN: {
       u32 return_at = p->ls.pos.t.offset;
@@ -2147,6 +2195,9 @@ static void simple_stat(Parser* p) {
         if (p->ret_type.idx != TY_VOID && p->ret_type.idx != TY_UNKNOWN) {
           error_at(p, return_at, "Missing return value in a function returning %s.",
                    describe_type(p->ret_type));
+        }
+        if (EMIT) {
+          il_emit(&p->il, OP_RET, IT_VOID, 0, 0);
         }
       } else {
         u32 at = p->ls.pos.t.offset;
@@ -2160,6 +2211,9 @@ static void simple_stat(Parser* p) {
                    describe_type(p->ret_type));
         }
         check_const_conversion(p, p->ret_type, &e, at);
+        if (EMIT) {
+          il_emit(&p->il, OP_RET, p->il.ret, exp_to_ref(p, &e, p->ret_type, at), 0);
+        }
       }
       return;
     }
@@ -2264,7 +2318,7 @@ static Flow suite(Parser* p) {
 // A top-level function's name is a global, and a nested function's name is a
 // local of the enclosing function. The new function's scope is opened after
 // the name, and the return value is for func_close().
-static u32 funcsig(Parser* p, bool is_method, u32* name_at) {
+static u32 funcsig(Parser* p, bool is_method, NameId* func_name, u32* name_at) {
   NameId name = p->ls.pos.t.v.name;
   u32 at = p->ls.pos.t.offset;
   TypeId ret = ty_void;
@@ -2284,6 +2338,7 @@ static u32 funcsig(Parser* p, bool is_method, u32* name_at) {
   if (name_of(p, name)->is_const) {
     error_at(p, at, "A constant can't be a function name.");
   }
+  *func_name = name;
   *name_at = at;
   // The type is created before the name is declared, and the parameters are
   // added to it as they're parsed.
@@ -2338,8 +2393,9 @@ static u32 funcsig(Parser* p, bool is_method, u32* name_at) {
 // foreign_decl -> funcsig end   (after 'foreign')
 static void foreign_decl(Parser* p, bool is_method) {
   p->in_foreign = true;
+  NameId name;
   u32 name_at;
-  func_close(p, funcsig(p, is_method, &name_at));
+  func_close(p, funcsig(p, is_method, &name, &name_at));
   p->in_foreign = false;
   end_of_stat(p);
 }
@@ -2347,12 +2403,33 @@ static void foreign_decl(Parser* p, bool is_method) {
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, bool is_method) {
   TypeId outer_ret = p->ret_type;
+  NameId name;
   u32 name_at;
-  u32 outer = funcsig(p, is_method, &name_at);
+  u32 outer = funcsig(p, is_method, &name, &name_at);
+  if (EMIT) {
+    if (is_method) {
+      error_at(p, name_at, "Methods aren't supported yet.");
+    }
+    if (p->func_depth > 1) {
+      error_at(p, name_at, "Nested functions aren't supported yet.");
+    }
+    il_reset(&p->il, name, il_type_of(p, p->ret_type, name_at));
+    il_block_start(&p->il, il_block_declare(&p->il));
+  }
   check(p, TK_COLON);
-  if (suite(p) == FLOW_FALLS_THROUGH && p->ret_type.idx != TY_VOID) {
+  Flow flow = suite(p);
+  if (flow == FLOW_FALLS_THROUGH && p->ret_type.idx != TY_VOID) {
     error_at(p, name_at, "Missing return at the end of a function returning %s.",
              describe_type(p->ret_type));
+  }
+  if (EMIT) {
+    if (flow == FLOW_FALLS_THROUGH) {
+      il_emit(&p->il, OP_RET, IT_VOID, 0, 0);
+    }
+    Ctx* ctx = p->ls.ctx;
+    if (ctx->on_func) {
+      ctx->on_func(ctx, &p->il, p->mod->src.buf);
+    }
   }
   func_close(p, outer);
   p->ret_type = outer_ret;
@@ -2370,6 +2447,9 @@ static void funcdef(Parser* p, bool is_method) {
 static Flow stat(Parser* p) {
   switch (T(p)) {
     case TK_IF: {
+      if (EMIT) {
+        error_at(p, p->ls.pos.t.offset, "'if' isn't supported yet.");
+      }
       next(p);
       cond(p);
       check(p, TK_COLON);
@@ -2391,6 +2471,9 @@ static Flow stat(Parser* p) {
       return flow;
     }
     case TK_FOR: {
+      if (EMIT) {
+        error_at(p, p->ls.pos.t.offset, "'for' isn't supported yet.");
+      }
       Targets t;
       next(p);
       for_targets(p, &t);
@@ -2404,6 +2487,9 @@ static Flow stat(Parser* p) {
       return FLOW_FALLS_THROUGH;
     }
     case TK_WITH:
+      if (EMIT) {
+        error_at(p, p->ls.pos.t.offset, "'with' isn't supported yet.");
+      }
       next(p);
       expr(p);
       if (optional(p, TK_AS)) {
@@ -2607,7 +2693,7 @@ static char* filename_new(Ctx* ctx, size_t len) {
 static bool module_read(Ctx* ctx, Module* m, char* filename) {
   m->src.filename = filename;
   size_t size;
-  u8* buf = ctx->load_file ? ctx->load_file(filename, &size) : NULL;
+  u8* buf = ctx->load_file(filename, &size);
   if (!buf) {
     return false;
   }
@@ -2744,6 +2830,9 @@ static void parse_module(Parser* p) {
 // Undoes the file's bindings and frees the Parser.
 static void parse_end(Parser* p) {
   pop_locals(p, 0);
+  if (EMIT) {
+    il_free(&p->il);
+  }
   free(p->global_consts.v);
   free(p->types.v);
   free(p->param_types.v);
@@ -2767,6 +2856,9 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   p->func_base = 0;
   p->func_depth = 0;
   p->ret_type = ty_unknown;
+  // il_free() is safe on the zeroed IlFunc if there's an error before
+  // il_init().
+  memset(&p->il, 0, sizeof(p->il));
   // Names are shared by all files parsed with ctx, so this file's bindings
   // are undone at the end, including after an error.
   jmp_buf* outer = ctx->on_error;
@@ -2781,6 +2873,9 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   memset(p->types.v, 0, TY_NUM_FIXED * sizeof(TypeInfo));
   p->types.num = TY_NUM_FIXED;
   vec_reserve(ctx, &p->param_types, INITIAL_TYPES);
+  if (EMIT) {
+    il_init(&p->il, ctx);
+  }
   // The root module's canonical name is its file name, without the directory
   // or .luv.
   u32 len;

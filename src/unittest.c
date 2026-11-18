@@ -113,6 +113,14 @@ static void expect_il_dump(const IlFunc* f, const char* src, const char* want, c
   }
 }
 
+// Interned names have to be followed by 7 readable bytes.
+static const u8 test_func_name[8] = "f";
+
+static void il_init_test(IlFunc* f, Ctx* ctx, IlType ret) {
+  il_init(f, ctx);
+  il_reset(f, lex_intern(ctx, test_func_name, 1), ret);
+}
+
 static void test_il_const_int(void) {
   Ctx ctx;
   CHECK(ctx_init(&ctx));
@@ -147,18 +155,19 @@ static void test_il_dump(void) {
   Ctx ctx;
   CHECK(ctx_init(&ctx));
   IlFunc f;
-  il_init(&f, &ctx);
+  il_init_test(&f, &ctx, IT_I64);
   Ref sum = il_emit(&f, OP_ADD, IT_I64, il_const_int(&f, IT_I64, 1), il_const_int(&f, IT_I64, 2));
   Ref diff = il_emit(&f, OP_SUB, IT_I64, sum, il_const_int(&f, IT_I64, (u64)-3));
   il_emit(&f, OP_RET, IT_I64, diff, 0);
   expect_il_dump(&f, "",
+                 "func i64 @f\n"
                  "  %0 = ADD i64 1, 2\n"
                  "  %1 = SUB i64 %0, -3\n"
                  "  RET i64 %1\n",
                  "test_il_dump");
-  il_reset(&f);
+  il_reset(&f, f.name, IT_VOID);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);
-  expect_il_dump(&f, "", "  RET\n", "test_il_dump after il_reset");
+  expect_il_dump(&f, "", "func @f\n  RET\n", "test_il_dump after il_reset");
   il_free(&f);
   ctx_free(&ctx);
 }
@@ -167,7 +176,7 @@ static void test_il_blocks(void) {
   Ctx ctx;
   CHECK(ctx_init(&ctx));
   IlFunc f;
-  il_init(&f, &ctx);
+  il_init_test(&f, &ctx, IT_VOID);
   il_block_start(&f, il_block_declare(&f));
   u32 end = il_block_declare(&f);
   il_branch(&f, il_const_int(&f, IT_I32, 1), end);
@@ -175,6 +184,7 @@ static void test_il_blocks(void) {
   il_block_start(&f, end);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);
   expect_il_dump(&f, "",
+                 "func @f\n"
                  ":0\n"
                  "  BR 1, :1\n"
                  ":2\n"
@@ -190,7 +200,7 @@ static void test_il_slots(void) {
   Ctx ctx;
   CHECK(ctx_init(&ctx));
   IlFunc f;
-  il_init(&f, &ctx);
+  il_init_test(&f, &ctx, IT_I64);
   // Interned names have to be followed by 7 readable bytes.
   static const u8 x[8] = "x";
   u32 sx = il_slot_add(&f, IT_I64, lex_intern(&ctx, x, 1));
@@ -206,6 +216,7 @@ static void test_il_slots(void) {
   Ref v = il_emit(&f, OP_LOAD, IT_I64, addr, 0);
   il_emit(&f, OP_RET, IT_I64, v, 0);
   expect_il_dump(&f, src,
+                 "func i64 @f\n"
                  "  slot $0 i64 x\n"
                  "  slot $1 i32\n"
                  ":0\n"

@@ -49,13 +49,18 @@ static int usage(void) {
 // Each file is a separate program, so it has its own Ctx. Prints the error
 // and returns false if the file fails. Otherwise adds the size of the
 // program's modules to nbytes.
-static bool run_file(ParseFn fn, const char* path, size_t* nbytes, double* secs) {
+static bool run_file(ParseFn fn,
+                     FuncDoneFn on_func,
+                     const char* path,
+                     size_t* nbytes,
+                     double* secs) {
   Ctx ctx;
   if (!ctx_init(&ctx)) {
     fprintf(stderr, "out of memory\n");
     exit(1);
   }
   ctx.load_file = load_file;
+  ctx.on_func = on_func;
   jmp_buf jb;
   ctx.on_error = &jb;
   double t0 = now_sec();
@@ -104,7 +109,7 @@ static int cmd_parse(int argc, char** argv) {
   size_t nbytes = 0;
   double secs = 0;
   for (int i = first; i < argc; ++i) {
-    failures += !run_file(parse_file, argv[i], &nbytes, &secs);
+    failures += !run_file(parse_file, NULL, argv[i], &nbytes, &secs);
   }
   if (!quiet) {
     int nfiles = argc - first;
@@ -114,13 +119,19 @@ static int cmd_parse(int argc, char** argv) {
   return failures ? 1 : 0;
 }
 
+static void print_func(Ctx* ctx, const IlFunc* f, const u8* src) {
+  (void)ctx;
+  il_dump(f, src, stdout);
+  fputc('\n', stdout);
+}
+
 static int cmd_il(int argc, char** argv) {
   if (argc != 1) {
     return usage();
   }
   size_t nbytes = 0;
   double secs = 0;
-  return run_file(parse_file_emit, argv[0], &nbytes, &secs) ? 0 : 1;
+  return run_file(parse_file_emit, print_func, argv[0], &nbytes, &secs) ? 0 : 1;
 }
 
 int main(int argc, char** argv) {

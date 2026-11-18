@@ -401,6 +401,10 @@ typedef enum TokenKind {
 // bytes, which the Ctx frees. Returns NULL if the file can't be read.
 typedef u8* (*LoadFileFn)(const char* path, size_t* len);
 
+// Called with each function's IL. f is reused for the next function after it
+// returns. src is the source of the module that f is in.
+typedef void (*FuncDoneFn)(Ctx* ctx, const IlFunc* f, const u8* src);
+
 // Compiler context, which owns all allocations. There's one per compilation,
 // and it can't be shared between threads.
 struct Ctx {
@@ -425,8 +429,11 @@ struct Ctx {
   VEC(Module*) modules;
   NameMap module_ids;
 
-  // Reads imported files. Imports fail if it's NULL.
+  // Reads the root module and imported files. It can't be NULL.
   LoadFileFn load_file;
+
+  // Gets the IL from parse_file_emit(). It's not called if it's NULL.
+  FuncDoneFn on_func;
 };
 
 bool ctx_init(Ctx* ctx);
@@ -751,6 +758,8 @@ struct IlSourcePos {
 
 struct IlFunc {
   Ctx* ctx;
+  NameId name;
+  IlType ret;
   VEC(Ins) ins;  // ins.v[i] is the instruction at REF_INS | i
   // The constant at i + 1 is consts.v[i], and its type is const_types.v[i].
   VEC(u64) consts;
@@ -773,7 +782,7 @@ void il_init(IlFunc* f, Ctx* ctx);
 void il_free(IlFunc* f);
 
 // Empties f for the next function, keeping its allocations.
-void il_reset(IlFunc* f);
+void il_reset(IlFunc* f, NameId name, IlType ret);
 
 Ref il_emit(IlFunc* f, IlOp op, IlType ty, Ref a, Ref b);
 

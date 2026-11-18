@@ -3319,7 +3319,7 @@ def int main():
 ```
 data @.str0 "big "
 
-func @add i64
+func i64 @add
 :0
   %1 = PARAM i64 0
   %2 = PARAM i64 1
@@ -3327,7 +3327,7 @@ func @add i64
   %3 = ADD i64 %1, %2
   RET i64 %3
 
-func @main i64
+func i64 @main
   slot $0 i64 x
 :0
   ;     int x = add(1, 2)

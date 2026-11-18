@@ -20,6 +20,7 @@ TARGETS = {
         "src/luv.c",
         "src/parser_check.c",
         "src/parser_emit.c",
+        "src/il.c",
         "src/path.c",
         "src/ctx.c",
     ],

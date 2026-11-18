@@ -49,7 +49,9 @@ void il_free(IlFunc* f) {
   memset(f, 0, sizeof(*f));
 }
 
-void il_reset(IlFunc* f) {
+void il_reset(IlFunc* f, NameId name, IlType ret) {
+  f->name = name;
+  f->ret = ret;
   f->ins.num = 0;
   f->consts.num = 0;
   f->const_types.num = 0;
@@ -159,6 +161,12 @@ static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
 }
 
 void il_dump(const IlFunc* f, const u8* src, FILE* out) {
+  fputs("func ", out);
+  if (f->ret != IT_VOID) {
+    fprintf(out, "%s ", il_type_names[f->ret]);
+  }
+  const Name* name = lex_name(f->ctx, f->name);
+  fprintf(out, "@%.*s\n", (int)name->len, name->str);
   for (u32 i = 0; i < f->slots.num; ++i) {
     const IlSlot* s = &f->slots.v[i];
     fprintf(out, "  slot $%u %s", i, il_type_names[s->type]);
