@@ -44,6 +44,7 @@ void il_free(IlFunc* f) {
   free(f->const_types.v);
   hashtable_free(&f->const_map);
   free(f->block_starts.v);
+  free(f->slots.v);
   memset(f, 0, sizeof(*f));
 }
 
@@ -53,6 +54,7 @@ void il_reset(IlFunc* f) {
   f->const_types.num = 0;
   hashtable_clear(&f->const_map);
   f->block_starts.num = 0;
+  f->slots.num = 0;
 }
 
 static NORETURN void il_error_too_large(IlFunc* f) {
@@ -116,6 +118,17 @@ void il_branch(IlFunc* f, Ref cond, u32 b) {
   il_block_start(f, il_block_declare(f));
 }
 
+u32 il_slot_add(IlFunc* f, IlType ty, NameId name) {
+  // Slot numbers are stored in an operand.
+  if (f->slots.num >= (1u << 24)) {
+    il_error_too_large(f);
+  }
+  IlSlot* s = vec_push(f->ctx, &f->slots);
+  s->name = name;
+  s->type = ty;
+  return f->slots.num - 1;
+}
+
 static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
   if (r & REF_INS) {
     fprintf(out, "%%%u", r & ~REF_INS);
@@ -125,6 +138,15 @@ static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
 }
 
 void il_dump(const IlFunc* f, FILE* out) {
+  for (u32 i = 0; i < f->slots.num; ++i) {
+    const IlSlot* s = &f->slots.v[i];
+    fprintf(out, "  slot $%u %s", i, il_type_names[s->type]);
+    if (s->name.idx != IL_SLOT_UNNAMED) {
+      const Name* n = lex_name(f->ctx, s->name);
+      fprintf(out, " %.*s", (int)n->len, n->str);
+    }
+    fputc('\n', out);
+  }
   for (u32 i = 0; i < f->ins.num; ++i) {
     Ins ins = f->ins.v[i];
     IlOp op = ins_op(ins);
@@ -138,7 +160,8 @@ void il_dump(const IlFunc* f, FILE* out) {
       fprintf(out, "%%%u = ", i);
     }
     fputs(il_op_names[op], out);
-    if (ty != IT_VOID) {
+    // A SLOT is always an i64 address, so its type would only be clutter.
+    if (ty != IT_VOID && op != OP_SLOT) {
       fprintf(out, " %s", il_type_names[ty]);
     }
     u32 operands[2] = {ins_a(ins), ins_b(ins)};
@@ -150,6 +173,8 @@ void il_dump(const IlFunc* f, FILE* out) {
       fputs(j ? ", " : " ", out);
       if (kind == OPND_BLOCK) {
         fprintf(out, ":%u", operands[j]);
+      } else if (kind == OPND_SLOT) {
+        fprintf(out, "$%u", operands[j]);
       } else {
         il_dump_ref(f, operands[j], out);
       }

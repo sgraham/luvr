@@ -3350,8 +3350,8 @@ func @main i64
   come first, then a label line `:n` for each block, followed by its
   instructions.
 - An instruction is `[%n =] OP [type] operand, operand, ...`. The type is
-  left out when it's `void`. Types are a fixed set of words that no
-  operand can look like.
+  left out when it's `void`, and for `SLOT`, which is always an `i64`
+  address. Types are a fixed set of words that no operand can look like.
 - The first character of an operand says what it is: `%n` an instruction,
   `@name` or `@name+8` a `KSYM`, `:n` a block, `$n` a slot. A `KINT` starts
   with a digit or `-`, and is printed as signed decimal and read at the

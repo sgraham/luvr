@@ -186,6 +186,35 @@ static void test_il_blocks(void) {
   ctx_free(&ctx);
 }
 
+static void test_il_slots(void) {
+  Ctx ctx;
+  CHECK(ctx_init(&ctx));
+  IlFunc f;
+  il_init(&f, &ctx);
+  // Interned names have to be followed by 7 readable bytes.
+  static const u8 x[8] = "x";
+  u32 sx = il_slot_add(&f, IT_I64, lex_intern(&ctx, x, 1));
+  il_slot_add(&f, IT_I32, (NameId){IL_SLOT_UNNAMED});
+  il_block_start(&f, il_block_declare(&f));
+  Ref addr = il_emit(&f, OP_SLOT, IT_I64, sx, 0);
+  il_emit(&f, OP_STORE, IT_I64, il_const_int(&f, IT_I64, 5), addr);
+  addr = il_emit(&f, OP_SLOT, IT_I64, sx, 0);
+  Ref v = il_emit(&f, OP_LOAD, IT_I64, addr, 0);
+  il_emit(&f, OP_RET, IT_I64, v, 0);
+  expect_il_dump(&f,
+                 "  slot $0 i64 x\n"
+                 "  slot $1 i32\n"
+                 ":0\n"
+                 "  %1 = SLOT $0\n"
+                 "  STORE i64 5, %1\n"
+                 "  %3 = SLOT $0\n"
+                 "  %4 = LOAD i64 %3\n"
+                 "  RET i64 %4\n",
+                 "test_il_slots");
+  il_free(&f);
+  ctx_free(&ctx);
+}
+
 int main(void) {
   test_path_dir_len();
   test_path_stem();
@@ -194,5 +223,6 @@ int main(void) {
   test_il_const_int();
   test_il_dump();
   test_il_blocks();
+  test_il_slots();
   return failures ? 1 : 0;
 }

@@ -5,6 +5,7 @@ typedef struct FileBuf FileBuf;
 typedef struct HashSlot HashSlot;
 typedef struct HashTable HashTable;
 typedef struct IlFunc IlFunc;
+typedef struct IlSlot IlSlot;
 typedef struct LexPos LexPos;
 typedef struct LexState LexState;
 typedef struct Module Module;
@@ -668,6 +669,7 @@ typedef enum IlOperand {
   OPND_NONE,
   OPND_REF,
   OPND_BLOCK,  // an index in IlFunc.block_starts
+  OPND_SLOT,   // an index in IlFunc.slots
 } IlOperand;
 
 // X(name, a, b, has_result), where a and b are IlOperands without OPND_.
@@ -676,6 +678,9 @@ typedef enum IlOperand {
   X(SUB, REF, REF, true)       \
   X(MUL, REF, REF, true)       \
   X(NEG, REF, NONE, true)      \
+  X(SLOT, SLOT, NONE, true)    \
+  X(LOAD, REF, NONE, true)     \
+  X(STORE, REF, REF, false)    \
   X(BLOCK, BLOCK, NONE, false) \
   X(JMP, BLOCK, NONE, false)   \
   X(BR, REF, BLOCK, false)     \
@@ -726,6 +731,14 @@ static inline Ref ins_b(Ins i) {
   return (Ref)(i >> 40);
 }
 
+// A piece of the function's frame, which holds a local.
+struct IlSlot {
+  NameId name;  // name.idx is IL_SLOT_UNNAMED for a compiler temporary
+  IlType type;
+};
+
+#define IL_SLOT_UNNAMED UINT32_MAX
+
 struct IlFunc {
   Ctx* ctx;
   VEC(Ins) ins;  // ins.v[i] is the instruction at REF_INS | i
@@ -739,6 +752,7 @@ struct IlFunc {
   // The index in ins of each block's BLOCK, or IL_BLOCK_UNSTARTED if it
   // hasn't been started yet.
   VEC(u32) block_starts;
+  VEC(IlSlot) slots;
 };
 
 #define IL_BLOCK_UNSTARTED UINT32_MAX
@@ -766,6 +780,10 @@ void il_jump(IlFunc* f, u32 b);
 // Goes to block b if cond is 0, and otherwise continues into a new block,
 // because a branch is always the last instruction of its block.
 void il_branch(IlFunc* f, Ref cond, u32 b);
+
+// Returns a new slot holding a value of type ty. SLOT gives its address,
+// which LOAD and STORE use.
+u32 il_slot_add(IlFunc* f, IlType ty, NameId name);
 
 // Writes the text form of f's instructions.
 void il_dump(const IlFunc* f, FILE* out);
