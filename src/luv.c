@@ -1,7 +1,9 @@
 // The compiler driver.
 //   luv parse [-q] file...
+//   luv il file
 // parse checks each file, and prints the first error in each failing file.
-// -q suppresses the summary. Exit status is 1 if any file failed.
+// -q suppresses the summary. il prints the IL for each function in file.
+// Exit status is 1 if any file failed.
 
 #include "luvr.h"
 
@@ -35,9 +37,57 @@ static double now_sec(void) {
   return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
+typedef void (*ParseFn)(Ctx* ctx, const char* path);
+
 static int usage(void) {
-  fprintf(stderr, "usage: luv parse [-q] file...\n");
+  fprintf(stderr,
+          "usage: luv parse [-q] file...\n"  //
+          "       luv il file\n");
   return 2;
+}
+
+// Each file is a separate program, so it has its own Ctx. Prints the error
+// and returns false if the file fails. Otherwise adds the size of the
+// program's modules to nbytes.
+static bool run_file(ParseFn fn, const char* path, size_t* nbytes, double* secs) {
+  Ctx ctx;
+  if (!ctx_init(&ctx)) {
+    fprintf(stderr, "out of memory\n");
+    exit(1);
+  }
+  ctx.load_file = load_file;
+  jmp_buf jb;
+  ctx.on_error = &jb;
+  double t0 = now_sec();
+  if (setjmp(jb)) {
+    u32 line, col;
+    ctx_error_location(&ctx, &line, &col);
+    const char* file = ctx.err_file ? ctx.err_file : path;
+    if (line) {
+      // The buffer is padded with 0s, so the scan for the end of the line
+      // stops even when the error is on the last line.
+      const u8* bol = ctx.err_buf + ctx.err_offset - (col - 1);
+      const u8* eol = bol;
+      while (*eol != '\n' && *eol != '\r' && *eol != 0) {
+        ++eol;
+      }
+      int prefix = fprintf(stderr, "%s:%u:%u:", file, line, col);
+      fprintf(stderr, "%.*s\n", (int)(eol - bol), (const char*)bol);
+      fprintf(stderr, "%*s^ error: %s\n", prefix + (int)col - 1, "", ctx.err_msg);
+    } else {
+      fprintf(stderr, "%s: error: %s\n", file, ctx.err_msg);
+    }
+    ctx_free(&ctx);
+    return false;
+  }
+  fn(&ctx, path);
+  *secs += now_sec() - t0;
+  for (u32 j = 0; j < ctx.modules.num; ++j) {
+    const FileBuf* src = &ctx.modules.v[j]->src;
+    *nbytes += (size_t)(src->end - src->buf);
+  }
+  ctx_free(&ctx);
+  return true;
 }
 
 static int cmd_parse(int argc, char** argv) {
@@ -54,45 +104,7 @@ static int cmd_parse(int argc, char** argv) {
   size_t nbytes = 0;
   double secs = 0;
   for (int i = first; i < argc; ++i) {
-    // Each file is a separate program, so it has its own Ctx.
-    Ctx ctx;
-    if (!ctx_init(&ctx)) {
-      fprintf(stderr, "out of memory\n");
-      return 1;
-    }
-    ctx.load_file = load_file;
-    jmp_buf jb;
-    ctx.on_error = &jb;
-    double t0 = now_sec();
-    if (setjmp(jb)) {
-      u32 line, col;
-      ctx_error_location(&ctx, &line, &col);
-      const char* file = ctx.err_file ? ctx.err_file : argv[i];
-      if (line) {
-        // The buffer is padded with 0s, so the scan for the end of the line
-        // stops even when the error is on the last line.
-        const u8* bol = ctx.err_buf + ctx.err_offset - (col - 1);
-        const u8* eol = bol;
-        while (*eol != '\n' && *eol != '\r' && *eol != 0) {
-          ++eol;
-        }
-        int prefix = fprintf(stderr, "%s:%u:%u:", file, line, col);
-        fprintf(stderr, "%.*s\n", (int)(eol - bol), (const char*)bol);
-        fprintf(stderr, "%*s^ error: %s\n", prefix + (int)col - 1, "", ctx.err_msg);
-      } else {
-        fprintf(stderr, "%s: error: %s\n", file, ctx.err_msg);
-      }
-      ++failures;
-      ctx_free(&ctx);
-      continue;
-    }
-    parse_file(&ctx, argv[i]);
-    secs += now_sec() - t0;
-    for (u32 j = 0; j < ctx.modules.num; ++j) {
-      const FileBuf* src = &ctx.modules.v[j]->src;
-      nbytes += (size_t)(src->end - src->buf);
-    }
-    ctx_free(&ctx);
+    failures += !run_file(parse_file, argv[i], &nbytes, &secs);
   }
   if (!quiet) {
     int nfiles = argc - first;
@@ -102,9 +114,21 @@ static int cmd_parse(int argc, char** argv) {
   return failures ? 1 : 0;
 }
 
+static int cmd_il(int argc, char** argv) {
+  if (argc != 1) {
+    return usage();
+  }
+  size_t nbytes = 0;
+  double secs = 0;
+  return run_file(parse_file_emit, argv[0], &nbytes, &secs) ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
   if (argc > 1 && strcmp(argv[1], "parse") == 0) {
     return cmd_parse(argc - 2, argv + 2);
+  }
+  if (argc > 1 && strcmp(argv[1], "il") == 0) {
+    return cmd_il(argc - 2, argv + 2);
   }
   return usage();
 }

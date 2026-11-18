@@ -1,5 +1,16 @@
 #include "luvr.h"
 
+// This file is compiled twice, by parser_check.c with EMIT 0 and by
+// parser_emit.c with EMIT 1.
+#if !defined(EMIT)
+#  error "parser.c is only compiled through parser_check.c or parser_emit.c"
+#endif
+#if EMIT
+#  define PARSE_FILE parse_file_emit
+#else
+#  define PARSE_FILE parse_file
+#endif
+
 typedef union ConstValue ConstValue;
 typedef struct ExpDesc ExpDesc;
 typedef struct Local Local;
@@ -2739,7 +2750,7 @@ static void parse_end(Parser* p) {
   free(p);
 }
 
-void parse_file(Ctx* ctx, const char* path) {
+void PARSE_FILE(Ctx* ctx, const char* path) {
   ASSERT(ctx->modules.num == 0);
   // The Parser isn't a local, so that it's still valid after a longjmp.
   Parser* p = (Parser*)malloc(sizeof(Parser));

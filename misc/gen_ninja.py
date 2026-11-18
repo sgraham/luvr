@@ -12,7 +12,17 @@ import sys
 TARGETS = {
     "lexdump": ["src/lexdump.c", "src/lex.c", "src/ctx.c"],
     "lexfloor": ["bench/lexfloor.c", "src/lex.c", "src/ctx.c"],
-    "luv": ["src/luv.c", "src/parser.c", "src/path.c", "src/lex.c", "src/ctx.c"],
+    # lex.c is first so that changes to the parser don't move lex_next. Its
+    # speed depends on its address by up to ~4% on dumbbench, even with
+    # functions aligned to 64 bytes.
+    "luv": [
+        "src/lex.c",
+        "src/luv.c",
+        "src/parser_check.c",
+        "src/parser_emit.c",
+        "src/path.c",
+        "src/ctx.c",
+    ],
     "unittest": ["src/unittest.c", "src/il.c", "src/path.c", "src/lex.c", "src/ctx.c"],
 }
 

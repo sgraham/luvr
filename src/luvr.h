@@ -455,7 +455,6 @@ NORETURN void ctx_error_unclosed(const LexState* ls,
 
 // Recursive-descent parser. The only lookahead is the lexer's current token.
 // There's no backtracking and no token buffer. It only accepts or rejects.
-// There's no code generation yet.
 //
 // Returns normally if the file is syntactically valid. On the first syntax
 // error, the message and location are stored in ctx (see
@@ -466,6 +465,9 @@ NORETURN void ctx_error_unclosed(const LexState* ls,
 // Ctx can only be used to parse one root. It has to use '/' to separate
 // directories, as import paths do.
 void parse_file(Ctx* ctx, const char* path);
+
+// The same as parse_file(), and also emits IL for each function.
+void parse_file_emit(Ctx* ctx, const char* path);
 
 // Paths
 
