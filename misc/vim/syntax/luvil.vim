@@ -5,7 +5,7 @@ endif
 
 syn case match
 
-syn keyword     luvilKeyword     func slot
+syn keyword     luvilKeyword     data func slot
 hi def link     luvilKeyword     Keyword
 
 syn keyword     luvilType        void i8 u8 i16 u16 i32 i64 f32 f64 sym
@@ -20,12 +20,17 @@ hi def link     luvilNumber      Number
 
 syn match       luvilRef         /%\d\+/
 syn match       luvilSlot        /\$\d\+/
-syn match       luvilSym         /@\w\+/
+syn match       luvilSym         /@\.\=\w\+/
 syn match       luvilBlock       /:\d\+/
 hi def link     luvilRef         Identifier
 hi def link     luvilSlot        Identifier
 hi def link     luvilSym         Function
 hi def link     luvilBlock       Label
+
+syn region      luvilString      start=/"/ skip=/\\./ end=/"/ oneline contains=luvilEscape
+syn match       luvilEscape      /\\\(x\x\x\|.\)/ contained
+hi def link     luvilString      String
+hi def link     luvilEscape      SpecialChar
 
 syn keyword     luvilTodo        contained TODO XXX BUG
 syn region      luvilComment     start=";" end="$" contains=luvilTodo,@Spell

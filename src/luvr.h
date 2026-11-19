@@ -4,6 +4,7 @@ typedef struct Ctx Ctx;
 typedef struct FileBuf FileBuf;
 typedef struct HashSlot HashSlot;
 typedef struct HashTable HashTable;
+typedef struct IlData IlData;
 typedef struct IlFunc IlFunc;
 typedef struct IlSlot IlSlot;
 typedef struct IlSourcePos IlSourcePos;
@@ -460,8 +461,13 @@ struct Ctx {
   // Gets the IL from parse_file_emit(). It's not called if it's NULL.
   FuncDoneFn on_func;
 
-  // Functions and data that IL constants can refer to, by index.
+  // Functions that IL constants can refer to, by index.
   VEC(NameId) syms;
+
+  // Read-only bytes, such as string literals, that IL constants can refer to
+  // by index.
+  VEC(IlData) data;
+  VEC(u8) databytes;
 };
 
 bool ctx_init(Ctx* ctx);
@@ -764,6 +770,9 @@ typedef enum IlType {
   // Only the type of a constant, whose value is a symbol index. It's used as
   // an i64 address.
   IT_SYM,
+  // Only the type of a constant, whose value is an index in Ctx.data. It's
+  // used as an i64 address.
+  IT_DATA,
   IT_NUM_TYPES,
 } IlType;
 
@@ -823,6 +832,11 @@ struct IlFunc {
 
 #define IL_BLOCK_UNSTARTED UINT32_MAX
 
+struct IlData {
+  u32 off;  // into Ctx.databytes
+  u32 len;
+};
+
 void il_init(IlFunc* f, Ctx* ctx);
 void il_free(IlFunc* f);
 
@@ -836,6 +850,12 @@ Ref il_emit(IlFunc* f, IlOp op, IlType ty, Ref a, Ref b);
 Ref il_const_int(IlFunc* f, IlType ty, u64 v);
 
 Ref il_const_sym(IlFunc* f, u32 sym);
+
+// data is an index in Ctx.data.
+Ref il_const_data(IlFunc* f, u32 data);
+
+// Returns the index in Ctx.data of a copy of the n bytes at s.
+u32 il_data_add(Ctx* ctx, const u8* s, u32 n);
 
 // Emits a CALL followed by an EXT for each two of the n args. ty is IT_VOID
 // if the call has no result.
@@ -864,3 +884,6 @@ void il_source_pos(IlFunc* f, u32 offset);
 // Writes the text form of f's instructions. src is the source that the
 // offsets in f->source_pos are in.
 void il_dump(const IlFunc* f, const u8* src, FILE* out);
+
+// Writes the text form of Ctx.data[i].
+void il_dump_data(const Ctx* ctx, u32 i, FILE* out);

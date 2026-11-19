@@ -29,6 +29,7 @@ static const char* const il_type_names[] = {
     [IT_F32] = "f32",    //
     [IT_F64] = "f64",    //
     [IT_SYM] = "sym",    //
+    [IT_DATA] = "data",  //
 };
 
 void il_init(IlFunc* f, Ctx* ctx) {
@@ -107,6 +108,22 @@ Ref il_const_sym(IlFunc* f, u32 sym) {
   return il_const(f, IT_SYM, sym);
 }
 
+Ref il_const_data(IlFunc* f, u32 data) {
+  return il_const(f, IT_DATA, data);
+}
+
+u32 il_data_add(Ctx* ctx, const u8* s, u32 n) {
+  IlData* d = vec_push(ctx, &ctx->data);
+  d->off = ctx->databytes.num;
+  d->len = n;
+  if (n != 0) {
+    vec_reserve(ctx, &ctx->databytes, n);
+    memcpy(ctx->databytes.v + ctx->databytes.num, s, n);
+    ctx->databytes.num += n;
+  }
+  return ctx->data.num - 1;
+}
+
 Ref il_call(IlFunc* f, IlType ty, Ref callee, const Ref* args, u32 n) {
   Ref call = il_emit(f, OP_CALL, ty, callee, n);
   for (u32 i = 0; i < n; i += 2) {
@@ -174,10 +191,15 @@ static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
     fprintf(out, "%%%u", r & ~REF_INS);
     return;
   }
-  u64 v = f->consts.v[r - 1];
-  if (f->const_types.v[r - 1] == IT_SYM) {
+  u32 idx = r - 1;
+  u64 v = f->consts.v[idx];
+  if (f->const_types.v[idx] == IT_SYM) {
     const Name* name = lex_name(f->ctx, f->ctx->syms.v[v]);
     fprintf(out, "@%.*s", (int)name->len, name->str);
+    return;
+  }
+  if (f->const_types.v[idx] == IT_DATA) {
+    fprintf(out, "@.dat%" PRIu64, v);
     return;
   }
   fprintf(out, "%" PRId64, (int64_t)v);
@@ -256,4 +278,24 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   for (; pos < f->source_pos.num; ++pos) {
     il_dump_source_line(src, f->source_pos.v[pos].offset, out);
   }
+}
+
+void il_dump_data(const Ctx* ctx, u32 i, FILE* out) {
+  const IlData* d = &ctx->data.v[i];
+  fprintf(out, "data @.dat%u \"", i);
+  for (u32 j = 0; j < d->len; ++j) {
+    u8 c = ctx->databytes.v[d->off + j];
+    if (c == '"' || c == '\\') {
+      fprintf(out, "\\%c", c);
+    } else if (c == '\n') {
+      fputs("\\n", out);
+    } else if (c == '\t') {
+      fputs("\\t", out);
+    } else if (c >= ' ' && c <= '~') {
+      fputc(c, out);
+    } else {
+      fprintf(out, "\\x%02x", c);
+    }
+  }
+  fputs("\"\n", out);
 }

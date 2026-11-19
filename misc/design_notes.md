@@ -3298,8 +3298,11 @@ Statements:
 - `print` uses D23's runtime calls, one per kind, then `luv_print_end`. An
   interpolated string in `print` is one call per piece. The runtime
   functions are symbols too, created when the `Ctx` is set up.
-- String literal bytes go into a table of string data on `Ctx`. A `KSYM`
-  refers to the bytes, and the length is a `KINT`.
+- String literal bytes go into a table of data on `Ctx`. A constant of
+  type `IT_DATA` refers to the bytes by their index in the table, and the
+  length is a `KINT`. Like a `KSYM`, it's an address, and it becomes a
+  relocation. It isn't a symbol only so that data doesn't need an interned
+  name.
 
 #### The dump format
 
@@ -3317,7 +3320,7 @@ def int main():
 ```
 
 ```
-data @.str0 "big "
+data @.dat0 "big "
 
 func i64 @add
 :0
@@ -3341,7 +3344,7 @@ func i64 @main
   BR %7, :2
 :3
   ;         print "big \(x)"
-  CALL @luv_print_str, @.str0, 4
+  CALL @luv_print_str, @.dat0, 4
   ...
 ```
 
@@ -3368,7 +3371,7 @@ func i64 @main
   number means counting newlines from the start of the file.
 - In `data @name "bytes"`, printable ASCII is written as itself except for
   `"` and `\`. Everything else is `\n`, `\t`, `\\`, `\"` or `\xNN`.
-- Symbol names can't contain whitespace. String data is `@.strN`, which
+- Symbol names can't contain whitespace. Data is `@.datN`, which
   can't collide with a function's name because identifiers can't start
   with `.`.
 

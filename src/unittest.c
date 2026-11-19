@@ -101,6 +101,9 @@ static void test_path_normalize(void) {
 static void expect_il_dump(const IlFunc* f, const char* src, const char* want, const char* what) {
   FILE* tmp = tmpfile();
   CHECK(tmp);
+  for (u32 i = 0; i < f->ctx->data.num; ++i) {
+    il_dump_data(f->ctx, i, tmp);
+  }
   il_dump(f, (const u8*)src, tmp);
   rewind(tmp);
   char got[1024];
@@ -257,6 +260,33 @@ static void test_il_call(void) {
   ctx_free(&ctx);
 }
 
+static void test_il_data(void) {
+  Ctx ctx;
+  CHECK(ctx_init(&ctx));
+  IlFunc f;
+  il_init_test(&f, &ctx, IT_VOID);
+  u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
+  u32 hi = il_data_add(&ctx, (const u8*)"hi", 2);
+  u32 escaped = il_data_add(&ctx, (const u8*)"\"\\\n\t\x00\x7f\xff~ ", 9);
+  il_data_add(&ctx, NULL, 0);
+  il_block_start(&f, il_block_declare(&f));
+  Ref args[] = {il_const_data(&f, escaped), il_const_int(&f, IT_I64, 9), il_const_data(&f, hi),
+                il_const_int(&f, IT_I64, 2)};
+  il_call(&f, IT_VOID, il_const_sym(&f, sym), args, 4);
+  il_emit(&f, OP_RET, IT_VOID, 0, 0);
+  expect_il_dump(&f, "",
+                 "data @.dat0 \"hi\"\n"
+                 "data @.dat1 \"\\\"\\\\\\n\\t\\x00\\x7f\\xff~ \"\n"
+                 "data @.dat2 \"\"\n"
+                 "func @f\n"
+                 ":0\n"
+                 "  CALL @g, @.dat1, 9, @.dat0, 2\n"
+                 "  RET\n",
+                 "test_il_data");
+  il_free(&f);
+  ctx_free(&ctx);
+}
+
 int main(void) {
   test_path_dir_len();
   test_path_stem();
@@ -267,5 +297,6 @@ int main(void) {
   test_il_blocks();
   test_il_slots();
   test_il_call();
+  test_il_data();
   return failures ? 1 : 0;
 }
