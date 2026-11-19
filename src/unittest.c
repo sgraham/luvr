@@ -113,12 +113,9 @@ static void expect_il_dump(const IlFunc* f, const char* src, const char* want, c
   }
 }
 
-// Interned names have to be followed by 7 readable bytes.
-static const u8 test_func_name[8] = "f";
-
 static void il_init_test(IlFunc* f, Ctx* ctx, IlType ret) {
   il_init(f, ctx);
-  il_reset(f, lex_intern(ctx, test_func_name, 1), ret);
+  il_reset(f, lex_intern_safe(ctx, "f"), ret);
 }
 
 static void test_il_const_int(void) {
@@ -201,9 +198,7 @@ static void test_il_slots(void) {
   CHECK(ctx_init(&ctx));
   IlFunc f;
   il_init_test(&f, &ctx, IT_I64);
-  // Interned names have to be followed by 7 readable bytes.
-  static const u8 x[8] = "x";
-  u32 sx = il_slot_add(&f, IT_I64, lex_intern(&ctx, x, 1));
+  u32 sx = il_slot_add(&f, IT_I64, lex_intern_safe(&ctx, "x"));
   il_slot_add(&f, IT_I32, (NameId){IL_SLOT_UNNAMED});
   const char* src = "def int main():\n    int x = 5\n    pass\n    return x\n";
   il_block_start(&f, il_block_declare(&f));
@@ -238,9 +233,7 @@ static void test_il_call(void) {
   CHECK(ctx_init(&ctx));
   IlFunc f;
   il_init_test(&f, &ctx, IT_I64);
-  // Interned names have to be followed by 7 readable bytes.
-  static const u8 g[8] = "g";
-  u32 sym = ctx_sym_add(&ctx, lex_intern(&ctx, g, 1));
+  u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
   Ref callee = il_const_sym(&f, sym);
   if (il_const_sym(&f, sym) != callee || il_const_int(&f, IT_I64, sym) == callee) {
     printf("il_const_sym: symbols aren't interned apart from integers\n");

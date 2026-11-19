@@ -649,8 +649,13 @@ const char* tok_kind_name(TokenKind kind);
 bool lex_intern_init(Ctx* ctx);
 
 // Interns s, which must be followed by at least 7 readable bytes (as source
-// text is, because of LEX_PADDING).
-NameId lex_intern(Ctx* ctx, const u8* s, u32 len);
+// text is, because of LEX_PADDING). The Name points to s, so s has to live as
+// long as ctx.
+NameId lex_intern_padded(Ctx* ctx, const u8* s, u32 len);
+
+// Interns a NUL-terminated s of at most 64 bytes that isn't padded, such as
+// a string literal. s has to live as long as ctx.
+NameId lex_intern_safe(Ctx* ctx, const char* s);
 
 static inline const Name* lex_name(const Ctx* ctx, NameId id) {
   return &ctx->names.v[id.idx];

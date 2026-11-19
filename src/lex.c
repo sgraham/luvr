@@ -72,9 +72,11 @@ static u64 hash_ident(const u8* s, u32 len) {
   return mix64(h);
 }
 
-// Keyword spellings aren't padded, so they're copied into a padded buffer.
+// Keyword spellings and other C strings aren't padded, so they're copied into
+// a padded buffer.
 static u64 hash_ident_safe(const char* s, u32 len) {
   u8 tmp[64 + 8] = {0};
+  ASSERT(len <= 64);
   memcpy(tmp, s, len);
   return hash_ident(tmp, len);
 }
@@ -170,8 +172,13 @@ bool lex_intern_init(Ctx* ctx) {
   return true;
 }
 
-NameId lex_intern(Ctx* ctx, const u8* s, u32 len) {
+NameId lex_intern_padded(Ctx* ctx, const u8* s, u32 len) {
   return (NameId){intern(ctx, s, len, hash_ident(s, len), 0)};
+}
+
+NameId lex_intern_safe(Ctx* ctx, const char* s) {
+  u32 len = (u32)strlen(s);
+  return (NameId){intern(ctx, (const u8*)s, len, hash_ident_safe(s, len), 0)};
 }
 
 // Decoded string storage

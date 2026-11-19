@@ -2746,7 +2746,7 @@ static void toplevel_stat(Parser* p) {
 // Modules
 
 // Returns len zero bytes followed by LEX_PADDING more, for a name that will be
-// interned, because lex_intern() reads past the end.
+// interned, because lex_intern_padded() reads past the end.
 static u8* name_buf_new(Ctx* ctx, u32 len) {
   u8* buf = (u8*)calloc(len + LEX_PADDING, 1);
   if (!buf) {
@@ -2863,7 +2863,7 @@ static u32 import_module(Parser* p, const u8* path, u32 len, u32 at) {
   u32 joined_len = name_len;
   name_len = path_normalize(name_buf, name_len);
   memset(name_buf + name_len, 0, joined_len - name_len);
-  NameId name = lex_intern(ctx, name_buf, name_len);
+  NameId name = lex_intern_padded(ctx, name_buf, name_len);
   const u32* idx = namemap_find(&ctx->module_ids, name);
   if (idx) {
     // The module's name was already interned when it was added, so the Name
@@ -2897,8 +2897,9 @@ static void parse_module(Parser* p) {
   next(p);
   while (optional(p, TK_IMPORT)) {
     // Escaped strings are decoded into Ctx.strbytes, which isn't padded for
-    // lex_intern(), and a module name has no reason to contain escapes. This
-    // also means that a path can't contain '\', so it always uses '/'.
+    // lex_intern_padded(), and a module name has no reason to contain
+    // escapes. This also means that a path can't contain '\', so it always
+    // uses '/'.
     if (T(p) != TK_STRING || (p->ls.pos.t.flags & TF_ESCAPED)) {
       error_expected(p, "quoted module name");
     }
@@ -2907,7 +2908,7 @@ static void parse_module(Parser* p) {
     u32 idx = import_module(p, s, len, p->ls.pos.t.offset);
     // The module is bound to the last component of its path.
     u32 base = path_dir_len(s, len);
-    NameId name = lex_intern(p->ls.ctx, s + base, len - base);
+    NameId name = lex_intern_padded(p->ls.ctx, s + base, len - base);
     next(p);
     if (optional(p, TK_AS)) {
       u32 at;
@@ -2977,7 +2978,7 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   const char* name = path_stem(path, &len);
   u8* name_buf = name_buf_new(ctx, len);
   memcpy(name_buf, name, len);
-  p->mod = module_new(ctx, name_buf, lex_intern(ctx, name_buf, len));
+  p->mod = module_new(ctx, name_buf, lex_intern_padded(ctx, name_buf, len));
   size_t path_len = strlen(path);
   char* filename = filename_new(ctx, path_len);
   memcpy(filename, path, path_len + 1);
