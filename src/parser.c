@@ -186,7 +186,7 @@ typedef enum Flow {
 
 // Where an expression's value is.
 typedef enum ExpKind {
-  EK_REF,    // the result of an instruction or constant
+  EK_REF,    // the result of an instruction or constant, in ExpDesc.ref
   EK_CONST,  // in ExpDesc.v
   EK_LOCAL,  // in ExpDesc.slot, not loaded yet
 } ExpKind;
@@ -198,6 +198,7 @@ struct ExpDesc {
   ExpKind kind;
   union {
     u32 slot;  // EK_LOCAL
+    Ref ref;   // EK_REF
   };
   ConstValue v;
 };
@@ -1270,6 +1271,16 @@ static IlType il_type_of(Parser* p, TypeId t, u32 at) {
   }
 }
 
+// A value that the emitting build doesn't emit yet. Its ref is 0, which
+// isn't a valid Ref, so that exp_to_ref() gives an error if it's used,
+// rather than using whatever e was before.
+static void exp_unemitted(ExpDesc* e) {
+  e->kind = EK_REF;
+  if (EMIT) {
+    e->ref = 0;
+  }
+}
+
 // Emits whatever is needed to make e one value of type t, and returns its Ref.
 // t has already been checked against e's type. If e is an untyped constant
 // it will take on t's type.
@@ -1285,6 +1296,9 @@ static Ref exp_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
     Ref addr = il_emit(&p->il, OP_SLOT, IT_I64, e->slot, 0);
     return il_emit(&p->il, OP_LOAD, ty, addr, 0);
   }
+  if (e->kind == EK_REF && e->ref != 0) {
+    return e->ref;
+  }
   error_at(p, at, "This expression isn't supported yet.");
 }
 
@@ -1294,11 +1308,20 @@ static void exp_store(Parser* p, const Local* l, const ExpDesc* e, u32 at) {
   il_emit(&p->il, OP_STORE, il_type_of(p, l->type, at), v, addr);
 }
 
+// Called after a binary operator and before its right operand, so that the
+// left operand is evaluated first. Constants are kept so they can be folded.
+static void exp_infix(Parser* p, ExpDesc* e, u32 at) {
+  if (e->kind == EK_LOCAL) {
+    e->ref = exp_to_ref(p, e, e->type, at);
+    e->kind = EK_REF;
+  }
+}
+
 // Unary '-' or '~', which give the operand's type. Constants are folded.
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
   TypeId t = e->type;
   if (t.idx == TY_UNKNOWN) {
-    e->kind = EK_REF;
+    exp_unemitted(e);
     return;
   }
   if (neg && !type_is_integer(t) && !type_is_float(t)) {
@@ -1308,7 +1331,7 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
     error_at(p, at, "'~' expects an integer, not %s.", describe_type(t));
   }
   if (e->kind != EK_CONST) {
-    e->kind = EK_REF;
+    exp_unemitted(e);
     return;
   }
   if (type_is_float(t)) {
@@ -1347,7 +1370,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       if (e->kind == EK_CONST && e->type.idx == TY_BOOL) {
         e->v.b = !e->v.b;
       } else {
-        e->kind = EK_REF;
+        exp_unemitted(e);
       }
       e->type = ty_bool;
       break;
@@ -1375,7 +1398,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       }
       e->shape = SH_VALUE;
       e->type = ty_unknown;
-      e->kind = EK_REF;
+      exp_unemitted(e);
       break;
     }
     default:
@@ -1393,6 +1416,9 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
   while (op != OPR_NONE && priority[op] > limit) {
     u32 at = p->ls.pos.t.offset;
     next(p);
+    if (EMIT) {
+      exp_infix(p, e, start);
+    }
     if (op == OPR_NOTIN) {
       check(p, TK_IN);
     }
@@ -1419,18 +1445,20 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
     bool is_bool = binopr_is_comparison(op) || logical;
     bool is_arith = op >= OPR_BOR && op <= OPR_MOD;
     if (is_compare) {
-      ExpKind kind = EK_REF;
+      bool folded = false;
       if (e->kind == EK_CONST || rhs.kind == EK_CONST) {
         TypeId t = type_is_untyped(e->type) ? rhs.type : e->type;
         check_const_operands(p, op, t, e, start, &rhs, rhs_at, at);
         bool foldable = t.idx == TY_BOOL || type_is_integer(t) || type_is_float(t);
         if (e->kind == EK_CONST && rhs.kind == EK_CONST && foldable) {
           e->v.b = fold_compare(op, e, &rhs);
-          kind = EK_CONST;
+          folded = true;
         }
       }
       e->type = ty_bool;
-      e->kind = kind;
+      if (!folded) {
+        exp_unemitted(e);
+      }
     } else if (is_bool) {
       // Only 'and' and 'or' of two constants are constant, even when one
       // operand is enough to decide the value.
@@ -1438,7 +1466,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
           rhs.type.idx == TY_BOOL) {
         e->v.b = op == OPR_AND ? e->v.b && rhs.v.b : e->v.b || rhs.v.b;
       } else {
-        e->kind = EK_REF;
+        exp_unemitted(e);
       }
       e->type = ty_bool;
     } else if (is_arith) {
@@ -1448,13 +1476,18 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       }
       if (e->kind == EK_CONST && rhs.kind == EK_CONST && t.idx != TY_UNKNOWN && t.idx != TY_STR) {
         fold_arith(p, op, t, e, &rhs, at);
-      } else {
+      } else if (EMIT && op == OPR_ADD && (t.idx == TY_I32 || t.idx == TY_I64)) {
+        Ref a = exp_to_ref(p, e, t, start);
+        Ref b = exp_to_ref(p, &rhs, t, rhs_at);
         e->kind = EK_REF;
+        e->ref = il_emit(&p->il, OP_ADD, il_type_of(p, t, at), a, b);
+      } else {
+        exp_unemitted(e);
       }
       e->type = t;
     } else {
       e->type = ty_unknown;
-      e->kind = EK_REF;
+      exp_unemitted(e);
     }
     op = nextop;
   }
@@ -1778,7 +1811,7 @@ static void postfix(Parser* p, ExpDesc* e) {
     switch (T(p)) {
       case TK_DOT:
         e->type = ty_unknown;
-        e->kind = EK_REF;
+        exp_unemitted(e);
         next(p);
         if (T(p) == TK_NAME) {
           e->shape = SH_LVALUE;
@@ -1795,7 +1828,7 @@ static void postfix(Parser* p, ExpDesc* e) {
           error_at(p, p->ls.pos.t.offset, "A type can't be indexed.");
         }
         e->type = ty_unknown;
-        e->kind = EK_REF;
+        exp_unemitted(e);
         index_or_slice(p, e);
         break;
       case TK_LPAREN: {
@@ -1804,7 +1837,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         call_args(p, is_struct_literal, callee);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
         e->type = type_is_function(p, callee) ? p->types.v[callee.idx].ret : ty_unknown;
-        e->kind = EK_REF;
+        exp_unemitted(e);
         break;
       }
       case TK_LBRACE:
@@ -1844,7 +1877,7 @@ static void primary(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
   e->shape = SH_VALUE;
   e->type = ty_unknown;
-  e->kind = EK_REF;
+  exp_unemitted(e);
   switch (T(p)) {
     case TK_INTLIT:
       e->type = literal_type(p);
@@ -2000,7 +2033,7 @@ static void primary(Parser* p, ExpDesc* e) {
           (type_is_integer(e->type) || type_is_float(e->type))) {
         fold_cast(p, e, t, value_at);
       } else {
-        e->kind = EK_REF;
+        exp_unemitted(e);
       }
       e->type = t;
       break;

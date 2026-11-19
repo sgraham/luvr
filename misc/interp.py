@@ -119,6 +119,17 @@ def value_of(values, operand):
     raise Error(f"can't use a {operand.kind} as a value")
 
 
+# Integers are kept as Python ints in the signed range of their type.
+def wrap(ty, v):
+    bits = {"i32": 32, "i64": 64}[ty]
+    # The low bits are the two's complement result. If the top one of them is
+    # set, it's negative.
+    v &= (1 << bits) - 1
+    if v >= 1 << (bits - 1):
+        v -= 1 << bits
+    return v
+
+
 def run(f):
     values = {}
     # A slot's address is its number.
@@ -138,6 +149,10 @@ def run(f):
             continue
         if ins.op == "STORE":
             frame[value_of(values, ins.operands[1])] = value_of(values, ins.operands[0])
+            continue
+        if ins.op == "ADD":
+            a, b = (value_of(values, o) for o in ins.operands)
+            values[ins.result] = wrap(ins.ty, a + b)
             continue
         if ins.op == "RET":
             return value_of(values, ins.operands[0]) if ins.operands else None
