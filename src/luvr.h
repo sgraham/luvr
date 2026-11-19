@@ -715,6 +715,7 @@ typedef enum IlOperand {
   X(ADD, REF, REF, true)       \
   X(SUB, REF, REF, true)       \
   X(MUL, REF, REF, true)       \
+  X(XOR, REF, REF, true)       \
   X(NEG, REF, NONE, true)      \
   X(SLOT, SLOT, NONE, true)    \
   X(LOAD, REF, NONE, true)     \

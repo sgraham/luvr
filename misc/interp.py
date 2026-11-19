@@ -134,6 +134,7 @@ ARITH = {
     "ADD": lambda a, b: a + b,
     "SUB": lambda a, b: a - b,
     "MUL": lambda a, b: a * b,
+    "XOR": lambda a, b: a ^ b,
 }
 
 # The runtime's functions, by symbol name.

@@ -1398,6 +1398,11 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       e->shape = SH_VALUE;
       if (e->kind == EK_CONST && e->type.idx == TY_BOOL) {
         e->v.b = !e->v.b;
+      } else if (EMIT && e->type.idx == TY_BOOL) {
+        // A bool is 0 or 1.
+        Ref v = exp_to_ref(p, e, ty_bool, at);
+        e->ref = il_emit(&p->il, OP_XOR, IT_I32, v, il_const_int(&p->il, IT_I32, 1));
+        e->kind = EK_REF;
       } else {
         exp_unemitted(e);
       }
