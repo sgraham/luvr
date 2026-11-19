@@ -405,6 +405,22 @@ typedef u8* (*LoadFileFn)(const char* path, size_t* len);
 // returns. src is the source of the module that f is in.
 typedef void (*FuncDoneFn)(Ctx* ctx, const IlFunc* f, const u8* src);
 
+// The runtime's functions, which are the first symbols in Ctx.syms, in this
+// order.
+#define RUNTIME_SYMS(X) \
+  X(luv_print_i64)      \
+  X(luv_print_bool)     \
+  X(luv_print_end)
+
+// clang-format off
+typedef enum RuntimeSym {
+#define RUNTIME_SYM_ENUM_(name) SYM_##name,
+  RUNTIME_SYMS(RUNTIME_SYM_ENUM_)
+#undef RUNTIME_SYM_ENUM_
+  SYM_NUM_RUNTIME,
+} RuntimeSym;
+// clang-format on
+
 // Compiler context, which owns all allocations. There's one per compilation,
 // and it can't be shared between threads.
 struct Ctx {

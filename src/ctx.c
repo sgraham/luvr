@@ -2,9 +2,21 @@
 
 bool ctx_init(Ctx* ctx) {
   memset(ctx, 0, sizeof(*ctx));
-  if (!lex_intern_init(ctx) || !namemap_init(&ctx->module_ids, 16)) {
+  // on_error isn't set yet, so adding the runtime's symbols can't be allowed
+  // to grow syms.
+  ctx->syms.cap = SYM_NUM_RUNTIME;
+  ctx->syms.v = (NameId*)malloc(ctx->syms.cap * sizeof(NameId));
+  if (!ctx->syms.v || !lex_intern_init(ctx) || !namemap_init(&ctx->module_ids, 16)) {
     ctx_free(ctx);
     return false;
+  }
+  static const char* const runtime_syms[] = {
+#define RUNTIME_SYM_NAME_(name) #name,
+      RUNTIME_SYMS(RUNTIME_SYM_NAME_)
+#undef RUNTIME_SYM_NAME_
+  };
+  for (u32 i = 0; i < SYM_NUM_RUNTIME; ++i) {
+    ctx_sym_add(ctx, lex_intern_safe(ctx, runtime_syms[i]));
   }
   return true;
 }

@@ -136,6 +136,13 @@ ARITH = {
     "MUL": lambda a, b: a * b,
 }
 
+# The runtime's functions, by symbol name.
+RUNTIME = {
+    "luv_print_i64": lambda v: sys.stdout.write(str(v)),
+    "luv_print_bool": lambda v: sys.stdout.write("true" if v else "false"),
+    "luv_print_end": lambda: sys.stdout.write("\n"),
+}
+
 
 def run(f):
     values = {}
@@ -160,6 +167,15 @@ def run(f):
         if ins.op in ARITH:
             a, b = (value_of(values, o) for o in ins.operands)
             values[ins.result] = wrap(ins.ty, ARITH[ins.op](a, b))
+            continue
+        if ins.op == "CALL":
+            callee = ins.operands[0]
+            if callee.kind != "sym" or callee.val not in RUNTIME:
+                raise Error(f"{f.name}: can't call {callee.val}")
+            args = [value_of(values, o) for o in ins.operands[1:]]
+            r = RUNTIME[callee.val](*args)
+            if ins.result is not None:
+                values[ins.result] = r
             continue
         if ins.op == "RET":
             return value_of(values, ins.operands[0]) if ins.operands else None

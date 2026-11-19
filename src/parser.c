@@ -766,9 +766,9 @@ static bool binopr_is_comparison(BinOpr op) {
   return op >= OPR_EQ && op <= OPR_NOTIN;
 }
 
-// The type that a variable gets when it's declared by assigning a value of
-// type t.
-static TypeId default_type_for_variable(TypeId t) {
+// Returns t unchanged unless it's an untyped constant, in which case it returns
+// a storage type for it.
+static TypeId type_concrete(TypeId t) {
   switch ((FixedType)t.idx) {
     case TY_UNTYPED_INT:
       return ty_i64;
@@ -1320,6 +1320,21 @@ static void exp_store(Parser* p, const Local* l, const ExpDesc* e, u32 at) {
   Ref addr = il_emit(&p->il, OP_SLOT, IT_I64, l->slot, 0);
   Ref v = exp_to_ref(p, e, l->type, at);
   il_emit(&p->il, OP_STORE, il_type_of(p, l->type, at), v, addr);
+}
+
+static void exp_print(Parser* p, const ExpDesc* e, u32 at) {
+  TypeId t = type_concrete(e->type);
+  RuntimeSym sym;
+  if (t.idx == TY_I64) {
+    sym = SYM_luv_print_i64;
+  } else if (t.idx == TY_BOOL) {
+    sym = SYM_luv_print_bool;
+  } else {
+    error_at(p, at, "Printing %s isn't supported yet.", describe_type(t));
+  }
+  Ref arg = exp_to_ref(p, e, t, at);
+  il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), &arg, 1);
+  il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_end), NULL, 0);
 }
 
 // Called after a binary operator and before its right operand, so that the
@@ -2227,7 +2242,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         declare_const(p, name, at, toplevel, v.type, &v, value_at);
       } else if (declares) {
         check_not_void(p, &v, value_at);
-        TypeId t = default_type_for_variable(v.type);
+        TypeId t = type_concrete(v.type);
         check_const_conversion(p, t, &v, value_at);
         if (toplevel && v.kind != EK_CONST) {
           error_at(p, value_at, "Expected a constant expression.");
@@ -2278,7 +2293,8 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
 static void simple_stat(Parser* p) {
   if (EMIT) {
     il_source_pos(&p->il, p->ls.pos.t.offset);
-    if (T(p) != TK_RETURN && T(p) != TK_PASS && !is_builtin_type(T(p)) && T(p) != TK_NAME) {
+    if (T(p) != TK_RETURN && T(p) != TK_PASS && T(p) != TK_PRINT && !is_builtin_type(T(p)) &&
+        T(p) != TK_NAME) {
       error_at(p, p->ls.pos.t.offset, "This statement isn't supported yet.");
     }
   }
@@ -2323,6 +2339,9 @@ static void simple_stat(Parser* p) {
       ExpDesc e;
       subexpr(p, -1, &e);
       check_not_void(p, &e, at);
+      if (EMIT) {
+        exp_print(p, &e, at);
+      }
       return;
     }
     case TK_CHECK: {
