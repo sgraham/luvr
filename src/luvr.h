@@ -131,6 +131,14 @@ typedef struct Token Token;
 #endif
 
 #if COMPILER_MSVC
+#  define FALLTHROUGH
+#elif COMPILER_CLANG || COMPILER_GCC
+#  define FALLTHROUGH __attribute__((fallthrough))
+#else
+#  error port
+#endif
+
+#if COMPILER_MSVC
 #  define TRAP() __debugbreak()
 #elif COMPILER_CLANG || COMPILER_GCC
 #  define TRAP() __builtin_trap()
@@ -409,6 +417,7 @@ typedef void (*FuncDoneFn)(Ctx* ctx, const IlFunc* f, const u8* src);
 // order.
 #define RUNTIME_SYMS(X) \
   X(luv_print_i64)      \
+  X(luv_print_u64)      \
   X(luv_print_bool)     \
   X(luv_print_end)
 
@@ -716,6 +725,8 @@ typedef enum IlOperand {
   X(SUB, REF, REF, true)       \
   X(MUL, REF, REF, true)       \
   X(XOR, REF, REF, true)       \
+  X(SEXT32, REF, NONE, true)   \
+  X(ZEXT32, REF, NONE, true)   \
   X(NEG, REF, NONE, true)      \
   X(SLOT, SLOT, NONE, true)    \
   X(LOAD, REF, NONE, true)     \

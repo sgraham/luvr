@@ -1327,14 +1327,31 @@ static void exp_store(Parser* p, const Local* l, const ExpDesc* e, u32 at) {
 static void exp_print(Parser* p, const ExpDesc* e, u32 at) {
   TypeId t = type_concrete(e->type);
   RuntimeSym sym;
-  if (t.idx == TY_I64) {
-    sym = SYM_luv_print_i64;
-  } else if (t.idx == TY_BOOL) {
-    sym = SYM_luv_print_bool;
-  } else {
-    error_at(p, at, "Printing %s isn't supported yet.", describe_type(t));
+  switch ((FixedType)t.idx) {
+    case TY_BOOL:
+      sym = SYM_luv_print_bool;
+      break;
+    case TY_I8:
+    case TY_I16:
+    case TY_I32:
+    case TY_I64:
+      sym = SYM_luv_print_i64;
+      break;
+    case TY_U8:
+    case TY_U16:
+    case TY_U32:
+    case TY_U64:
+      sym = SYM_luv_print_u64;
+      break;
+    default:
+      error_at(p, at, "Printing %s isn't supported yet.", describe_type(t));
   }
   Ref arg = exp_to_ref(p, e, t, at);
+  // Integers narrower than 64 bits are i32s, which are widened for the
+  // runtime's printers.
+  if (type_is_integer(t) && type_int_bits(t) < 64) {
+    arg = il_emit(&p->il, type_is_unsigned(t) ? OP_ZEXT32 : OP_SEXT32, IT_I64, arg, 0);
+  }
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), &arg, 1);
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_end), NULL, 0);
 }

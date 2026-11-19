@@ -1,0 +1,23 @@
+# OUT: -1
+# OUT: -2
+# OUT: -3
+# OUT: 200
+# OUT: 60000
+# OUT: 4000000000
+# OUT: 18000000000000000000
+def int main():
+    i8 a = -1
+    i16 b = -2
+    i32 c = -3
+    u8 d = 200
+    u16 e = 60000
+    u32 f = 4000000000
+    u64 g = 18000000000000000000
+    print a
+    print b
+    print c
+    print d
+    print e
+    print f
+    print g
+    return 0

@@ -140,6 +140,7 @@ ARITH = {
 # The runtime's functions, by symbol name.
 RUNTIME = {
     "luv_print_i64": lambda v: sys.stdout.write(str(v)),
+    "luv_print_u64": lambda v: sys.stdout.write(str(v & ((1 << 64) - 1))),
     "luv_print_bool": lambda v: sys.stdout.write("true" if v else "false"),
     "luv_print_end": lambda: sys.stdout.write("\n"),
 }
@@ -168,6 +169,12 @@ def run(f):
         if ins.op in ARITH:
             a, b = (value_of(values, o) for o in ins.operands)
             values[ins.result] = wrap(ins.ty, ARITH[ins.op](a, b))
+            continue
+        if ins.op == "SEXT32":
+            values[ins.result] = wrap("i32", value_of(values, ins.operands[0]))
+            continue
+        if ins.op == "ZEXT32":
+            values[ins.result] = value_of(values, ins.operands[0]) & 0xFFFFFFFF
             continue
         if ins.op == "CALL":
             callee = ins.operands[0]
