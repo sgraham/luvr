@@ -250,10 +250,7 @@ static void test_il_call(void) {
                  "func i64 @f\n"
                  ":0\n"
                  "  CALL @g, 5\n"
-                 "  ; EXT 5\n"
                  "  %3 = CALL i64 @g, 1, 2, 3\n"
-                 "  ; EXT 1, 2\n"
-                 "  ; EXT 3\n"
                  "  RET i64 %3\n",
                  "test_il_call");
   il_free(&f);

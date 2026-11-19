@@ -211,14 +211,13 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
       fprintf(out, ":%u\n", ins_a(ins));
       continue;
     }
-    // An EXT is shown as a comment, since its operands are already on its
-    // CALL's line.
+    // An EXT's operands are printed on its CALL's line.
     if (op == OP_EXT) {
-      fputs("  ; ", out);
-    } else if (il_op_has_result[op] && ty != IT_VOID) {
-      fprintf(out, "  %%%u = ", i);
-    } else {
-      fputs("  ", out);
+      continue;
+    }
+    fputs("  ", out);
+    if (il_op_has_result[op] && ty != IT_VOID) {
+      fprintf(out, "%%%u = ", i);
     }
     fputs(il_op_names[op], out);
     // A SLOT is always an i64 address, so its type would only be clutter.

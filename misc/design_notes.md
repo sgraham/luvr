@@ -3333,7 +3333,6 @@ func i64 @main
   ;     int x = add(1, 2)
   %1 = SLOT $0
   %2 = CALL i64 @add, 1, 2
-  ; EXT 1, 2
   STORE i64 %2, %1
   ;     if x > 2:
   %5 = SLOT $0
@@ -3360,11 +3359,9 @@ func i64 @main
 - `%n` is the instruction's index in the buffer, so there are gaps where
   `BLOCK` and `EXT` are.
 - A call's arguments are all on its line, wherever they're stored. The
-  `EXT` slots are also printed as comments after their instruction, to
-  show the layout.
+  `EXT` slots aren't printed.
 - A comment is a whole line starting with `;`, so the reader can skip
-  them without looking inside other lines. Besides `EXT`, comments give
-  the text of each statement's source line, with its indentation, from
+  them without looking inside other lines. Comments give the text of each statement's source line, with its indentation, from
   the source position table (D26), and above an instruction with float
   constants, their values in decimal (`; 0x1.8p+0 = 1.5`). Line numbers
   aren't printed, because the lexer only keeps offsets, and finding a line
