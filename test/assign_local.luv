@@ -1,0 +1,5 @@
+# RET: 11
+def int main():
+    x = 2
+    x = x * 5
+    return x + 1

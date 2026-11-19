@@ -2163,41 +2163,47 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
   u32 at = p->ls.pos.t.offset;
   if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
     NameId name = p->ls.pos.t.v.name;
-    ExpDesc e;
-    primary(p, &e);
-    if (e.shape == SH_TYPE) {
+    ExpDesc exp;
+    primary(p, &exp);
+    if (exp.shape == SH_TYPE) {
       decl_rest(p, toplevel, ty_unknown);
       return;
     }
     if (T(p) == TK_EQ || is_augassign(T(p))) {
-      if (e.shape != SH_NAME && e.shape != SH_LVALUE) {
+      if (exp.shape != SH_NAME && exp.shape != SH_LVALUE) {
         error_at(p, at, "Can't assign to this expression.");
       }
       if (toplevel && T(p) != TK_EQ) {
         error_at(p, p->ls.pos.t.offset, "Augmented assignment isn't allowed at top level.");
       }
-      if (e.shape == SH_NAME) {
+      // The current function's local that's assigned to, if it already exists.
+      Local* loc = NULL;
+      if (exp.shape == SH_NAME) {
         if (toplevel) {
           check_not_global(p, name, p->ls.pos.t.offset);
         }
-        Local* l = lookup(p, name);
+        loc = lookup(p, name);
         // An enclosing function's 'global' doesn't apply to this function, so
         // this assignment declares a new local.
-        if (l && l < &p->locals[p->func_base] && l->kind == LK_GLOBAL) {
-          l = NULL;
+        if (loc && loc < &p->locals[p->func_base] && loc->kind == LK_GLOBAL) {
+          loc = NULL;
         }
-        if (l && l < &p->locals[p->func_base]) {
+        if (loc && loc < &p->locals[p->func_base]) {
           error_at(p, p->ls.pos.t.offset, "Upvalues are immutable.");
         }
-        if (l && l->kind == LK_PARAM) {
+        if (loc && loc->kind == LK_PARAM) {
           error_at(p, p->ls.pos.t.offset, "Function parameters are immutable.");
         }
-        if (l && (l->kind == LK_CONST || (l->kind == LK_GLOBAL && name_of(p, name)->is_const))) {
+        if (loc &&
+            (loc->kind == LK_CONST || (loc->kind == LK_GLOBAL && name_of(p, name)->is_const))) {
           error_at(p, p->ls.pos.t.offset, "Cannot assign a new value to a constant.");
         }
       }
       bool is_plain = T(p) == TK_EQ;
-      bool declares = e.shape == SH_NAME && is_plain;
+      bool declares = exp.shape == SH_NAME && is_plain;
+      if (EMIT && !toplevel && !declares) {
+        error_at(p, at, "This statement isn't supported yet.");
+      }
       TokenKind op_kind = T(p);
       u32 op_at = p->ls.pos.t.offset;
       next(p);
@@ -2205,14 +2211,14 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       ExpDesc v;
       subexpr(p, -1, &v);
       if (is_plain) {
-        check_assign(p, e.type, &v, value_at);
+        check_assign(p, exp.type, &v, value_at);
       } else {
         // The result is always the target's type, so it doesn't need to be
         // checked again.
         BinOpr op = augassign_opr[op_kind - TK_PLUSEQ];
-        type_for_arith(p, op, e.type, v.type, op_at);
+        type_for_arith(p, op, exp.type, v.type, op_at);
         if (v.kind == EK_CONST) {
-          check_const_operands(p, op, e.type, &e, at, &v, value_at, op_at);
+          check_const_operands(p, op, exp.type, &exp, at, &v, value_at, op_at);
         }
       }
       // After the expression, so that it can't see the new local.
@@ -2229,14 +2235,26 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         if (toplevel) {
           declare_global(p, name, GK_VAR);
         } else {
-          declare_if_new(p, name, at, t);
+          if (!loc) {
+            loc = declare_local(p, name, at, LK_VAR);
+            loc->type = t;
+            if (EMIT) {
+              loc->slot = il_slot_add(&p->il, il_type_of(p, t, at), name);
+            }
+          }
+          if (EMIT) {
+            exp_store(p, loc, &v, value_at);
+          }
         }
       }
       return;
     }
-    if (e.shape == SH_CALL) {
+    if (exp.shape == SH_CALL) {
       if (toplevel) {
         error_at(p, at, "Calls aren't allowed at top level.");
+      }
+      if (EMIT) {
+        error_at(p, at, "Calls aren't supported yet.");
       }
       return;
     }
@@ -2260,7 +2278,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
 static void simple_stat(Parser* p) {
   if (EMIT) {
     il_source_pos(&p->il, p->ls.pos.t.offset);
-    if (T(p) != TK_RETURN && T(p) != TK_PASS && !is_builtin_type(T(p))) {
+    if (T(p) != TK_RETURN && T(p) != TK_PASS && !is_builtin_type(T(p)) && T(p) != TK_NAME) {
       error_at(p, p->ls.pos.t.offset, "This statement isn't supported yet.");
     }
   }
