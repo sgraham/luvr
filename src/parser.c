@@ -1280,6 +1280,8 @@ static IlOp il_arith_op(BinOpr op) {
       return OP_SUB;
     case OPR_MUL:
       return OP_MUL;
+    case OPR_BXOR:
+      return OP_XOR;
     default:
       return OP_NUM_OPS;
   }

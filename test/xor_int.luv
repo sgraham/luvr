@@ -1,0 +1,4 @@
+# RET: 6
+def int main():
+    int x = 5
+    return x ^ 3
