@@ -139,13 +139,27 @@ def run_il_test(exe, path):
     return True, None
 
 
-def run_tests(out, paths, rewind, unittest):
+def run_tests(out, paths, rewind, unittest, verbose):
     exe = os.path.join(out, "luv" + EXE)
-    failures = [f for f in (check_test(exe, p) for p in paths) if f]
+    failures = []
+    il_failures = []
     il_paths = [p for p in paths if os.path.dirname(p) == "test"]
-    il_results = [run_il_test(exe, p) for p in il_paths]
-    il_failures = [f for _, f in il_results if f]
-    il_passed = sum(1 for emitted, f in il_results if emitted and not f)
+    il_passed = 0
+    for p in paths:
+        f = check_test(exe, p)
+        if f:
+            failures.append(f)
+        # Tests outside test/ aren't run with luv il, so they have a blank
+        # second column.
+        il = "      "
+        if p in il_paths:
+            emitted, il_f = run_il_test(exe, p)
+            if il_f:
+                il_failures.append(il_f)
+            il_passed += emitted and not il_f
+            il = "[FAIL]" if il_f else "[ ok ]" if emitted else "[TODO]"
+        if verbose:
+            print(f"{'[FAIL]' if f else '[ ok ]'} {il} {p}")
     # Rewinding the lexer and lexing again must reach the same state. All of the
     # test files lex without error, including those in todo/.
     lexdump = os.path.join(out, "lexdump" + EXE)
@@ -168,6 +182,7 @@ def main():
     ap = argparse.ArgumentParser(description="Build into out/<platform><config>/ and run tests.")
     ap.add_argument("config", choices=["d", "r"], help="d: debug build, r: release build")
     ap.add_argument("--msvc", action="store_true", help="on Windows, use cl instead of clang-cl")
+    ap.add_argument("-v", "--verbose", action="store_true", help="print each test's result")
     ap.add_argument(
         "targets",
         nargs="*",
@@ -200,7 +215,7 @@ def main():
     build(args, out, ninja_targets)
     if tests:
         rewind = sorted(glob.glob("test/**/*.luv", recursive=True)) if all else tests
-        if not run_tests(out, tests, rewind, all):
+        if not run_tests(out, tests, rewind, all, args.verbose):
             sys.exit(1)
 
 
