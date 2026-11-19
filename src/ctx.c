@@ -14,6 +14,7 @@ void ctx_free(Ctx* ctx) {
   free(ctx->names.v);
   free(ctx->strs.v);
   free(ctx->strbytes.v);
+  free(ctx->syms.v);
   for (u32 i = 0; i < ctx->modules.num; ++i) {
     Module* m = ctx->modules.v[i];
     namemap_free(&m->globals);
@@ -26,6 +27,11 @@ void ctx_free(Ctx* ctx) {
   free(ctx->modules.v);
   namemap_free(&ctx->module_ids);
   memset(ctx, 0, sizeof(*ctx));
+}
+
+u32 ctx_sym_add(Ctx* ctx, NameId name) {
+  *vec_push(ctx, &ctx->syms) = name;
+  return ctx->syms.num - 1;
 }
 
 void ctx_error(Ctx* ctx, const char* file, const u8* buf, u32 offset, const char* fmt, ...) {

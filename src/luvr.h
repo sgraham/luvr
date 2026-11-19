@@ -434,10 +434,16 @@ struct Ctx {
 
   // Gets the IL from parse_file_emit(). It's not called if it's NULL.
   FuncDoneFn on_func;
+
+  // Functions and data that IL constants can refer to, by index.
+  VEC(NameId) syms;
 };
 
 bool ctx_init(Ctx* ctx);
 void ctx_free(Ctx* ctx);
+
+// Returns the new symbol's index.
+u32 ctx_sym_add(Ctx* ctx, NameId name);
 
 // Line and column are 1-based. They're found by scanning from the start of the
 // buffer, so this is only suitable for the error path.
@@ -680,6 +686,7 @@ typedef enum IlOperand {
   OPND_REF,
   OPND_BLOCK,  // an index in IlFunc.block_starts
   OPND_SLOT,   // an index in IlFunc.slots
+  OPND_COUNT,  // the number of arguments in the EXTs that follow a CALL
 } IlOperand;
 
 // X(name, a, b, has_result), where a and b are IlOperands without OPND_.
@@ -694,7 +701,9 @@ typedef enum IlOperand {
   X(BLOCK, BLOCK, NONE, false) \
   X(JMP, BLOCK, NONE, false)   \
   X(BR, REF, BLOCK, false)     \
-  X(RET, REF, NONE, false)
+  X(RET, REF, NONE, false)     \
+  X(CALL, REF, COUNT, true)    \
+  X(EXT, REF, REF, false)
 
 // clang-format off
 typedef enum IlOp {
@@ -719,6 +728,9 @@ typedef enum IlType {
   IT_I64,
   IT_F32,
   IT_F64,
+  // Only the type of a constant, whose value is a symbol index. It's used as
+  // an i64 address.
+  IT_SYM,
   IT_NUM_TYPES,
 } IlType;
 
@@ -789,6 +801,12 @@ Ref il_emit(IlFunc* f, IlOp op, IlType ty, Ref a, Ref b);
 // ty is IT_I32 or IT_I64. An i32 constant is stored sign-extended, so that
 // both its signed and unsigned spellings are the same constant.
 Ref il_const_int(IlFunc* f, IlType ty, u64 v);
+
+Ref il_const_sym(IlFunc* f, u32 sym);
+
+// Emits a CALL followed by an EXT for each two of the n args. ty is IT_VOID
+// if the call has no result.
+Ref il_call(IlFunc* f, IlType ty, Ref callee, const Ref* args, u32 n);
 
 // Returns a new block, which can be jumped to before it's started.
 u32 il_block_declare(IlFunc* f);

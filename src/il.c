@@ -28,6 +28,7 @@ static const char* const il_type_names[] = {
     [IT_I64] = "i64",    //
     [IT_F32] = "f32",    //
     [IT_F64] = "f64",    //
+    [IT_SYM] = "sym",    //
 };
 
 void il_init(IlFunc* f, Ctx* ctx) {
@@ -73,11 +74,7 @@ Ref il_emit(IlFunc* f, IlOp op, IlType ty, Ref a, Ref b) {
   return REF_INS | (f->ins.num - 1);
 }
 
-Ref il_const_int(IlFunc* f, IlType ty, u64 v) {
-  ASSERT(ty == IT_I32 || ty == IT_I64);
-  if (ty == IT_I32) {
-    v = (u64)(int32_t)v;
-  }
+static Ref il_const(IlFunc* f, IlType ty, u64 v) {
   // Constants are interned so that each value and type has only one Ref. Then
   // operands can be compared by Ref alone, both when looking for common
   // subexpressions and when folding.
@@ -96,6 +93,26 @@ Ref il_const_int(IlFunc* f, IlType ty, u64 v) {
   *vec_push(f->ctx, &f->const_types) = (u8)ty;
   hashtable_insert(f->ctx, &f->const_map, s, tag, idx);
   return idx + 1;
+}
+
+Ref il_const_int(IlFunc* f, IlType ty, u64 v) {
+  ASSERT(ty == IT_I32 || ty == IT_I64);
+  if (ty == IT_I32) {
+    v = (u64)(int32_t)v;
+  }
+  return il_const(f, ty, v);
+}
+
+Ref il_const_sym(IlFunc* f, u32 sym) {
+  return il_const(f, IT_SYM, sym);
+}
+
+Ref il_call(IlFunc* f, IlType ty, Ref callee, const Ref* args, u32 n) {
+  Ref call = il_emit(f, OP_CALL, ty, callee, n);
+  for (u32 i = 0; i < n; i += 2) {
+    il_emit(f, OP_EXT, IT_VOID, args[i], i + 1 < n ? args[i + 1] : 0);
+  }
+  return call;
 }
 
 u32 il_block_declare(IlFunc* f) {
@@ -157,7 +174,13 @@ static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
     fprintf(out, "%%%u", r & ~REF_INS);
     return;
   }
-  fprintf(out, "%" PRId64, (int64_t)f->consts.v[r - 1]);
+  u64 v = f->consts.v[r - 1];
+  if (f->const_types.v[r - 1] == IT_SYM) {
+    const Name* name = lex_name(f->ctx, f->ctx->syms.v[v]);
+    fprintf(out, "@%.*s", (int)name->len, name->str);
+    return;
+  }
+  fprintf(out, "%" PRId64, (int64_t)v);
 }
 
 void il_dump(const IlFunc* f, const u8* src, FILE* out) {
@@ -188,14 +211,30 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
       fprintf(out, ":%u\n", ins_a(ins));
       continue;
     }
-    fputs("  ", out);
-    if (il_op_has_result[op]) {
-      fprintf(out, "%%%u = ", i);
+    // An EXT is shown as a comment, since its operands are already on its
+    // CALL's line.
+    if (op == OP_EXT) {
+      fputs("  ; ", out);
+    } else if (il_op_has_result[op] && ty != IT_VOID) {
+      fprintf(out, "  %%%u = ", i);
+    } else {
+      fputs("  ", out);
     }
     fputs(il_op_names[op], out);
     // A SLOT is always an i64 address, so its type would only be clutter.
     if (ty != IT_VOID && op != OP_SLOT) {
       fprintf(out, " %s", il_type_names[ty]);
+    }
+    if (op == OP_CALL) {
+      fputc(' ', out);
+      il_dump_ref(f, ins_a(ins), out);
+      for (u32 j = 0; j < ins_b(ins); ++j) {
+        Ins ext = f->ins.v[i + 1 + j / 2];
+        fputs(", ", out);
+        il_dump_ref(f, j % 2 ? ins_b(ext) : ins_a(ext), out);
+      }
+      fputc('\n', out);
+      continue;
     }
     u32 operands[2] = {ins_a(ins), ins_b(ins)};
     for (u32 j = 0; j < 2; ++j) {

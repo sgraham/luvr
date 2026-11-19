@@ -3333,7 +3333,7 @@ func i64 @main
   ;     int x = add(1, 2)
   %1 = SLOT $0
   %2 = CALL i64 @add, 1, 2
-  ; %3 EXT 1, 2
+  ; EXT 1, 2
   STORE i64 %2, %1
   ;     if x > 2:
   %5 = SLOT $0

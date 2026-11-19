@@ -233,6 +233,40 @@ static void test_il_slots(void) {
   ctx_free(&ctx);
 }
 
+static void test_il_call(void) {
+  Ctx ctx;
+  CHECK(ctx_init(&ctx));
+  IlFunc f;
+  il_init_test(&f, &ctx, IT_I64);
+  // Interned names have to be followed by 7 readable bytes.
+  static const u8 g[8] = "g";
+  u32 sym = ctx_sym_add(&ctx, lex_intern(&ctx, g, 1));
+  Ref callee = il_const_sym(&f, sym);
+  if (il_const_sym(&f, sym) != callee || il_const_int(&f, IT_I64, sym) == callee) {
+    printf("il_const_sym: symbols aren't interned apart from integers\n");
+    ++failures;
+  }
+  il_block_start(&f, il_block_declare(&f));
+  Ref one_arg[] = {il_const_int(&f, IT_I64, 5)};
+  il_call(&f, IT_VOID, callee, one_arg, 1);
+  Ref three_args[] = {il_const_int(&f, IT_I64, 1), il_const_int(&f, IT_I64, 2),
+                      il_const_int(&f, IT_I64, 3)};
+  Ref r = il_call(&f, IT_I64, callee, three_args, 3);
+  il_emit(&f, OP_RET, IT_I64, r, 0);
+  expect_il_dump(&f, "",
+                 "func i64 @f\n"
+                 ":0\n"
+                 "  CALL @g, 5\n"
+                 "  ; EXT 5\n"
+                 "  %3 = CALL i64 @g, 1, 2, 3\n"
+                 "  ; EXT 1, 2\n"
+                 "  ; EXT 3\n"
+                 "  RET i64 %3\n",
+                 "test_il_call");
+  il_free(&f);
+  ctx_free(&ctx);
+}
+
 int main(void) {
   test_path_dir_len();
   test_path_stem();
@@ -242,5 +276,6 @@ int main(void) {
   test_il_dump();
   test_il_blocks();
   test_il_slots();
+  test_il_call();
   return failures ? 1 : 0;
 }
