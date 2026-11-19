@@ -114,9 +114,38 @@ def check_test(exe, path):
     return None
 
 
+# Tests in test/ whose functions all emit are also run by piping `luv il` into
+# misc/interp.py. main's return value and the output are checked against the
+# RET and OUT headers, which default to 0 and nothing. Returns whether the test
+# emitted, and the failure if there was one.
+def run_il_test(exe, path):
+    r = subprocess.run([exe, "il", path], capture_output=True, text=True)
+    if r.returncode != 0:
+        if re.search(r"(isn't|aren't) supported yet\.$", r.stderr.rstrip()):
+            return False, None
+        return True, f"{path}: luv il failed\n{indent(r.stderr.strip(), '  got: ')}"
+    i = subprocess.run([sys.executable, "misc/interp.py"], input=r.stdout, capture_output=True, text=True)
+    text = open(path, encoding="utf-8").read()
+    ret = re.search(r"^# RET: (\d+)$", text, re.M)
+    want_ret = int(ret.group(1)) if ret else 0
+    want = "\n".join(l.rstrip() for l in re.findall(r"^# OUT: ?(.*)$", text, re.M))
+    got = "\n".join(l.rstrip() for l in i.stdout.splitlines())
+    if i.stderr:
+        return True, f"{path}: interp failed\n{indent(i.stderr.strip(), '  got: ')}"
+    if i.returncode != want_ret:
+        return True, f"{path}: interp returned {i.returncode}, expected {want_ret}"
+    if got != want:
+        return True, f"{path}: wrong output\n{indent(want, '  want: ')}\n{indent(got, '   got: ')}"
+    return True, None
+
+
 def run_tests(out, paths, rewind, unittest):
     exe = os.path.join(out, "luv" + EXE)
     failures = [f for f in (check_test(exe, p) for p in paths) if f]
+    il_paths = [p for p in paths if os.path.dirname(p) == "test"]
+    il_results = [run_il_test(exe, p) for p in il_paths]
+    il_failures = [f for _, f in il_results if f]
+    il_passed = sum(1 for emitted, f in il_results if emitted and not f)
     # Rewinding the lexer and lexing again must reach the same state. All of the
     # test files lex without error, including those in todo/.
     lexdump = os.path.join(out, "lexdump" + EXE)
@@ -127,10 +156,12 @@ def run_tests(out, paths, rewind, unittest):
         r = subprocess.run([os.path.join(out, "unittest" + EXE)], capture_output=True, text=True)
         if r.returncode != 0:
             failures.append(f"unittest failed\n  got: {(r.stdout + r.stderr).strip()}")
-    for f in failures:
+    for f in failures + il_failures:
         print(f)
     print(f"{len(paths) - len(failures)}/{len(paths)} tests passed")
-    return not failures
+    if il_paths:
+        print(f"{il_passed}/{len(il_paths)} tests run with luv il")
+    return not failures and not il_failures
 
 
 def main():
