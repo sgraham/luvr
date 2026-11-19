@@ -86,7 +86,9 @@ rule link
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", required=True, help="output directory, relative to the repository root")
+    ap.add_argument("--out",
+                    required=True,
+                    help="output directory, relative to the repository root")
     ap.add_argument("--platform", required=True, choices=["win", "linux", "mac"])
     ap.add_argument("--debug", action="store_true")
     ap.add_argument("--msvc", action="store_true")

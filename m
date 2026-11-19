@@ -67,7 +67,8 @@ def is_error_test(path):
 
 
 def all_tests():
-    paths = glob.glob("test/*.luv") + glob.glob("test/errors/*.luv") + glob.glob("test/errors/todo/*.luv")
+    paths = glob.glob("test/*.luv") + glob.glob("test/errors/*.luv") + glob.glob(
+        "test/errors/todo/*.luv")
     return sorted(p.replace("\\", "/") for p in paths if not is_imported(p))
 
 
@@ -81,7 +82,8 @@ def find_test(name, ap):
             ap.error(f"{name}: no such test")
         matches = [path]
     else:
-        matches = sorted(p.replace("\\", "/") for p in glob.glob(f"test/**/{name}.luv", recursive=True))
+        matches = sorted(
+            p.replace("\\", "/") for p in glob.glob(f"test/**/{name}.luv", recursive=True))
     if not matches:
         return None
     if len(matches) > 1:
@@ -124,7 +126,10 @@ def run_il_test(exe, path):
         if re.search(r"(isn't|aren't) supported yet\.$", r.stderr.rstrip()):
             return False, None
         return True, f"{path}: luv il failed\n{indent(r.stderr.strip(), '  got: ')}"
-    i = subprocess.run([sys.executable, "misc/interp.py"], input=r.stdout, capture_output=True, text=True)
+    i = subprocess.run([sys.executable, "misc/interp.py"],
+                       input=r.stdout,
+                       capture_output=True,
+                       text=True)
     text = open(path, encoding="utf-8").read()
     ret = re.search(r"^# RET: (\d+)$", text, re.M)
     want_ret = int(ret.group(1)) if ret else 0
