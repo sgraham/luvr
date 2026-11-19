@@ -130,6 +130,13 @@ def wrap(ty, v):
     return v
 
 
+ARITH = {
+    "ADD": lambda a, b: a + b,
+    "SUB": lambda a, b: a - b,
+    "MUL": lambda a, b: a * b,
+}
+
+
 def run(f):
     values = {}
     # A slot's address is its number.
@@ -150,9 +157,9 @@ def run(f):
         if ins.op == "STORE":
             frame[value_of(values, ins.operands[1])] = value_of(values, ins.operands[0])
             continue
-        if ins.op == "ADD":
+        if ins.op in ARITH:
             a, b = (value_of(values, o) for o in ins.operands)
-            values[ins.result] = wrap(ins.ty, a + b)
+            values[ins.result] = wrap(ins.ty, ARITH[ins.op](a, b))
             continue
         if ins.op == "RET":
             return value_of(values, ins.operands[0]) if ins.operands else None

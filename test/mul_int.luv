@@ -1,0 +1,4 @@
+# RET: 60
+def int main():
+    int x = 10
+    return x * 6

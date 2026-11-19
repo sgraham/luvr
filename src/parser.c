@@ -1271,6 +1271,20 @@ static IlType il_type_of(Parser* p, TypeId t, u32 at) {
   }
 }
 
+// The IL op for an arithmetic operator, or OP_NUM_OPS if it isn't emitted yet.
+static IlOp il_arith_op(BinOpr op) {
+  switch (op) {
+    case OPR_ADD:
+      return OP_ADD;
+    case OPR_SUB:
+      return OP_SUB;
+    case OPR_MUL:
+      return OP_MUL;
+    default:
+      return OP_NUM_OPS;
+  }
+}
+
 // A value that the emitting build doesn't emit yet. Its ref is 0, which
 // isn't a valid Ref, so that exp_to_ref() gives an error if it's used,
 // rather than using whatever e was before.
@@ -1476,11 +1490,11 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       }
       if (e->kind == EK_CONST && rhs.kind == EK_CONST && t.idx != TY_UNKNOWN && t.idx != TY_STR) {
         fold_arith(p, op, t, e, &rhs, at);
-      } else if (EMIT && op == OPR_ADD && (t.idx == TY_I32 || t.idx == TY_I64)) {
+      } else if (EMIT && il_arith_op(op) != OP_NUM_OPS && (t.idx == TY_I32 || t.idx == TY_I64)) {
         Ref a = exp_to_ref(p, e, t, start);
         Ref b = exp_to_ref(p, &rhs, t, rhs_at);
         e->kind = EK_REF;
-        e->ref = il_emit(&p->il, OP_ADD, il_type_of(p, t, at), a, b);
+        e->ref = il_emit(&p->il, il_arith_op(op), il_type_of(p, t, at), a, b);
       } else {
         exp_unemitted(e);
       }
