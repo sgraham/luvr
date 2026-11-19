@@ -420,6 +420,7 @@ typedef void (*FuncDoneFn)(Ctx* ctx, const IlFunc* f, const u8* src);
   X(luv_print_i64)      \
   X(luv_print_u64)      \
   X(luv_print_bool)     \
+  X(luv_print_str)      \
   X(luv_print_end)
 
 // clang-format off
@@ -468,6 +469,8 @@ struct Ctx {
   // by index.
   VEC(IlData) data;
   VEC(u8) databytes;
+  // The number of entries of data that have been printed as IL text.
+  u32 data_printed;
 };
 
 bool ctx_init(Ctx* ctx);

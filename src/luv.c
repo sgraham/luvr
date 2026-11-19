@@ -120,7 +120,13 @@ static int cmd_parse(int argc, char** argv) {
 }
 
 static void print_func(Ctx* ctx, const IlFunc* f, const u8* src) {
-  (void)ctx;
+  // Data is printed before the first function that can refer to it.
+  if (ctx->data_printed < ctx->data.num) {
+    for (; ctx->data_printed < ctx->data.num; ++ctx->data_printed) {
+      il_dump_data(ctx, ctx->data_printed, stdout);
+    }
+    fputc('\n', stdout);
+  }
   il_dump(f, src, stdout);
   fputc('\n', stdout);
 }

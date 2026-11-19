@@ -189,6 +189,7 @@ typedef enum ExpKind {
   EK_REF,    // the result of an instruction or constant, in ExpDesc.ref
   EK_CONST,  // in ExpDesc.v
   EK_LOCAL,  // in ExpDesc.slot, not loaded yet
+  EK_STR,    // a string literal, whose bytes are Ctx.data at ExpDesc.data
 } ExpKind;
 
 // What is known about an expression that has been parsed but not yet emitted.
@@ -199,6 +200,7 @@ struct ExpDesc {
   union {
     u32 slot;  // EK_LOCAL
     Ref ref;   // EK_REF
+    u32 data;  // EK_STR
   };
   ConstValue v;
 };
@@ -1343,16 +1345,30 @@ static void exp_print(Parser* p, const ExpDesc* e, u32 at) {
     case TY_U64:
       sym = SYM_luv_print_u64;
       break;
+    case TY_STR:
+      sym = SYM_luv_print_str;
+      break;
     default:
       error_at(p, at, "Printing %s isn't supported yet.", describe_type(t));
   }
-  Ref arg = exp_to_ref(p, e, t, at);
+  Ref args[2];
+  u32 nargs = 1;
+  if (t.idx == TY_STR) {
+    if (e->kind != EK_STR) {
+      error_at(p, at, "This expression isn't supported yet.");
+    }
+    args[0] = il_const_data(&p->il, e->data);
+    args[1] = il_const_int(&p->il, IT_I64, p->ls.ctx->data.v[e->data].len);
+    nargs = 2;
+  } else {
+    args[0] = exp_to_ref(p, e, t, at);
+  }
   // Integers narrower than 64 bits are i32s, which are widened for the
   // runtime's printers.
   if (type_is_integer(t) && type_int_bits(t) < 64) {
-    arg = il_emit(&p->il, type_is_unsigned(t) ? OP_ZEXT32 : OP_SEXT32, IT_I64, arg, 0);
+    args[0] = il_emit(&p->il, type_is_unsigned(t) ? OP_ZEXT32 : OP_SEXT32, IT_I64, args[0], 0);
   }
-  il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), &arg, 1);
+  il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), args, nargs);
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_end), NULL, 0);
 }
 
@@ -1952,6 +1968,12 @@ static void primary(Parser* p, ExpDesc* e) {
       break;
     case TK_STRING:
       e->type = ty_str;
+      if (EMIT) {
+        u32 len;
+        const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
+        e->kind = EK_STR;
+        e->data = il_data_add(p->ls.ctx, s, len);
+      }
       next(p);
       break;
     case TK_TRUE:

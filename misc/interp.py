@@ -8,6 +8,7 @@
 #
 # The exit status is main's return value, as it would be for a native program.
 
+import ast
 import sys
 from dataclasses import dataclass
 
@@ -26,6 +27,12 @@ class Error(Exception):
 class Operand:
     kind: str  # "int", or a value of OPERAND_KINDS
     val: int | str  # the n of %n, :n or $n, an integer constant, or a symbol name
+
+
+@dataclass
+class Program:
+    funcs: dict  # Funcs by symbol name
+    data: dict  # bytes by symbol name
 
 
 @dataclass
@@ -84,13 +91,19 @@ def parse_ins(line):
 
 def parse(text):
     funcs = {}
+    data = {}
     f = None
     for lineno, raw in enumerate(text.split("\n"), 1):
         line = raw.strip()
         if not line or line.startswith(";"):
             continue
         try:
-            if line.startswith("func "):
+            if line.startswith("data "):
+                # data @.dat0 "bytes"
+                _, name, s = line.split(None, 2)
+                # The escapes are a subset of a Python bytes literal's.
+                data[name[1:]] = ast.literal_eval("b" + s)
+            elif line.startswith("func "):
                 # func i64 @main, or func @f when it returns nothing.
                 words = line.split()
                 ret = words[1] if len(words) == 3 else None
@@ -106,16 +119,19 @@ def parse(text):
                 f.blocks[int(line[1:])] = len(f.ins)
             else:
                 f.ins.append(parse_ins(line))
-        except (Error, ValueError, IndexError) as e:
+        except (Error, ValueError, IndexError, SyntaxError) as e:
             raise Error(f"line {lineno}: {e}: {raw}")
-    return funcs
+    return Program(funcs, data)
 
 
-def value_of(values, operand):
+# A data symbol's address is its bytes, since nothing indexes into them yet.
+def value_of(values, prog, operand):
     if operand.kind == "int":
         return operand.val
     if operand.kind == "ins":
         return values[operand.val]
+    if operand.kind == "sym" and operand.val in prog.data:
+        return prog.data[operand.val]
     raise Error(f"can't use a {operand.kind} as a value")
 
 
@@ -137,16 +153,23 @@ ARITH = {
     "XOR": lambda a, b: a ^ b,
 }
 
+
+def print_str(data, n):
+    sys.stdout.flush()
+    sys.stdout.buffer.write(data[:n])
+
+
 # The runtime's functions, by symbol name.
 RUNTIME = {
     "luv_print_i64": lambda v: sys.stdout.write(str(v)),
     "luv_print_u64": lambda v: sys.stdout.write(str(v & ((1 << 64) - 1))),
     "luv_print_bool": lambda v: sys.stdout.write("true" if v else "false"),
+    "luv_print_str": print_str,
     "luv_print_end": lambda: sys.stdout.write("\n"),
 }
 
 
-def run(f):
+def run(prog, f):
     values = {}
     # A slot's address is its number.
     frame = [None] * len(f.slots)
@@ -158,35 +181,35 @@ def run(f):
             values[ins.result] = ins.operands[0].val
             continue
         if ins.op == "LOAD":
-            v = frame[value_of(values, ins.operands[0])]
+            v = frame[value_of(values, prog, ins.operands[0])]
             if v is None:
                 raise Error(f"{f.name}: LOAD from a slot that hasn't been stored to")
             values[ins.result] = v
             continue
         if ins.op == "STORE":
-            frame[value_of(values, ins.operands[1])] = value_of(values, ins.operands[0])
+            frame[value_of(values, prog, ins.operands[1])] = value_of(values, prog, ins.operands[0])
             continue
         if ins.op in ARITH:
-            a, b = (value_of(values, o) for o in ins.operands)
+            a, b = (value_of(values, prog, o) for o in ins.operands)
             values[ins.result] = wrap(ins.ty, ARITH[ins.op](a, b))
             continue
         if ins.op == "SEXT32":
-            values[ins.result] = wrap("i32", value_of(values, ins.operands[0]))
+            values[ins.result] = wrap("i32", value_of(values, prog, ins.operands[0]))
             continue
         if ins.op == "ZEXT32":
-            values[ins.result] = value_of(values, ins.operands[0]) & 0xFFFFFFFF
+            values[ins.result] = value_of(values, prog, ins.operands[0]) & 0xFFFFFFFF
             continue
         if ins.op == "CALL":
             callee = ins.operands[0]
             if callee.kind != "sym" or callee.val not in RUNTIME:
                 raise Error(f"{f.name}: can't call {callee.val}")
-            args = [value_of(values, o) for o in ins.operands[1:]]
+            args = [value_of(values, prog, o) for o in ins.operands[1:]]
             r = RUNTIME[callee.val](*args)
             if ins.result is not None:
                 values[ins.result] = r
             continue
         if ins.op == "RET":
-            return value_of(values, ins.operands[0]) if ins.operands else None
+            return value_of(values, prog, ins.operands[0]) if ins.operands else None
         raise Error(f"{f.name}: {ins.op} isn't supported yet")
     raise Error(f"{f.name}: ran off the end")
 
@@ -194,10 +217,10 @@ def run(f):
 def main():
     text = open(sys.argv[1]).read() if len(sys.argv) > 1 else sys.stdin.read()
     try:
-        funcs = parse(text)
-        if "main" not in funcs:
+        prog = parse(text)
+        if "main" not in prog.funcs:
             raise Error("no main")
-        ret = run(funcs["main"])
+        ret = run(prog, prog.funcs["main"])
     except Error as e:
         sys.exit(f"interp: {e}")
     sys.exit((ret or 0) & 0xFF)
