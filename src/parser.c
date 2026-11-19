@@ -119,6 +119,7 @@ struct Local {
   NameId name;
   TypeId type;
   LocalKind kind;
+  u32 slot;  // only when EMIT
   // The Name's binding before this was declared. It's restored when the
   // function ends.
   Local* shadowed;
@@ -187,6 +188,7 @@ typedef enum Flow {
 typedef enum ExpKind {
   EK_REF,    // the result of an instruction or constant
   EK_CONST,  // in ExpDesc.v
+  EK_LOCAL,  // in ExpDesc.slot, not loaded yet
 } ExpKind;
 
 // What is known about an expression that has been parsed but not yet emitted.
@@ -194,6 +196,9 @@ struct ExpDesc {
   Shape shape;
   TypeId type;
   ExpKind kind;
+  union {
+    u32 slot;  // EK_LOCAL
+  };
   ConstValue v;
 };
 
@@ -399,7 +404,7 @@ static Local* declare_local(Parser* p, NameId name, u32 at, LocalKind kind) {
 }
 
 // The current function's local for name, ignoring those of enclosing functions.
-static Local* own_local(Parser* p, NameId name) {
+static Local* lookup_in_func(Parser* p, NameId name) {
   Local* l = lookup(p, name);
   return l && l >= &p->locals[p->func_base] ? l : NULL;
 }
@@ -410,7 +415,7 @@ static void declare_if_new(Parser* p, NameId name, u32 at, TypeId t) {
   if (p->func_depth == 0) {
     return;
   }
-  if (!own_local(p, name)) {
+  if (!lookup_in_func(p, name)) {
     Local* l = declare_local(p, name, at, LK_VAR);
     l->type = t;
   }
@@ -1276,7 +1281,17 @@ static Ref exp_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
   if (e->kind == EK_CONST && type_is_integer(t)) {
     return il_const_int(&p->il, ty, (u64)e->v.i);
   }
+  if (e->kind == EK_LOCAL) {
+    Ref addr = il_emit(&p->il, OP_SLOT, IT_I64, e->slot, 0);
+    return il_emit(&p->il, OP_LOAD, ty, addr, 0);
+  }
   error_at(p, at, "This expression isn't supported yet.");
+}
+
+static void exp_store(Parser* p, const Local* l, const ExpDesc* e, u32 at) {
+  Ref addr = il_emit(&p->il, OP_SLOT, IT_I64, l->slot, 0);
+  Ref v = exp_to_ref(p, e, l->type, at);
+  il_emit(&p->il, OP_STORE, il_type_of(p, l->type, at), v, addr);
 }
 
 // Unary '-' or '~', which give the operand's type. Constants are folded.
@@ -1293,6 +1308,7 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
     error_at(p, at, "'~' expects an integer, not %s.", describe_type(t));
   }
   if (e->kind != EK_CONST) {
+    e->kind = EK_REF;
     return;
   }
   if (type_is_float(t)) {
@@ -1908,6 +1924,10 @@ static void primary(Parser* p, ExpDesc* e) {
         if (l->kind == LK_CONST) {
           load_named_const(e, &p->local_consts[l - p->locals]);
         }
+        if (EMIT && l->kind == LK_VAR) {
+          e->kind = EK_LOCAL;
+          e->slot = l->slot;
+        }
       } else if (kind == GK_CONST) {
         load_named_const(e, &p->global_consts.v[info >> GLOBAL_KIND_BITS]);
       } else if (kind == GK_FUNC) {
@@ -2028,14 +2048,16 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
   NameId name = expect_name(p, "variable name", &at);
   if (toplevel) {
     check_not_global(p, name, T(p) == TK_EQ ? p->ls.pos.t.offset : at);
-  } else if (own_local(p, name)) {
+  } else if (lookup_in_func(p, name)) {
     const Name* n = name_of(p, name);
     error_at(p, at, "'%.*s' is already declared.", (int)n->len, (const char*)n->str);
   }
   bool is_const = name_of(p, name)->is_const;
-  if (optional(p, TK_EQ)) {
-    u32 value_at = p->ls.pos.t.offset;
-    ExpDesc v;
+  u32 value_at = at;
+  ExpDesc v;
+  bool has_value = optional(p, TK_EQ);
+  if (has_value) {
+    value_at = p->ls.pos.t.offset;
     subexpr(p, -1, &v);
     check_assign(p, t, &v, value_at);
     if (is_const) {
@@ -2052,6 +2074,14 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
     declare_global(p, name, GK_VAR);
   } else {
     declare_if_new(p, name, at, t);
+    if (EMIT) {
+      Local* l = lookup_in_func(p, name);
+      l->slot = il_slot_add(&p->il, il_type_of(p, t, at), name);
+      if (!has_value) {
+        v = (ExpDesc){.type = t, .kind = EK_CONST};
+      }
+      exp_store(p, l, &v, value_at);
+    }
   }
 }
 
@@ -2183,7 +2213,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
 static void simple_stat(Parser* p) {
   if (EMIT) {
     il_source_pos(&p->il, p->ls.pos.t.offset);
-    if (T(p) != TK_RETURN && T(p) != TK_PASS) {
+    if (T(p) != TK_RETURN && T(p) != TK_PASS && !is_builtin_type(T(p))) {
       error_at(p, p->ls.pos.t.offset, "This statement isn't supported yet.");
     }
   }
