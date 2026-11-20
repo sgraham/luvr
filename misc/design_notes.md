@@ -3340,7 +3340,7 @@ func i64 @main
   ;     if x > 2:
   %5 = SLOT $0
   %6 = LOAD i64 %5
-  %7 = GT i32 %6, 2
+  %7 = GT i64 %6, 2
   BR %7, :2
 :3
   ;         print "big \(x)"
@@ -3354,6 +3354,8 @@ func i64 @main
 - An instruction is `[%n =] OP [type] operand, operand, ...`. The type is
   left out when it's `void`, and for `SLOT`, which is always an `i64`
   address. Types are a fixed set of words that no operand can look like.
+- A compare's type is its operands' type, which the unsigned compares need
+  to know the width. Its result is always an `i32` 0 or 1.
 - The first character of an operand says what it is: `%n` an instruction,
   `@name` or `@name+8` a `KSYM`, `:n` a block, `$n` a slot. A `KINT` starts
   with a digit or `-`, and is printed as signed decimal and read at the

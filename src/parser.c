@@ -1289,6 +1289,29 @@ static IlOp il_arith_op(BinOpr op) {
   }
 }
 
+// The IL op for a comparison of integers or bools. Narrow integers are kept
+// extended to i32, so the compare is the same for every width.
+static IlOp il_compare_op(BinOpr op, TypeId t) {
+  bool is_unsigned = type_is_unsigned(t);
+  switch (op) {
+    case OPR_EQ:
+      return OP_EQ;
+    case OPR_NE:
+      return OP_NE;
+    case OPR_LT:
+      return is_unsigned ? OP_ULT : OP_LT;
+    case OPR_LE:
+      return is_unsigned ? OP_ULE : OP_LE;
+    case OPR_GT:
+      return is_unsigned ? OP_UGT : OP_GT;
+    case OPR_GE:
+      return is_unsigned ? OP_UGE : OP_GE;
+    default:
+      ASSERT(false && "not a comparison");
+      return OP_NUM_OPS;
+  }
+}
+
 // A value that the emitting build doesn't emit yet. Its ref is 0, which
 // isn't a valid Ref, so that exp_to_ref() gives an error if it's used,
 // rather than using whatever e was before.
@@ -1514,9 +1537,9 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
     bool is_bool = binopr_is_comparison(op) || logical;
     bool is_arith = op >= OPR_BOR && op <= OPR_MOD;
     if (is_compare) {
+      TypeId t = type_is_untyped(e->type) ? rhs.type : e->type;
       bool folded = false;
       if (e->kind == EK_CONST || rhs.kind == EK_CONST) {
-        TypeId t = type_is_untyped(e->type) ? rhs.type : e->type;
         check_const_operands(p, op, t, e, start, &rhs, rhs_at, at);
         bool foldable = t.idx == TY_BOOL || type_is_integer(t) || type_is_float(t);
         if (e->kind == EK_CONST && rhs.kind == EK_CONST && foldable) {
@@ -1524,10 +1547,15 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
           folded = true;
         }
       }
-      e->type = ty_bool;
-      if (!folded) {
+      if (!folded && EMIT && (t.idx == TY_BOOL || type_is_integer(t))) {
+        Ref left = exp_to_ref(p, e, t, start);
+        Ref right = exp_to_ref(p, &rhs, t, rhs_at);
+        e->kind = EK_REF;
+        e->ref = il_emit(&p->il, il_compare_op(op, t), il_type_of(p, t, at), left, right);
+      } else if (!folded) {
         exp_unemitted(e);
       }
+      e->type = ty_bool;
     } else if (is_bool) {
       // Only 'and' and 'or' of two constants are constant, even when one
       // operand is enough to decide the value.
@@ -1546,10 +1574,10 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       if (e->kind == EK_CONST && rhs.kind == EK_CONST && t.idx != TY_UNKNOWN && t.idx != TY_STR) {
         fold_arith(p, op, t, e, &rhs, at);
       } else if (EMIT && il_arith_op(op) != OP_NUM_OPS && (t.idx == TY_I32 || t.idx == TY_I64)) {
-        Ref a = exp_to_ref(p, e, t, start);
-        Ref b = exp_to_ref(p, &rhs, t, rhs_at);
+        Ref left = exp_to_ref(p, e, t, start);
+        Ref right = exp_to_ref(p, &rhs, t, rhs_at);
         e->kind = EK_REF;
-        e->ref = il_emit(&p->il, il_arith_op(op), il_type_of(p, t, at), a, b);
+        e->ref = il_emit(&p->il, il_arith_op(op), il_type_of(p, t, at), left, right);
       } else {
         exp_unemitted(e);
       }

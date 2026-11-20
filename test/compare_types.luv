@@ -1,0 +1,33 @@
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: false
+def int main():
+    i8 a = -1
+    i8 b = 1
+    print a < b
+    print a >= b
+    u8 c = 200
+    u8 d = 100
+    print c > d
+    print c <= d
+    u32 e = 4000000000
+    u32 f = 1
+    print e > f
+    u64 g = 18446744073709551615
+    u64 h = 1
+    print g > h
+    print g < h
+    i64 i = -1
+    print i < 1
+    bool t = true
+    bool u = false
+    print t != u
+    print t == u
+    return 0

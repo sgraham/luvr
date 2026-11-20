@@ -153,6 +153,19 @@ ARITH = {
     "XOR": lambda a, b: a ^ b,
 }
 
+# Compares give 0 or 1. The unsigned ones reinterpret the operands at the
+# instruction's width.
+COMPARE = {
+    "EQ": lambda a, b: a == b,
+    "NE": lambda a, b: a != b,
+    "LT": lambda a, b: a < b,
+    "LE": lambda a, b: a <= b,
+    "GT": lambda a, b: a > b,
+    "GE": lambda a, b: a >= b,
+}
+
+UNSIGNED_COMPARE = {"ULT": "LT", "ULE": "LE", "UGT": "GT", "UGE": "GE"}
+
 
 def print_str(data, n):
     sys.stdout.flush()
@@ -192,6 +205,15 @@ def run(prog, f):
         if ins.op in ARITH:
             a, b = (value_of(values, prog, o) for o in ins.operands)
             values[ins.result] = wrap(ins.ty, ARITH[ins.op](a, b))
+            continue
+        if ins.op in COMPARE:
+            a, b = (value_of(values, prog, o) for o in ins.operands)
+            values[ins.result] = int(COMPARE[ins.op](a, b))
+            continue
+        if ins.op in UNSIGNED_COMPARE:
+            mask = (1 << {"i32": 32, "i64": 64}[ins.ty]) - 1
+            a, b = (value_of(values, prog, o) & mask for o in ins.operands)
+            values[ins.result] = int(COMPARE[UNSIGNED_COMPARE[ins.op]](a, b))
             continue
         if ins.op == "SEXT32":
             values[ins.result] = wrap("i32", value_of(values, prog, ins.operands[0]))

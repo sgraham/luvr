@@ -734,6 +734,16 @@ typedef enum IlOperand {
   X(SUB, REF, REF, true)       \
   X(MUL, REF, REF, true)       \
   X(XOR, REF, REF, true)       \
+  X(EQ, REF, REF, true)        \
+  X(NE, REF, REF, true)        \
+  X(LT, REF, REF, true)        \
+  X(LE, REF, REF, true)        \
+  X(GT, REF, REF, true)        \
+  X(GE, REF, REF, true)        \
+  X(ULT, REF, REF, true)       \
+  X(ULE, REF, REF, true)       \
+  X(UGT, REF, REF, true)       \
+  X(UGE, REF, REF, true)       \
   X(SEXT32, REF, NONE, true)   \
   X(ZEXT32, REF, NONE, true)   \
   X(NEG, REF, NONE, true)      \
