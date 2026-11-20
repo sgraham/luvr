@@ -1,0 +1,10 @@
+# OUT: false
+# OUT: true
+# OUT: false
+# OUT: true
+def int main():
+    print true and false
+    print true and true
+    print false or false
+    print false or true
+    return 0

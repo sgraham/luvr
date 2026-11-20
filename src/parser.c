@@ -14,6 +14,7 @@
 typedef union ConstValue ConstValue;
 typedef struct ExpDesc ExpDesc;
 typedef struct Local Local;
+typedef struct LogicalJoin LogicalJoin;
 typedef struct NamedConst NamedConst;
 typedef struct Parser Parser;
 typedef struct Targets Targets;
@@ -1404,6 +1405,36 @@ static void exp_infix(Parser* p, ExpDesc* e, u32 at) {
   }
 }
 
+// The value of an 'and' or 'or' is stored to a temporary slot on each path,
+// and loaded after the paths join.
+struct LogicalJoin {
+  u32 slot;
+  u32 end;
+};
+
+// Called after the left operand of 'and' or 'or'. The right operand is only
+// evaluated when the left one hasn't determined the final result.
+static void exp_logical_begin(Parser* p, BinOpr op, const ExpDesc* e, u32 at, LogicalJoin* join) {
+  Ref left = exp_to_ref(p, e, ty_bool, at);
+  join->slot = il_slot_add(&p->il, IT_I32, (NameId){IL_SLOT_UNNAMED});
+  join->end = il_block_declare(&p->il);
+  il_emit(&p->il, OP_STORE, IT_I32, left, il_emit(&p->il, OP_SLOT, IT_I64, join->slot, 0));
+  if (op == OPR_AND) {
+    il_branch(&p->il, left, join->end);
+  } else {
+    u32 right = il_block_declare(&p->il);
+    il_branch(&p->il, left, right);
+    il_jump(&p->il, join->end);
+    il_block_start(&p->il, right);
+  }
+}
+
+static void exp_logical_end(Parser* p, const ExpDesc* rhs, u32 at, const LogicalJoin* join) {
+  Ref right = exp_to_ref(p, rhs, ty_bool, at);
+  il_emit(&p->il, OP_STORE, IT_I32, right, il_emit(&p->il, OP_SLOT, IT_I64, join->slot, 0));
+  il_block_start(&p->il, join->end);
+}
+
 // Unary '-' or '~', which give the operand's type. Constants are folded.
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
   TypeId t = e->type;
@@ -1515,14 +1546,21 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       check(p, TK_IN);
     }
     const char* logical = op == OPR_AND ? "'and'" : op == OPR_OR ? "'or'" : NULL;
+    LogicalJoin join = {0};
     if (logical) {
       expect_bool(p, e, at, logical);
+      if (EMIT) {
+        exp_logical_begin(p, op, e, start, &join);
+      }
     }
     u32 rhs_at = p->ls.pos.t.offset;
     ExpDesc rhs;
     subexpr(p, priority[op], &rhs);
     if (logical) {
       expect_bool(p, &rhs, rhs_at, logical);
+      if (EMIT) {
+        exp_logical_end(p, &rhs, rhs_at, &join);
+      }
     }
     BinOpr nextop = tok_to_binopr(T(p));
     if (binopr_is_comparison(op) && binopr_is_comparison(nextop)) {
@@ -1562,6 +1600,9 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       if (logical && e->kind == EK_CONST && rhs.kind == EK_CONST && e->type.idx == TY_BOOL &&
           rhs.type.idx == TY_BOOL) {
         e->v.b = op == OPR_AND ? e->v.b && rhs.v.b : e->v.b || rhs.v.b;
+      } else if (EMIT && logical) {
+        e->kind = EK_LOCAL;
+        e->slot = join.slot;
       } else {
         exp_unemitted(e);
       }

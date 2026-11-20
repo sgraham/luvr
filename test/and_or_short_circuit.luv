@@ -1,0 +1,28 @@
+# OUT: f
+# OUT: false
+# OUT: t
+# OUT: true
+# OUT: t
+# OUT: true
+# OUT: f
+# OUT: false
+# OUT: false
+# OUT: true
+def bool t():
+    print "t"
+    return true
+
+def bool f():
+    print "f"
+    return false
+
+def int main():
+    bool x = f() and t()
+    print x
+    bool y = t() or f()
+    print y
+    print true and t()
+    print false or f()
+    print false and t()
+    print true or f()
+    return 0

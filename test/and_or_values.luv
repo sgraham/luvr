@@ -1,0 +1,28 @@
+# OUT: false
+# OUT: false
+# OUT: false
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: true
+# OUT: true
+# OUT: false
+# OUT: yes
+def int main():
+    bool t = true
+    bool f = false
+    print f and f
+    print f and t
+    print t and f
+    print t and t
+    print f or f
+    print f or t
+    print t or f
+    print t or t
+    bool x = f or t and t
+    print x
+    print t and f or f and t
+    if (t or f) and not f:
+        print "yes"
+    return 0

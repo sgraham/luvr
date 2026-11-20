@@ -3289,6 +3289,50 @@ Statements:
   branches straight to the else block without making a bool. That can come
   later, if the generated code shows it's worth it.
 
+#### Recovering branches for `and` and `or` (for the SSA pass)
+
+Written 2026-11-19, to read when the SSA pass is written. The jump lists
+aren't the only way to get the better branches back. The SSA pass can
+recover them with a local rewrite, jump threading, without changing the
+parser.
+
+After the temporary slot is promoted, `if a and b:` is:
+
+```
+:0  BR a, :J              (a is false: the phi gets 0)
+:B  %b = ...              (continues into :J)
+:J  %t = PHI [:0: 0], [:B: %b]
+    BR %t, :else
+:then ...
+```
+
+The rewrite applies to a block that holds only a phi and a `BR` of it, when
+nothing else uses the phi. For each predecessor whose incoming value is a
+constant, where the `BR` goes is already known, so that predecessor's edge
+is changed to go there instead. Here `BR a, :J` becomes `BR a, :else`.
+Then `:B` is the only predecessor left, the phi is just `%b`, and `:J` is
+merged into `:B` as `BR %b, :else`. That's the same code the jump lists
+give: `BR a, :else` and `BR b, :else`.
+
+- It needs predecessor lists and phis, which the SSA pass builds anyway,
+  and a way to change a branch's target in place, which is one operand.
+- Every edge that's changed goes to a later block, so the D26 invariants
+  (source order, predecessors before their block) still hold.
+- The shape can be recognized when the forward walk reaches `:J`, so it
+  doesn't need to be a pass of its own.
+- For `or`, the constant edge is the true path, an empty block with
+  `JMP :J`, and the phi gets 1. Its `JMP` is changed to go to `:then`. A
+  chain like `a and b and c` is threaded one join at a time.
+- When the value is used as a value (`x = a and b`), the phi has another
+  use, so nothing changes and the bool is kept.
+- A `BR` of a compare still becomes a compare and a conditional jump in the
+  encoder, as it would have.
+- `not` is the awkward case. `if not (a and b)` is a `BR` of `XOR %t, 1`.
+  Removing the `XOR` means swapping the true and false targets, but `BR`
+  only branches on zero and otherwise continues into the next block, so a
+  swap means reordering blocks. A flag on `BR` that inverts the test is
+  probably simplest, since the encoder chooses the jump's condition anyway.
+
 #### Calls and print
 
 - A call evaluates its arguments to refs left to right, then appends `CALL`
