@@ -1,0 +1,17 @@
+# OUT: 200
+# OUT: 250
+# OUT: true
+# OUT: false
+def u8 id8(u8 x):
+    return x
+
+def bool both(bool a, i16 b):
+    return a and b < 0
+
+def int main():
+    u8 y = 200
+    print id8(y)
+    print id8(250)
+    print both(true, -3)
+    print both(false, -3)
+    return 0

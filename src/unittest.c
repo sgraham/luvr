@@ -243,18 +243,19 @@ static void test_il_call(void) {
     ++failures;
   }
   il_block_start(&f, il_block_declare(&f));
+  Ref param = il_emit(&f, OP_PARAM, IT_I32, 1, 0);
   Ref one_arg[] = {il_const_int(&f, IT_I64, 5)};
   il_call(&f, IT_VOID, callee, one_arg, 1);
-  Ref three_args[] = {il_const_int(&f, IT_I64, 1), il_const_int(&f, IT_I64, 2),
-                      il_const_int(&f, IT_I64, 3)};
+  Ref three_args[] = {il_const_int(&f, IT_I64, 1), param, il_const_int(&f, IT_I64, 3)};
   Ref r = il_call(&f, IT_I64, callee, three_args, 3);
   il_emit(&f, OP_RET, IT_I64, r, 0);
   expect_il_dump(&f, "",
                  "func i64 @f\n"
                  ":0\n"
+                 "  %1 = PARAM i32 1\n"
                  "  CALL @g, 5\n"
-                 "  %3 = CALL i64 @g, 1, 2, 3\n"
-                 "  RET i64 %3\n",
+                 "  %4 = CALL i64 @g, 1, %1, 3\n"
+                 "  RET i64 %4\n",
                  "test_il_call");
   il_free(&f);
   ctx_free(&ctx);

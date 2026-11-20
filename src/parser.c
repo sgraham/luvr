@@ -70,6 +70,10 @@ static const TypeId ty_f64 = {TY_F64};
 // Locals that can be in scope at once, including those of enclosing functions.
 #define MAX_LOCALS 1024
 
+// The emitting build keeps a call's argument refs on the C stack while they're
+// parsed.
+#define MAX_CALL_ARGS 64
+
 typedef enum LocalKind {
   LK_VAR,
   LK_PARAM,
@@ -130,7 +134,11 @@ struct Local {
   NameId name;
   TypeId type;
   LocalKind kind;
-  u32 slot;  // only when EMIT
+  // Only when EMIT. A parameter is a value, so it doesn't need a slot.
+  union {
+    u32 slot;  // LK_VAR
+    Ref ref;   // LK_PARAM
+  };
   // The Name's binding before this was declared. It's restored when the
   // function ends.
   Local* shadowed;
@@ -1884,8 +1892,10 @@ static int builtin_type_size(TypeId t) {
 
 // `.field=` designators are only allowed in struct literals
 // (`Stuff(.a=1, true)`) because functions don't have named parameters.
-// Arguments are checked against callee if it's a function type.
-static void call_args(Parser* p, bool is_struct_literal, TypeId callee) {
+// Arguments are checked against callee if it's a function type. When EMIT,
+// the arguments of a function call are put in args, and the return value is
+// how many there are.
+static u32 call_args(Parser* p, bool is_struct_literal, TypeId callee, Ref* args) {
   u32 at = p->ls.pos.t.offset;
   bool is_function = type_is_function(p, callee);
   u32 num_params = is_function ? p->types.v[callee.idx].num_params : 0;
@@ -1914,9 +1924,6 @@ static void call_args(Parser* p, bool is_struct_literal, TypeId callee) {
       ExpDesc e;
       subexpr(p, -1, &e);
       check_not_void(p, &e, arg_at);
-      if (EMIT) {
-        error_at(p, arg_at, "Arguments aren't supported yet.");
-      }
       if (num_args <= num_params) {
         TypeId t = p->param_types.v[first_param + num_args - 1];
         if (!assignable(e.type, t)) {
@@ -1924,6 +1931,12 @@ static void call_args(Parser* p, bool is_struct_literal, TypeId callee) {
                    describe_type(e.type), describe_type(t));
         }
         check_const_conversion(p, t, &e, arg_at);
+        if (EMIT) {
+          if (num_args > MAX_CALL_ARGS) {
+            error_at(p, arg_at, "Calls can't have more than %d arguments.", MAX_CALL_ARGS);
+          }
+          args[num_args - 1] = exp_to_ref(p, &e, t, arg_at);
+        }
       }
       if (!optional(p, TK_COMMA)) {
         break;
@@ -1936,6 +1949,7 @@ static void call_args(Parser* p, bool is_struct_literal, TypeId callee) {
     error_at(p, num_args > num_params ? extra_at : close_at, "Expected %u argument%s, not %u.",
              num_params, num_params == 1 ? "" : "s", num_args);
   }
+  return num_args;
 }
 
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice)
@@ -1994,12 +2008,17 @@ static void postfix(Parser* p, ExpDesc* e) {
           error_at(p, at, "This call isn't supported yet.");
         }
         TypeId callee = e->type;
-        call_args(p, is_struct_literal, callee);
+#if EMIT
+        Ref args[MAX_CALL_ARGS];
+#else
+        Ref* args = NULL;
+#endif
+        u32 num_args = call_args(p, is_struct_literal, callee, args);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
         e->type = type_is_function(p, callee) ? p->types.v[callee.idx].ret : ty_unknown;
         if (EMIT) {
           Ref sym = il_const_sym(&p->il, e->sym);
-          e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, NULL, 0);
+          e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, args, num_args);
           e->kind = EK_REF;
         } else {
           exp_unemitted(e);
@@ -2132,6 +2151,9 @@ static void primary(Parser* p, ExpDesc* e) {
         if (EMIT && l->kind == LK_VAR) {
           e->kind = EK_LOCAL;
           e->slot = l->slot;
+        } else if (EMIT && l->kind == LK_PARAM) {
+          e->kind = EK_REF;
+          e->ref = l->ref;
         }
       } else if (kind == GK_CONST) {
         load_named_const(e, &p->global_consts.v[info >> GLOBAL_KIND_BITS]);
@@ -2705,6 +2727,12 @@ static void funcdef(Parser* p, bool is_method) {
     }
     il_reset(&p->il, name, il_type_of(p, p->ret_type, name_at));
     il_block_start(&p->il, il_block_declare(&p->il));
+    // Nothing in the body has been parsed yet, so the function's only locals
+    // are its parameters.
+    for (u32 i = p->func_base; i < p->num_locals; ++i) {
+      Local* l = &p->locals[i];
+      l->ref = il_emit(&p->il, OP_PARAM, il_type_of(p, l->type, name_at), i - p->func_base, 0);
+    }
   }
   check(p, TK_COLON);
   Flow flow = suite(p);

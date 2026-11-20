@@ -268,6 +268,8 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
         fprintf(out, ":%u", operands[j]);
       } else if (kind == OPND_SLOT) {
         fprintf(out, "$%u", operands[j]);
+      } else if (kind == OPND_NUM) {
+        fprintf(out, "%u", operands[j]);
       } else {
         il_dump_ref(f, operands[j], out);
       }

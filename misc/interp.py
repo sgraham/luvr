@@ -182,7 +182,7 @@ RUNTIME = {
 }
 
 
-def run(prog, f):
+def run(prog, f, args):
     values = {}
     # A slot's address is its number.
     frame = [None] * len(f.slots)
@@ -190,6 +190,9 @@ def run(prog, f):
     while pc < len(f.ins):
         ins = f.ins[pc]
         pc += 1
+        if ins.op == "PARAM":
+            values[ins.result] = args[ins.operands[0].val]
+            continue
         if ins.op == "SLOT":
             values[ins.result] = ins.operands[0].val
             continue
@@ -225,8 +228,7 @@ def run(prog, f):
             callee = ins.operands[0]
             args = [value_of(values, prog, o) for o in ins.operands[1:]]
             if callee.kind == "sym" and callee.val in prog.funcs:
-                # TODO: params to func!
-                r = run(prog, prog.funcs[callee.val])
+                r = run(prog, prog.funcs[callee.val], args)
             elif callee.kind == "sym" and callee.val in RUNTIME:
                 r = RUNTIME[callee.val](*args)
             else:
@@ -253,7 +255,7 @@ def main():
         prog = parse(text)
         if "main" not in prog.funcs:
             raise Error("no main")
-        ret = run(prog, prog.funcs["main"])
+        ret = run(prog, prog.funcs["main"], [])
     except Error as e:
         sys.exit(f"interp: {e}")
     sys.exit((ret or 0) & 0xFF)

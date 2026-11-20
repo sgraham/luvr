@@ -725,7 +725,9 @@ typedef enum IlOperand {
   OPND_REF,
   OPND_BLOCK,  // an index in IlFunc.block_starts
   OPND_SLOT,   // an index in IlFunc.slots
-  OPND_COUNT,  // the number of arguments in the EXTs that follow a CALL
+  // A number, such as a PARAM's index, or a CALL's number of arguments in the
+  // EXTs that follow it.
+  OPND_NUM,
 } IlOperand;
 
 // X(name, a, b, has_result), where a and b are IlOperands without OPND_.
@@ -754,7 +756,8 @@ typedef enum IlOperand {
   X(JMP, BLOCK, NONE, false)   \
   X(BR, REF, BLOCK, false)     \
   X(RET, REF, NONE, false)     \
-  X(CALL, REF, COUNT, true)    \
+  X(PARAM, NUM, NONE, true)    \
+  X(CALL, REF, NUM, true)      \
   X(EXT, REF, REF, false)
 
 // clang-format off
