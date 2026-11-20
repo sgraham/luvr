@@ -13,6 +13,7 @@
 
 typedef union ConstValue ConstValue;
 typedef struct ExpDesc ExpDesc;
+typedef struct GlobalFunc GlobalFunc;
 typedef struct Local Local;
 typedef struct LogicalJoin LogicalJoin;
 typedef struct NamedConst NamedConst;
@@ -114,6 +115,15 @@ struct NamedConst {
   ConstValue v;
 };
 
+// A top-level function. Its sym is FUNC_NO_SYM in the checking build, and
+// for foreign functions, which don't have symbols yet.
+struct GlobalFunc {
+  TypeId type;
+  u32 sym;
+};
+
+#define FUNC_NO_SYM UINT32_MAX
+
 // A parameter or local variable of the function being parsed, or of one that
 // encloses it.
 struct Local {
@@ -136,8 +146,8 @@ typedef enum GlobalKind {
 } GlobalKind;
 
 // GlobalInfo is a GlobalKind in the low bits. The higher bits are the index of
-// the value in Parser.global_consts for GK_CONST, and the function's TypeId for
-// GK_FUNC.
+// the value in Parser.global_consts for GK_CONST, and in Parser.global_funcs
+// for GK_FUNC.
 #define GLOBAL_KIND_BITS 3
 #define GLOBAL_KIND_MASK ((1u << GLOBAL_KIND_BITS) - 1)
 
@@ -154,6 +164,7 @@ struct Parser {
   Local locals[MAX_LOCALS];
   NamedConst local_consts[MAX_LOCALS];  // for LK_CONST locals, by index in locals
   VEC(NamedConst) global_consts;
+  VEC(GlobalFunc) global_funcs;
   VEC(TypeInfo) types;  // by TypeId, with unused entries for the FixedTypes
   VEC(TypeId) param_types;
   u32 num_locals;
@@ -191,6 +202,7 @@ typedef enum ExpKind {
   EK_CONST,  // in ExpDesc.v
   EK_LOCAL,  // in ExpDesc.slot, not loaded yet
   EK_STR,    // a string literal, whose bytes are Ctx.data at ExpDesc.data
+  EK_FUNC,   // a function, whose symbol is ExpDesc.sym
 } ExpKind;
 
 // What is known about an expression that has been parsed but not yet emitted.
@@ -202,6 +214,7 @@ struct ExpDesc {
     u32 slot;  // EK_LOCAL
     Ref ref;   // EK_REF
     u32 data;  // EK_STR
+    u32 sym;   // EK_FUNC
   };
   ConstValue v;
 };
@@ -1901,6 +1914,9 @@ static void call_args(Parser* p, bool is_struct_literal, TypeId callee) {
       ExpDesc e;
       subexpr(p, -1, &e);
       check_not_void(p, &e, arg_at);
+      if (EMIT) {
+        error_at(p, arg_at, "Arguments aren't supported yet.");
+      }
       if (num_args <= num_params) {
         TypeId t = p->param_types.v[first_param + num_args - 1];
         if (!assignable(e.type, t)) {
@@ -1972,12 +1988,22 @@ static void postfix(Parser* p, ExpDesc* e) {
         index_or_slice(p, e);
         break;
       case TK_LPAREN: {
+        u32 at = p->ls.pos.t.offset;
         bool is_struct_literal = e->shape == SH_TYPE;
+        if (EMIT && e->kind != EK_FUNC) {
+          error_at(p, at, "This call isn't supported yet.");
+        }
         TypeId callee = e->type;
         call_args(p, is_struct_literal, callee);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
         e->type = type_is_function(p, callee) ? p->types.v[callee.idx].ret : ty_unknown;
-        exp_unemitted(e);
+        if (EMIT) {
+          Ref sym = il_const_sym(&p->il, e->sym);
+          e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, NULL, 0);
+          e->kind = EK_REF;
+        } else {
+          exp_unemitted(e);
+        }
         break;
       }
       case TK_LBRACE:
@@ -2085,7 +2111,7 @@ static void primary(Parser* p, ExpDesc* e) {
         if (member_kind == GK_CONST) {
           load_named_const(e, &p->global_consts.v[member >> GLOBAL_KIND_BITS]);
         } else if (member_kind == GK_FUNC) {
-          e->type.idx = member >> GLOBAL_KIND_BITS;
+          e->type = p->global_funcs.v[member >> GLOBAL_KIND_BITS].type;
           check_function_called(p, e, member_at);
         }
         break;
@@ -2110,7 +2136,12 @@ static void primary(Parser* p, ExpDesc* e) {
       } else if (kind == GK_CONST) {
         load_named_const(e, &p->global_consts.v[info >> GLOBAL_KIND_BITS]);
       } else if (kind == GK_FUNC) {
-        e->type.idx = info >> GLOBAL_KIND_BITS;
+        const GlobalFunc* gf = &p->global_funcs.v[info >> GLOBAL_KIND_BITS];
+        e->type = gf->type;
+        if (EMIT && gf->sym != FUNC_NO_SYM) {
+          e->kind = EK_FUNC;
+          e->sym = gf->sym;
+        }
       }
       if (e->type.idx >= TY_NUM_FIXED) {
         check_function_called(p, e, at);
@@ -2385,9 +2416,6 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       if (toplevel) {
         error_at(p, at, "Calls aren't allowed at top level.");
       }
-      if (EMIT) {
-        error_at(p, at, "Calls aren't supported yet.");
-      }
       return;
     }
     error_at(p, at, "Expression can't be used as a statement.");
@@ -2605,7 +2633,10 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, u32* name_at) {
   *vec_push(p->ls.ctx, &p->types) = (TypeInfo){TYPE_FUNC, ret, p->param_types.num, 0};
   if (!is_method) {
     if (p->func_depth == 0) {
-      declare_definition(p, name, at, GK_FUNC | (ft.idx << GLOBAL_KIND_BITS));
+      u32 idx = p->global_funcs.num;
+      u32 sym = EMIT && !p->in_foreign ? ctx_sym_add(p->ls.ctx, name) : FUNC_NO_SYM;
+      *vec_push(p->ls.ctx, &p->global_funcs) = (GlobalFunc){ft, sym};
+      declare_definition(p, name, at, GK_FUNC | (idx << GLOBAL_KIND_BITS));
     } else {
       declare_if_new(p, name, at, ft);
     }
@@ -3091,6 +3122,7 @@ static void parse_end(Parser* p) {
     il_free(&p->il);
   }
   free(p->global_consts.v);
+  free(p->global_funcs.v);
   free(p->types.v);
   free(p->param_types.v);
   free(p);
@@ -3106,6 +3138,8 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   p->num_locals = 0;
   p->global_consts.v = NULL;
   p->global_consts.num = p->global_consts.cap = 0;
+  p->global_funcs.v = NULL;
+  p->global_funcs.num = p->global_funcs.cap = 0;
   p->types.v = NULL;
   p->types.num = p->types.cap = 0;
   p->param_types.v = NULL;

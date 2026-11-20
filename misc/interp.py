@@ -223,10 +223,14 @@ def run(prog, f):
             continue
         if ins.op == "CALL":
             callee = ins.operands[0]
-            if callee.kind != "sym" or callee.val not in RUNTIME:
-                raise Error(f"{f.name}: can't call {callee.val}")
             args = [value_of(values, prog, o) for o in ins.operands[1:]]
-            r = RUNTIME[callee.val](*args)
+            if callee.kind == "sym" and callee.val in prog.funcs:
+                # TODO: params to func!
+                r = run(prog, prog.funcs[callee.val])
+            elif callee.kind == "sym" and callee.val in RUNTIME:
+                r = RUNTIME[callee.val](*args)
+            else:
+                raise Error(f"{f.name}: can't call {callee.val}")
             if ins.result is not None:
                 values[ins.result] = r
             continue
