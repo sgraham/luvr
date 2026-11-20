@@ -845,6 +845,9 @@ struct IlFunc {
 
 #define IL_BLOCK_UNSTARTED UINT32_MAX
 
+// A block number that hasn't been declared yet.
+#define IL_BLOCK_NONE UINT32_MAX
+
 struct IlData {
   u32 off;  // into Ctx.databytes
   u32 len;

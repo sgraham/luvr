@@ -230,6 +230,13 @@ def run(prog, f):
             if ins.result is not None:
                 values[ins.result] = r
             continue
+        if ins.op == "JMP":
+            pc = f.blocks[ins.operands[0].val]
+            continue
+        if ins.op == "BR":
+            if value_of(values, prog, ins.operands[0]) == 0:
+                pc = f.blocks[ins.operands[1].val]
+            continue
         if ins.op == "RET":
             return value_of(values, prog, ins.operands[0]) if ins.operands else None
         raise Error(f"{f.name}: {ins.op} isn't supported yet")

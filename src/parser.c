@@ -1595,11 +1595,13 @@ static void expr(Parser* p) {
   subexpr(p, -1, &e);
 }
 
-static void cond(Parser* p) {
+// Returns the condition's value when emitting, and otherwise 0.
+static Ref cond(Parser* p) {
   u32 at = p->ls.pos.t.offset;
   ExpDesc e;
   subexpr(p, -1, &e);
   expect_bool(p, &e, at, "Condition");
+  return EMIT ? exp_to_ref(p, &e, ty_bool, at) : 0;
 }
 
 // "...\(e)...\(e)..."
@@ -2495,6 +2497,34 @@ static Flow suite(Parser* p) {
   return flow;
 }
 
+// One branch of an 'if', `cond ':' suite`. A false condition goes to the
+// next branch. A suite that falls through jumps to the block after the whole
+// 'if', which is declared in *end when it's first needed, because there isn't
+// one if every branch returns.
+static Flow if_branch(Parser* p, u32* end) {
+  if (EMIT) {
+    il_source_pos(&p->il, p->ls.pos.t.offset);
+  }
+  Ref condition = cond(p);
+  u32 next_branch = 0;
+  if (EMIT) {
+    next_branch = il_block_declare(&p->il);
+    il_branch(&p->il, condition, next_branch);
+  }
+  check(p, TK_COLON);
+  Flow flow = suite(p);
+  if (EMIT) {
+    if (flow == FLOW_FALLS_THROUGH) {
+      if (*end == IL_BLOCK_NONE) {
+        *end = il_block_declare(&p->il);
+      }
+      il_jump(&p->il, *end);
+    }
+    il_block_start(&p->il, next_branch);
+  }
+  return flow;
+}
+
 // funcsig -> [type] name '(' [param {',' param}] ')'
 // param   -> type name | name    (bare name: a method's first parameter)
 //
@@ -2635,28 +2665,25 @@ static void funcdef(Parser* p, bool is_method) {
 static Flow stat(Parser* p) {
   switch (T(p)) {
     case TK_IF: {
-      if (EMIT) {
-        error_at(p, p->ls.pos.t.offset, "'if' isn't supported yet.");
-      }
       next(p);
-      cond(p);
-      check(p, TK_COLON);
-      Flow flow = suite(p);
+      u32 end = IL_BLOCK_NONE;
+      // &= rather than &&, so that every branch is still parsed.
+      bool returns = if_branch(p, &end) == FLOW_RETURNS;
       while (optional(p, TK_ELIF)) {
-        cond(p);
+        returns &= if_branch(p, &end) == FLOW_RETURNS;
+      }
+      if (optional(p, TK_ELSE)) {
         check(p, TK_COLON);
-        if (suite(p) == FLOW_FALLS_THROUGH) {
-          flow = FLOW_FALLS_THROUGH;
-        }
+        returns &= suite(p) == FLOW_RETURNS;
+      } else {
+        returns = false;
       }
-      if (!optional(p, TK_ELSE)) {
-        return FLOW_FALLS_THROUGH;
+      // The else suite, or the last condition being false, continues into
+      // the end block.
+      if (EMIT && end != IL_BLOCK_NONE) {
+        il_block_start(&p->il, end);
       }
-      check(p, TK_COLON);
-      if (suite(p) == FLOW_FALLS_THROUGH) {
-        flow = FLOW_FALLS_THROUGH;
-      }
-      return flow;
+      return returns ? FLOW_RETURNS : FLOW_FALLS_THROUGH;
     }
     case TK_FOR: {
       if (EMIT) {
