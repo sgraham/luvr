@@ -166,7 +166,8 @@ def run_tests(out, paths, rewind, unittest, verbose):
         if verbose:
             print(f"{'[FAIL]' if f else '[ ok ]'} {il} {p}")
     # Rewinding the lexer and lexing again must reach the same state. All of the
-    # test files lex without error, including those in todo/.
+    # test files lex without error, including those in todo/, except for the
+    # lexer error tests in test/errors/lex_*.luv.
     lexdump = os.path.join(out, "lexdump" + EXE)
     r = subprocess.run([lexdump, "-r"] + rewind, capture_output=True, text=True)
     if r.returncode != 0:
@@ -220,6 +221,7 @@ def main():
     build(args, out, ninja_targets)
     if tests:
         rewind = sorted(glob.glob("test/**/*.luv", recursive=True)) if all else tests
+        rewind = [p for p in rewind if not p.replace("\\", "/").startswith("test/errors/lex_")]
         if not run_tests(out, tests, rewind, all, args.verbose):
             sys.exit(1)
 

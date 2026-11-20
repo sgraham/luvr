@@ -180,7 +180,7 @@ static void il_dump_source_line(const u8* src, u32 offset, FILE* out) {
     --start;
   }
   const u8* end = src + offset;
-  while (*end != '\n' && *end != '\r' && *end != 0) {
+  while (*end != '\n' && *end != 0) {
     ++end;
   }
   fprintf(out, "  ; %.*s\n", (int)(end - start), start);

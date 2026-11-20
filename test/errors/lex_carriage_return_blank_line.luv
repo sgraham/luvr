@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:1:
+# CERR: {ssss}     ^ error: Source contains a carriage return.
+def int main():
+
+    return 0

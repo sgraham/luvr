@@ -228,10 +228,6 @@ static const u8* next_content_line(LexState* ls, const u8* p, const u8** bol) {
       p = q + 1;
       continue;
     }
-    if (*q == '\r' && q[1] == '\n') {
-      p = q + 2;
-      continue;
-    }
     if (*q == '#') {
       const u8* nl = (const u8*)memchr(q, '\n', (size_t)(ls->src.end - q));
       if (!nl) {
@@ -268,6 +264,9 @@ static void lex_layout(LexState* ls, Token* t, const u8* nl) {
   }
   if (*q == '\t') {
     lex_error(ls, q, "Indentation must use spaces, not tabs.");
+  }
+  if (*q == '\r') {
+    lex_error(ls, q, "Source contains a carriage return.");
   }
   u32 n = (u32)(q - bol);
   if (n & 3) {
@@ -636,9 +635,11 @@ void lex_next(LexState* ls) {
   for (;;) {
     switch (*p) {
       case ' ':
-      case '\r':
         ++p;
         continue;
+
+      case '\r':
+        lex_error(ls, p, "Source contains a carriage return.");
 
       case '\t':
         lex_error(ls, p, "Tab characters are only allowed in strings and comments.");
