@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:5:5:g = null
+# CERR: {ssss}         ^ error: Can't infer a type from null.
+
+g = null
+
+def int main():
+    return 0

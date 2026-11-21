@@ -35,6 +35,7 @@ typedef enum FixedType {
   TY_VOID,           // The return type of a function without one.
   TY_BOOL,
   TY_STR,
+  TY_NULL,  // The type of `null`, which can be assigned to any pointer.
   // Integer types are contiguous, from TY_FIRST_INT to TY_LAST_INT.
   TY_I8,
   TY_I16,
@@ -57,6 +58,7 @@ static const TypeId ty_untyped_float = {TY_UNTYPED_FLOAT};
 static const TypeId ty_void = {TY_VOID};
 static const TypeId ty_bool = {TY_BOOL};
 static const TypeId ty_str = {TY_STR};
+static const TypeId ty_null = {TY_NULL};
 static const TypeId ty_i8 = {TY_I8};
 static const TypeId ty_i16 = {TY_I16};
 static const TypeId ty_i32 = {TY_I32};
@@ -296,6 +298,8 @@ static const char* type_str(Parser* p, TypeId t) {
       return "bool";
     case TY_STR:
       return "str";
+    case TY_NULL:
+      return "null";
     case TY_I8:
       return "i8";
     case TY_I16:
@@ -909,9 +913,10 @@ static const char* const_str(Parser* p, const ExpDesc* e) {
 // Whether a value of type `from` can be used, without a cast, where `to` is
 // expected. An integer constant can become a float, but not the reverse, even
 // when the float constant is integral.
-static bool assignable(TypeId from, TypeId to) {
+static bool assignable(Parser* p, TypeId from, TypeId to) {
   return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN ||
          (to.idx == from.idx && from.idx != TY_VOID) ||
+         (from.idx == TY_NULL && type_is_pointer(p, to)) ||
          (from.idx == TY_UNTYPED_INT && (type_is_integer(to) || type_is_float(to))) ||
          (from.idx == TY_UNTYPED_FLOAT && type_is_float(to));
 }
@@ -1003,7 +1008,7 @@ static void check_not_void(Parser* p, const ExpDesc* e, u32 at) {
 
 // Checks that a value can be assigned to something of type `to`.
 static void check_assign(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
-  if (!assignable(e->type, to)) {
+  if (!assignable(p, e->type, to)) {
     assign_type_error(p, e->type, to, at);
   }
   check_const_conversion(p, to, e, at);
@@ -1036,7 +1041,7 @@ static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
   }
   bool is_shift = op == OPR_SHL || op == OPR_SHR;
   bool is_concat = op == OPR_ADD && a.idx == TY_STR && b.idx == TY_STR;
-  bool same_type = assignable(a, b) || assignable(b, a);
+  bool same_type = assignable(p, a, b) || assignable(p, b, a);
   bool ints = type_is_integer(a) && type_is_integer(b) && (is_shift || same_type);
   bool floats =
       op >= OPR_ADD && op <= OPR_DIV && same_type && (type_is_float(a) || type_is_float(b));
@@ -1569,8 +1574,11 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
           (l && l->kind == LK_PARAM)) {
         error_at(p, at, "Can't take the address of non-lvalue.");
       }
+      if (e->kind == EK_CONST) {
+        error_at(p, at, "Can't take the address of a constant.");
+      }
       e->shape = SH_VALUE;
-      e->type = ty_unknown;
+      e->type = type_pointer_to(p, e->type);
       exp_unemitted(e);
       break;
     }
@@ -1616,8 +1624,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
     if (binopr_is_comparison(op) && binopr_is_comparison(nextop)) {
       error_at(p, at, "Comparisons can't be chained. Use 'and' to combine them.");
     }
-    if (op >= OPR_EQ && op <= OPR_GE && !assignable(rhs.type, e->type) &&
-        !assignable(e->type, rhs.type)) {
+    if (op >= OPR_EQ && op <= OPR_GE && !assignable(p, rhs.type, e->type) &&
+        !assignable(p, e->type, rhs.type)) {
       error_at(p, at, "Can't compare %s and %s.", type_str(p, e->type), type_str(p, rhs.type));
     }
     e->shape = SH_VALUE;
@@ -1958,7 +1966,7 @@ static u32 call_args(Parser* p, bool is_struct_literal, TypeId callee, Ref* args
       check_not_void(p, &e, arg_at);
       if (num_args <= num_params) {
         TypeId t = p->param_types.v[first_param + num_args - 1];
-        if (!assignable(e.type, t)) {
+        if (!assignable(p, e.type, t)) {
           error_at(p, arg_at, "Argument %u is %s, but the parameter is %s.", num_args,
                    type_str(p, e.type), type_str(p, t));
         }
@@ -1984,21 +1992,34 @@ static u32 call_args(Parser* p, bool is_struct_literal, TypeId callee, Ref* args
   return num_args;
 }
 
-// '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice)
+// '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice). e is the
+// expression being indexed, and is replaced by the result. Only indexing a
+// pointer is typed so far, and gives the pointee.
 static void index_or_slice(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
   next(p);  // '['
-  e->shape = SH_LVALUE;
+  // The index, or the slice's start, which can be left out.
+  ExpDesc first;
+  u32 first_at = p->ls.pos.t.offset;
   if (T(p) != TK_COLON) {
+    subexpr(p, -1, &first);
+  }
+  bool is_slice = optional(p, TK_COLON);
+  if (is_slice && T(p) != TK_RSQUARE) {
     expr(p);
   }
-  if (optional(p, TK_COLON)) {
-    e->shape = SH_VALUE;
-    if (T(p) != TK_RSQUARE) {
-      expr(p);
-    }
-  }
   check_match(p, TK_RSQUARE, TK_LSQUARE, at);
+  TypeId result = ty_unknown;
+  if (!is_slice && type_is_pointer(p, e->type)) {
+    if (first.type.idx != TY_UNKNOWN && !type_is_integer(first.type)) {
+      error_at(p, first_at, "Index must be an integer, not %s.", type_str(p, first.type));
+    }
+    check_const_conversion(p, ty_i64, &first, first_at);
+    result = type_info(p, e->type)->pointee;
+  }
+  e->shape = is_slice ? SH_VALUE : SH_LVALUE;
+  e->type = result;
+  exp_unemitted(e);
 }
 
 // postfix -> { '.' name | '.' TypeName | '[' index_or_slice ']' | '(' args ')'
@@ -2029,8 +2050,6 @@ static void postfix(Parser* p, ExpDesc* e) {
         if (e->shape == SH_TYPE) {
           error_at(p, p->ls.pos.t.offset, "A type can't be indexed.");
         }
-        e->type = ty_unknown;
-        exp_unemitted(e);
         index_or_slice(p, e);
         break;
       case TK_LPAREN: {
@@ -2133,6 +2152,7 @@ static void primary(Parser* p, ExpDesc* e) {
       break;
     case TK_NULL:
       next(p);
+      e->type = ty_null;
       break;
     case TK_STRING_BEGIN:
       interpolated_string(p);
@@ -2444,6 +2464,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         declare_const(p, name, at, toplevel, v.type, &v, value_at);
       } else if (declares) {
         check_not_void(p, &v, value_at);
+        if (v.type.idx == TY_NULL && (toplevel || !loc)) {
+          error_at(p, value_at, "Can't infer a type from null.");
+        }
         TypeId t = type_concrete(v.type);
         check_const_conversion(p, t, &v, value_at);
         if (toplevel && v.kind != EK_CONST) {
@@ -2516,7 +2539,7 @@ static void simple_stat(Parser* p) {
         if (p->ret_type.idx == TY_VOID) {
           error_at(p, at, "Can't return a value from a function with no return type.");
         }
-        if (!assignable(e.type, p->ret_type)) {
+        if (!assignable(p, e.type, p->ret_type)) {
           error_at(p, at, "Can't return %s from a function returning %s.", type_str(p, e.type),
                    type_str(p, p->ret_type));
         }

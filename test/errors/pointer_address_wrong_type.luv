@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:14:    *int p = &x
+# CERR: {ssss}                   ^ error: Can't assign *i32 to *int.
+
+def int main():
+    i32 x = 1
+    *int p = &x
+    return 0

@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:13:    int y = p[0]
+# CERR: {ssss}                  ^ error: Can't assign u8 to int.
+
+def int main():
+    u8 x = 1
+    *u8 p = &x
+    int y = p[0]
+    return 0

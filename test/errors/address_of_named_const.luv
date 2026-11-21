@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:10:    p = &MAX
+# CERR: {ssss}               ^ error: Can't take the address of a constant.
+
+MAX = 5
+
+def int main():
+    p = &MAX
+    return 0

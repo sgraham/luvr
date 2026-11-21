@@ -1,0 +1,16 @@
+# OUT: 5
+# OUT: 7
+# OUT: true
+# OUT: false
+def int main():
+    int x = 5
+    *int px = &x
+    **int ppx = &px
+    print ppx[0][0]
+    u8 zero = 0
+    px[zero] = 7
+    print x
+    *int none = null
+    print none == null
+    print px == null
+    return 0

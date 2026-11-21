@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:13:    int x = null
+# CERR: {ssss}                  ^ error: Can't assign null to int.
+
+def int main():
+    int x = null
+    return 0

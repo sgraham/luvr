@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:11:    y = p[true]
+# CERR: {ssss}                ^ error: Index must be an integer, not bool.
+
+def int main():
+    int x = 1
+    *int p = &x
+    y = p[true]
+    return 0
