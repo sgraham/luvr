@@ -1,0 +1,11 @@
+# CRET: 1
+# CERR: {self}:10:11:    y = s.q
+# CERR: {ssss}                 ^ error: 'q' isn't a field of Stuff.
+
+struct Stuff:
+    int x
+
+def int main():
+    Stuff s
+    y = s.q
+    return 0

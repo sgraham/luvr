@@ -1,0 +1,12 @@
+# OUT: 4
+# OUT: 4
+struct Stuff:
+    i32 a
+    i32 b
+
+def int main():
+    u64 o = offsetof(Stuff, b)
+    i32 tail = sizeof(Stuff) - offsetof(Stuff, b)
+    print o
+    print tail
+    return 0

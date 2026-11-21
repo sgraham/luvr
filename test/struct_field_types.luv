@@ -1,0 +1,37 @@
+# OUT: 5
+# OUT: true
+# OUT: 9
+# OUT: 3
+# OUT: 16
+# OUT: 9
+struct Inner:
+    i32 a
+    bool b
+
+struct Outer:
+    int n
+    Inner inner
+    [3]u8 tags
+
+TAGS_AT = offsetof(Outer, tags)
+
+def int main():
+    Outer o
+    o.n = 5
+    o.inner.b = true
+    int n = o.n
+    bool b = o.inner.b
+    print n
+    print b
+    *Outer p = &o
+    p.n = 9
+    p.tags[2] = 3
+    i32 a = p.inner.a
+    u8 tag = o.tags[2]
+    print o.n
+    print tag
+    print TAGS_AT
+    **Outer pp = &p
+    int deep = pp.n
+    print deep
+    return 0

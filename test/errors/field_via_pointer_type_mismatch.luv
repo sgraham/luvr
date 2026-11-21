@@ -1,0 +1,12 @@
+# CRET: 1
+# CERR: {self}:11:14:    *int d = p.data
+# CERR: {ssss}                    ^ error: Can't assign *u8 to *int.
+
+struct Stuff:
+    *u8 data
+
+def int main():
+    Stuff s
+    *Stuff p = &s
+    *int d = p.data
+    return 0

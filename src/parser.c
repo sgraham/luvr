@@ -2122,6 +2122,22 @@ static u32 call_args(Parser* p, bool is_struct_literal, TypeId callee, Ref* args
   return num_args;
 }
 
+static const Field* struct_field(Parser* p, TypeId st, NameId name) {
+  const TypeInfo* info = type_info(p, st);
+  for (u32 i = 0; i < info->num_fields; ++i) {
+    const Field* f = &p->fields.v[info->first_field + i];
+    if (f->name.idx == name.idx) {
+      return f;
+    }
+  }
+  return NULL;
+}
+
+static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, u32 at) {
+  const Name* n = name_of(p, name);
+  error_at(p, at, "'%.*s' isn't a field of %s.", (int)n->len, (const char*)n->str, type_str(p, st));
+}
+
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice). e is the
 // expression being indexed, and is replaced by the result. Only indexing a
 // pointer or a fixed-size array is typed so far. A constant index into an
@@ -2170,20 +2186,38 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
 static void postfix(Parser* p, ExpDesc* e) {
   for (;;) {
     switch (T(p)) {
-      case TK_DOT:
-        e->type = ty_unknown;
-        exp_unemitted(e);
-        next(p);
-        if (T(p) == TK_NAME) {
-          e->shape = SH_LVALUE;
-        } else if (T(p) == TK_TYPENAME) {
-          // module.TypeName is handled by primary().
-          error_at(p, p->ls.pos.t.offset, "Unexpected type name after '.'.");
-        } else {
-          error_expected(p, "field name");
+      case TK_DOT: {
+        // '.' auto-dereferences any number of pointers. That's never ambiguous,
+        // because there are no methods on pointers.
+        TypeId base = e->shape == SH_TYPE ? ty_unknown : e->type;
+        while (type_is_pointer(p, base)) {
+          base = type_info(p, base)->pointee;
         }
         next(p);
+        if (T(p) == TK_TYPENAME) {
+          // module.TypeName is handled by primary().
+          error_at(p, p->ls.pos.t.offset, "Unexpected type name after '.'.");
+        } else if (T(p) != TK_NAME) {
+          error_expected(p, "field name");
+        }
+        NameId name = p->ls.pos.t.v.name;
+        u32 name_at = p->ls.pos.t.offset;
+        next(p);
+        e->shape = SH_LVALUE;
+        e->type = ty_unknown;
+        exp_unemitted(e);
+        if (type_is_struct(p, base)) {
+          const Field* f = struct_field(p, base, name);
+          // Methods aren't typed yet, so a name that isn't a field is only an
+          // error if it isn't called.
+          if (f) {
+            e->type = f->type;
+          } else if (T(p) != TK_LPAREN) {
+            field_error(p, base, name, name_at);
+          }
+        }
         break;
+      }
       case TK_LSQUARE:
         if (e->shape == SH_TYPE) {
           error_at(p, p->ls.pos.t.offset, "A type can't be indexed.");
@@ -2412,16 +2446,33 @@ static void primary(Parser* p, ExpDesc* e) {
       }
       break;
     }
-    case TK_OFFSETOF:
+    case TK_OFFSETOF: {
       next(p);
       at = p->ls.pos.t.offset;
       check(p, TK_LPAREN);
-      type(p);
+      u32 type_at = p->ls.pos.t.offset;
+      TypeId t = type(p);
       check(p, TK_COMMA);
+      NameId name = p->ls.pos.t.v.name;
+      u32 name_at = p->ls.pos.t.offset;
       check_name(p, "field name");
-      check_match(p, TK_RPAREN, TK_LPAREN, at);
       e->type = ty_i64;
+      if (type_is_struct(p, t)) {
+        const Field* f = struct_field(p, t, name);
+        if (!f) {
+          field_error(p, t, name, name_at);
+        }
+        if (type_info(p, t)->has_layout) {
+          e->type = ty_untyped_int;
+          e->kind = EK_CONST;
+          e->v.i = f->offset;
+        }
+      } else if (t.idx != TY_UNKNOWN) {
+        error_at(p, type_at, "offsetof expects a struct, not %s.", type_str(p, t));
+      }
+      check_match(p, TK_RPAREN, TK_LPAREN, at);
       break;
+    }
     case TK_CAST: {  // cast T(expr)
       next(p);
       TypeId t = type(p);

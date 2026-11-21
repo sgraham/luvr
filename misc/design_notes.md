@@ -2773,9 +2773,11 @@ The alternatives considered:
   the width is the point (struct layouts, binary formats) reads better with
   the whole `i8`..`i64`, `u8`..`u64` family.
 
-`len`, `offsetof` and indexes are `int`. They're signed, so `len(xs) - 1`
-on an empty list is -1, not 2⁶⁴-1. `sizeof` and `alignof` are untyped
-constants (D28), so they can be used as any integer type.
+`len` and indexes are `int`. They're signed, so `len(xs) - 1` on an empty
+list is -1, not 2⁶⁴-1. `sizeof`, `alignof` and `offsetof` are untyped
+constants (D28), so they can be used as any integer type. (Revised
+2026-11-21: `offsetof` was `int`. As a constant, its arithmetic is exact
+and can't wrap, and it's used alongside sizes and passed to C as `u64`.)
 
 Each type has one name, apart from `int`, which is there because it's the
 default and is easier to type. So there's no `uint` (`u64`), `byte` (`u8`),
@@ -2955,9 +2957,10 @@ Steps 1, 2, 3 and 5 are done, and step 4 only for `sizeof`, `alignof` and
 - `len` typed as `int`. It's one of the builtin names in `lex.c`, and calls
   aren't typed yet. It should get `int` from its declaration once builtins
   are in a prelude and calls have signatures.
-- Indexes. Arrays, lists and dicts are all `ty_unknown`, and a dict key
-  isn't an integer, so an index can't be checked until container types
-  exist.
+- Indexes. Pointers and fixed-size arrays are typed and their indexes are
+  checked (2026-11-21, D31 step 1). Lists and dicts are still `ty_unknown`,
+  and a dict key isn't an integer, so those indexes can't be checked until
+  their container types exist.
 - Range checks on constants: `u8 x = 300`, `u32 x = -1`, and overflow of
   an `f32` or `f64` target. These need the constant's value in `ExpDesc`,
   and unary `-` folded, since it currently gives an unknown type.

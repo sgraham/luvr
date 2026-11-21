@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:18:    x = offsetof(int, a)
+# CERR: {ssss}                       ^ error: offsetof expects a struct, not int.
+
+def int main():
+    x = offsetof(int, a)
+    return 0

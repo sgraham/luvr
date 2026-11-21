@@ -1,0 +1,14 @@
+# CRET: 1
+# CERR: {self}:13:13:    o.inner.b = 1
+# CERR: {ssss}                   ^ error: 'b' isn't a field of Inner.
+
+struct Inner:
+    int a
+
+struct Outer:
+    Inner inner
+
+def int main():
+    Outer o
+    o.inner.b = 1
+    return 0
