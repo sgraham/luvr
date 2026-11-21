@@ -2296,6 +2296,8 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_NULL:
       next(p);
       e->type = ty_null;
+      e->kind = EK_CONST;
+      e->v.i = 0;
       break;
     case TK_STRING_BEGIN:
       interpolated_string(p);

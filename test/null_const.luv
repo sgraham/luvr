@@ -1,0 +1,15 @@
+# OUT: true
+# OUT: true
+struct List:
+    *int data = null
+    int len
+
+*int empty = null
+NOTHING = null
+
+def int main():
+    List items
+    *u8 bytes = NOTHING
+    print bytes == null
+    print empty == NOTHING
+    return 0
