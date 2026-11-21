@@ -1,0 +1,11 @@
+# OUT: true
+# OUT: true
+def int main():
+    int x = 5
+    *int px = &x
+    *u8 bytes = cast *u8(px)
+    u64 addr = cast u64(px)
+    *int back = cast *int(addr)
+    print cast u64(bytes) == addr
+    print cast u64(back) == addr
+    return 0

@@ -1,0 +1,11 @@
+# OUT: 8
+# OUT: 8
+# OUT: 16
+PTR_SIZE = sizeof(*u8)
+
+def int main():
+    print PTR_SIZE
+    print alignof(**int)
+    [sizeof(*int) * 2]u8 buf
+    print sizeof(buf)
+    return 0

@@ -48,11 +48,29 @@ u32 ctx_sym_add(Ctx* ctx, NameId name) {
   return ctx->syms.num - 1;
 }
 
+const char* ctx_err_str(Ctx* ctx, const char* fmt, ...) {
+  ASSERT(ctx->err_scratch_used <= sizeof(ctx->err_scratch));
+  size_t avail = sizeof(ctx->err_scratch) - ctx->err_scratch_used;
+  char* s = ctx->err_scratch + ctx->err_scratch_used;
+  va_list ap;
+  va_start(ap, fmt);
+  int len = vsnprintf(s, avail, fmt, ap);
+  va_end(ap);
+  // A string that didn't fit isn't kept, so err_scratch_used only ever grows
+  // by a complete string and its terminator.
+  if (len < 0 || (size_t)len >= avail) {
+    return "<out of error string space>";
+  }
+  ctx->err_scratch_used += (u32)len + 1;
+  return s;
+}
+
 void ctx_error(Ctx* ctx, const char* file, const u8* buf, u32 offset, const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   vsnprintf(ctx->err_msg, sizeof(ctx->err_msg), fmt, ap);
   va_end(ap);
+  ctx->err_scratch_used = 0;
   ctx->err_file = file;
   ctx->err_buf = buf;
   ctx->err_offset = offset;

@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:18:    x = cast i32(p)
+# CERR: {ssss}                       ^ error: Can't cast **int to i32.
+
+def int main():
+    **int p = null
+    x = cast i32(p)
+    return 0

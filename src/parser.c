@@ -22,7 +22,8 @@ typedef struct Targets Targets;
 typedef struct TypeId TypeId;
 typedef struct TypeInfo TypeInfo;
 
-// Types are compared by index.
+// Types are compared by index. idx is a FixedType, or for types that are
+// created while parsing, an index >= TY_NUM_FIXED in Parser.types.
 struct TypeId {
   u32 idx;
 };
@@ -101,15 +102,23 @@ union ConstValue {
 
 typedef enum TypeKind {
   TYPE_FUNC,
+  TYPE_PTR,
 } TypeKind;
 
 // A type that's created while parsing. Function types aren't interned, so
-// each function has its own, even when signatures are the same.
+// each function has its own, even when signatures are the same. Pointer types
+// are interned through `ptr`, so that they can be compared by index.
 struct TypeInfo {
   TypeKind kind;
-  TypeId ret;
-  u32 first_param;  // in Parser.param_types
-  u32 num_params;
+  TypeId ptr;  // *T for this T, or TY_UNKNOWN if it hasn't been created yet
+  union {
+    struct {  // TYPE_FUNC
+      TypeId ret;
+      u32 first_param;  // in Parser.param_types
+      u32 num_params;
+    };
+    TypeId pointee;  // TYPE_PTR
+  };
 };
 
 // A named constant's value, which is kept apart from Local and Module.globals
@@ -248,9 +257,29 @@ static void next(Parser* p) {
 #define error_at(p, offset, ...) \
   ctx_error((p)->ls.ctx, (p)->ls.src.filename, (p)->ls.src.buf, (offset), __VA_ARGS__)
 
-// Describes a type for error messages, as it would follow "not".
-static const char* describe_type(TypeId t) {
-  if (t.idx >= TY_NUM_FIXED) {
+static bool type_is_created(TypeId t) {
+  return t.idx >= TY_NUM_FIXED;
+}
+
+static TypeInfo* type_info(Parser* p, TypeId t) {
+  return &p->types.v[t.idx];
+}
+
+static bool type_is_function(Parser* p, TypeId t) {
+  return type_is_created(t) && type_info(p, t)->kind == TYPE_FUNC;
+}
+
+static bool type_is_pointer(Parser* p, TypeId t) {
+  return type_is_created(t) && type_info(p, t)->kind == TYPE_PTR;
+}
+
+// Describes a type for error messages, as it would follow "not". The result
+// is only for the arguments of error_at().
+static const char* type_str(Parser* p, TypeId t) {
+  if (type_is_pointer(p, t)) {
+    return ctx_err_str(p->ls.ctx, "*%s", type_str(p, type_info(p, t)->pointee));
+  }
+  if (type_is_function(p, t)) {
     return "a function";
   }
   switch ((FixedType)t.idx) {
@@ -291,18 +320,17 @@ static const char* describe_type(TypeId t) {
   return "an unknown type";
 }
 
-// Describes the current token for error messages.
-static const char* describe(Parser* p, char* buf, size_t size) {
+// Describes the current token for error messages. The result is only for the
+// arguments of error_at().
+static const char* token_str(Parser* p) {
   const Token* t = &p->ls.pos.t;
   switch (t->kind) {
     case TK_TYPEPARAM:
-      snprintf(buf, size, "type parameter '%c'", lex_name(p->ls.ctx, t->v.name)->str[0]);
-      return buf;
+      return ctx_err_str(p->ls.ctx, "type parameter '%c'", lex_name(p->ls.ctx, t->v.name)->str[0]);
     case TK_NAME:
     case TK_TYPENAME: {
       const Name* n = lex_name(p->ls.ctx, t->v.name);
-      snprintf(buf, size, "'%.*s'", (int)(n->len > 40 ? 40 : n->len), (const char*)n->str);
-      return buf;
+      return ctx_err_str(p->ls.ctx, "'%.*s'", (int)n->len, (const char*)n->str);
     }
     case TK_INTLIT:
     case TK_FLOATLIT:
@@ -319,21 +347,17 @@ static const char* describe(Parser* p, char* buf, size_t size) {
     case TK_EOS:
       return "end of file";
     default:
-      snprintf(buf, size, "'%s'", tok_kind_name(t->kind));
-      return buf;
+      return ctx_err_str(p->ls.ctx, "'%s'", tok_kind_name(t->kind));
   }
 }
 
 NORETURN static void error_expected(Parser* p, const char* what) {
-  char buf[64];
-  error_at(p, p->ls.pos.t.offset, "Expected %s, found %s.", what, describe(p, buf, sizeof(buf)));
+  error_at(p, p->ls.pos.t.offset, "Expected %s, found %s.", what, token_str(p));
 }
 
 static void check(Parser* p, TokenKind kind) {
   if (T(p) != kind) {
-    char what[16];
-    snprintf(what, sizeof(what), "'%s'", tok_kind_name(kind));
-    error_expected(p, what);
+    error_expected(p, ctx_err_str(p->ls.ctx, "'%s'", tok_kind_name(kind)));
   }
   next(p);
 }
@@ -353,8 +377,7 @@ static void check_match(Parser* p, TokenKind what, TokenKind who, u32 who_offset
     next(p);
     return;
   }
-  char buf[64];
-  ctx_error_unclosed(&p->ls, what, who, who_offset, describe(p, buf, sizeof(buf)));
+  ctx_error_unclosed(&p->ls, what, who, who_offset, token_str(p));
 }
 
 static void check_name(Parser* p, const char* what) {
@@ -631,13 +654,26 @@ static TypeId builtin_type(TokenKind kind) {
   }
 }
 
+// A pointer to an unknown type is unknown too, so that it passes checks
+// against any other pointer.
+static TypeId type_pointer_to(Parser* p, TypeId t) {
+  if (t.idx == TY_UNKNOWN) {
+    return ty_unknown;
+  }
+  if (type_info(p, t)->ptr.idx == TY_UNKNOWN) {
+    TypeId pt = {p->types.num};
+    *vec_push(p->ls.ctx, &p->types) = (TypeInfo){.kind = TYPE_PTR, .pointee = t};
+    type_info(p, t)->ptr = pt;
+  }
+  return type_info(p, t)->ptr;
+}
+
 static TypeId type(Parser* p) {
   u32 at = p->ls.pos.t.offset;
   switch (T(p)) {
     case TK_STAR:
       next(p);
-      type(p);
-      return ty_unknown;
+      return type_pointer_to(p, type(p));
     case TK_LSQUARE:
       next(p);
       if (T(p) != TK_RSQUARE) {
@@ -803,10 +839,6 @@ static TypeId type_concrete(TypeId t) {
   }
 }
 
-static bool type_is_function(Parser* p, TypeId t) {
-  return t.idx >= TY_NUM_FIXED && p->types.v[t.idx].kind == TYPE_FUNC;
-}
-
 static bool type_is_untyped(TypeId t) {
   return t.idx == TY_UNTYPED_INT || t.idx == TY_UNTYPED_FLOAT;
 }
@@ -833,14 +865,13 @@ static bool const_fits_in_type(ConstInt v, TypeId t) {
   return v < limit && v >= (type_is_unsigned(t) ? 0 : -limit);
 }
 
-// Enough for any ConstInt in decimal (a sign and 39 digits), or any double
-// printed with %.17g, plus the terminator.
-#define CONST_STR_SIZE 41
-
-// buf needs to hold CONST_STR_SIZE chars.
-static const char* const_int_as_str(ConstInt v, char* buf) {
+// The result is only for the arguments of error_at(), as are those of
+// float_str() and const_str().
+static const char* int_str(Parser* p, ConstInt v) {
+  // A sign, up to 39 digits, and the terminator.
+  char buf[41];
   ConstUInt u = v < 0 ? -(ConstUInt)v : (ConstUInt)v;
-  char* s = buf + CONST_STR_SIZE - 1;
+  char* s = buf + sizeof(buf) - 1;
   *s = 0;
   for (;;) {
     *--s = (char)('0' + (int)(u % 10));
@@ -852,25 +883,27 @@ static const char* const_int_as_str(ConstInt v, char* buf) {
   if (v < 0) {
     *--s = '-';
   }
-  return s;
+  return ctx_err_str(p->ls.ctx, "%s", s);
 }
 
 // The shortest form that reads back as the same double, so that the value
 // shown in errors is the one that was written.
-static const char* const_float_as_str(double v, char* buf) {
+static const char* float_str(Parser* p, double v) {
+  // %.17g is at most 24 chars, as in -2.2250738585072014e-308.
+  char buf[32];
   int prec = 1;
   for (;;) {
-    snprintf(buf, CONST_STR_SIZE, "%.*g", prec, v);
+    snprintf(buf, sizeof(buf), "%.*g", prec, v);
     if (strtod(buf, NULL) == v || prec == 17) {
       break;
     }
     ++prec;
   }
-  return buf;
+  return ctx_err_str(p->ls.ctx, "%s", buf);
 }
 
-static const char* const_value_as_str(const ExpDesc* e, char* buf) {
-  return type_is_float(e->type) ? const_float_as_str(e->v.f, buf) : const_int_as_str(e->v.i, buf);
+static const char* const_str(Parser* p, const ExpDesc* e) {
+  return type_is_float(e->type) ? float_str(p, e->v.f) : int_str(p, e->v.i);
 }
 
 // Whether a value of type `from` can be used, without a cast, where `to` is
@@ -883,13 +916,16 @@ static bool assignable(TypeId from, TypeId to) {
          (from.idx == TY_UNTYPED_FLOAT && type_is_float(to));
 }
 
-// Whether `cast to(...)` accepts a value of type `from`. Pointers aren't
-// checker types yet, so they pass as unknown.
-static bool castable(TypeId from, TypeId to) {
+// Whether `cast to(...)` accepts a value of type `from`. Numbers can be cast
+// to any numeric type, and pointers to other pointers or to u64.
+static bool castable(Parser* p, TypeId from, TypeId to) {
   bool from_num = type_is_integer(from) || type_is_float(from);
   bool to_num = type_is_integer(to) || type_is_float(to);
+  bool from_ptr = type_is_pointer(p, from);
+  bool to_ptr = type_is_pointer(p, to);
   return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
-         (from_num && to_num);
+         (from_num && to_num) || (from_ptr && (to_ptr || to.idx == TY_U64)) ||
+         (to_ptr && from.idx == TY_U64);
 }
 
 // Integer constants have to be exactly representable as a float, since
@@ -905,17 +941,15 @@ static bool const_exact_in_float(ConstInt v, TypeId t) {
 // without it. Float constants are rounded, and are only out of range if they
 // round to infinity.
 static NOINLINE void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
-  char buf[CONST_STR_SIZE];
   if (!type_is_integer(e->type)) {
     float f = (float)e->v.f;
     if (t.idx == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
-      error_at(p, at, "%s doesn't fit in f32.", const_float_as_str(e->v.f, buf));
+      error_at(p, at, "%s doesn't fit in f32.", float_str(p, e->v.f));
     }
   } else if (type_is_integer(t) && !type_is_untyped(t) && !const_fits_in_type(e->v.i, t)) {
-    error_at(p, at, "%s doesn't fit in %s.", const_int_as_str(e->v.i, buf), describe_type(t));
+    error_at(p, at, "%s doesn't fit in %s.", int_str(p, e->v.i), type_str(p, t));
   } else if ((t.idx == TY_F32 || t.idx == TY_F64) && !const_exact_in_float(e->v.i, t)) {
-    error_at(p, at, "%s can't be represented exactly in %s.", const_int_as_str(e->v.i, buf),
-             describe_type(t));
+    error_at(p, at, "%s can't be represented exactly in %s.", int_str(p, e->v.i), type_str(p, t));
   }
 }
 
@@ -933,7 +967,7 @@ static void check_const_conversion(Parser* p, TypeId to, const ExpDesc* e, u32 a
 
 // Out of line so that check_assign() is small enough to be inlined.
 static NOINLINE NORETURN void assign_type_error(Parser* p, TypeId from, TypeId to, u32 at) {
-  error_at(p, at, "Can't assign %s to %s.", describe_type(from), describe_type(to));
+  error_at(p, at, "Can't assign %s to %s.", type_str(p, from), type_str(p, to));
 }
 
 // The size in [N]T has to be a constant integer that fits in int, and can't
@@ -1008,7 +1042,7 @@ static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
       op >= OPR_ADD && op <= OPR_DIV && same_type && (type_is_float(a) || type_is_float(b));
   if (!is_concat && !ints && !floats) {
     bool swap = op == OPR_SUB;
-    error_at(p, at, arith_error[op], describe_type(swap ? b : a), describe_type(swap ? a : b));
+    error_at(p, at, arith_error[op], type_str(p, swap ? b : a), type_str(p, swap ? a : b));
   }
   if (is_shift || !type_is_untyped(a)) {
     return a;
@@ -1020,7 +1054,7 @@ static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
 // `what` is the start of the error message, naming what needed the bool.
 static void expect_bool(Parser* p, const ExpDesc* e, u32 at, const char* what) {
   if (e->type.idx != TY_UNKNOWN && e->type.idx != TY_BOOL) {
-    error_at(p, at, "%s expects bool, not %s.", what, describe_type(e->type));
+    error_at(p, at, "%s expects bool, not %s.", what, type_str(p, e->type));
   }
 }
 
@@ -1059,13 +1093,11 @@ static void check_shift_count(Parser* p, BinOpr op, TypeId t, const ExpDesc* rhs
   if ((op != OPR_SHL && op != OPR_SHR) || rhs->kind != EK_CONST || !type_is_integer(rhs->type)) {
     return;
   }
-  char buf[CONST_STR_SIZE];
   if (rhs->v.i < 0) {
-    error_at(p, at, "Shift count %s is negative.", const_int_as_str(rhs->v.i, buf));
+    error_at(p, at, "Shift count %s is negative.", int_str(p, rhs->v.i));
   }
   if (type_is_integer(t) && !type_is_untyped(t) && rhs->v.i >= type_int_bits(t)) {
-    error_at(p, at, "Shift count %s is too large for %s.", const_int_as_str(rhs->v.i, buf),
-             describe_type(t));
+    error_at(p, at, "Shift count %s is too large for %s.", int_str(p, rhs->v.i), type_str(p, t));
   }
 }
 
@@ -1181,9 +1213,8 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
     overflow = overflow || (!type_is_untyped(t) && !const_fits_in_type(ir, t));
   }
   if (overflow) {
-    char a[CONST_STR_SIZE], b[CONST_STR_SIZE];
-    const char* as = const_value_as_str(e, a);
-    const char* bs = const_value_as_str(rhs, b);
+    const char* as = const_str(p, e);
+    const char* bs = const_str(p, rhs);
     bool swap = op == OPR_ADD || op == OPR_SUB;
     error_at(p, at, overflow_error[op], swap ? bs : as, swap ? as : bs);
   }
@@ -1199,7 +1230,6 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
 // has to be integral to be cast to an integer type. Out of line, since casts
 // of constants are rare.
 static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
-  char buf[CONST_STR_SIZE];
   if (type_is_float(t)) {
     double d;
     if (type_is_integer(e->type)) {
@@ -1208,7 +1238,7 @@ static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
     } else {
       float f = (float)e->v.f;
       if (t.idx == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
-        error_at(p, at, "%s doesn't fit in f32.", const_float_as_str(e->v.f, buf));
+        error_at(p, at, "%s doesn't fit in f32.", float_str(p, e->v.f));
       }
       d = t.idx == TY_F32 ? (double)f : e->v.f;
     }
@@ -1221,16 +1251,16 @@ static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
     double d = e->v.f;
     bool in_range = d >= -0x1p127 && d < 0x1p127;
     if (in_range && (double)(ConstInt)d != d) {
-      error_at(p, at, "%s isn't an integer.", const_float_as_str(d, buf));
+      error_at(p, at, "%s isn't an integer.", float_str(p, d));
     }
     if (!in_range || !const_fits_in_type((ConstInt)d, t)) {
-      error_at(p, at, "%s doesn't fit in %s.", const_float_as_str(d, buf), describe_type(t));
+      error_at(p, at, "%s doesn't fit in %s.", float_str(p, d), type_str(p, t));
     }
     e->v.i = (ConstInt)d;
     return;
   }
   if (!const_fits_in_type(e->v.i, t)) {
-    error_at(p, at, "%s doesn't fit in %s.", const_int_as_str(e->v.i, buf), describe_type(t));
+    error_at(p, at, "%s doesn't fit in %s.", int_str(p, e->v.i), type_str(p, t));
   }
 }
 
@@ -1291,7 +1321,7 @@ static IlType il_type_of(Parser* p, TypeId t, u32 at) {
     case TY_F64:
       return IT_F64;
     default:
-      error_at(p, at, "%s isn't supported yet.", describe_type(t));
+      error_at(p, at, "%s isn't supported yet.", type_str(p, t));
   }
 }
 
@@ -1394,7 +1424,7 @@ static void exp_print(Parser* p, const ExpDesc* e, u32 at) {
       sym = SYM_luv_print_str;
       break;
     default:
-      error_at(p, at, "Printing %s isn't supported yet.", describe_type(t));
+      error_at(p, at, "Printing %s isn't supported yet.", type_str(p, t));
   }
   Ref args[2];
   u32 nargs = 1;
@@ -1464,10 +1494,10 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
     return;
   }
   if (neg && !type_is_integer(t) && !type_is_float(t)) {
-    error_at(p, at, "'-' expects a number, not %s.", describe_type(t));
+    error_at(p, at, "'-' expects a number, not %s.", type_str(p, t));
   }
   if (!neg && !type_is_integer(t)) {
-    error_at(p, at, "'~' expects an integer, not %s.", describe_type(t));
+    error_at(p, at, "'~' expects an integer, not %s.", type_str(p, t));
   }
   if (e->kind != EK_CONST) {
     exp_unemitted(e);
@@ -1486,8 +1516,7 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
     error_at(p, at, "Constant overflows.");
   }
   if (!type_is_untyped(t) && !const_fits_in_type(r, t)) {
-    char buf[CONST_STR_SIZE];
-    error_at(p, at, "%s doesn't fit in %s.", const_int_as_str(r, buf), describe_type(t));
+    error_at(p, at, "%s doesn't fit in %s.", int_str(p, r), type_str(p, t));
   }
   e->v.i = r;
 }
@@ -1589,7 +1618,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
     }
     if (op >= OPR_EQ && op <= OPR_GE && !assignable(rhs.type, e->type) &&
         !assignable(e->type, rhs.type)) {
-      error_at(p, at, "Can't compare %s and %s.", describe_type(e->type), describe_type(rhs.type));
+      error_at(p, at, "Can't compare %s and %s.", type_str(p, e->type), type_str(p, rhs.type));
     }
     e->shape = SH_VALUE;
     bool is_compare = op >= OPR_EQ && op <= OPR_GE;
@@ -1872,11 +1901,14 @@ static TypeId sizeof_operand(Parser* p) {
   return e.type;
 }
 
-// The size of a bool or numeric type, which is also its alignment, or 0 for
-// types whose layout isn't known yet.
-static int builtin_type_size(TypeId t) {
+// The size of a bool, numeric or pointer type, which is also its alignment,
+// or 0 for types whose layout isn't known yet.
+static int type_size(Parser* p, TypeId t) {
   if (type_is_integer(t) && !type_is_untyped(t)) {
     return type_int_bits(t) / 8;
+  }
+  if (type_is_pointer(p, t)) {
+    return 8;
   }
   switch ((FixedType)t.idx) {
     case TY_BOOL:
@@ -1898,8 +1930,8 @@ static int builtin_type_size(TypeId t) {
 static u32 call_args(Parser* p, bool is_struct_literal, TypeId callee, Ref* args) {
   u32 at = p->ls.pos.t.offset;
   bool is_function = type_is_function(p, callee);
-  u32 num_params = is_function ? p->types.v[callee.idx].num_params : 0;
-  u32 first_param = is_function ? p->types.v[callee.idx].first_param : 0;
+  u32 num_params = is_function ? type_info(p, callee)->num_params : 0;
+  u32 first_param = is_function ? type_info(p, callee)->first_param : 0;
   u32 num_args = 0;
   u32 extra_at = 0;  // the first argument past num_params
   next(p);           // '('
@@ -1928,7 +1960,7 @@ static u32 call_args(Parser* p, bool is_struct_literal, TypeId callee, Ref* args
         TypeId t = p->param_types.v[first_param + num_args - 1];
         if (!assignable(e.type, t)) {
           error_at(p, arg_at, "Argument %u is %s, but the parameter is %s.", num_args,
-                   describe_type(e.type), describe_type(t));
+                   type_str(p, e.type), type_str(p, t));
         }
         check_const_conversion(p, t, &e, arg_at);
         if (EMIT) {
@@ -2015,7 +2047,7 @@ static void postfix(Parser* p, ExpDesc* e) {
 #endif
         u32 num_args = call_args(p, is_struct_literal, callee, args);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
-        e->type = type_is_function(p, callee) ? p->types.v[callee.idx].ret : ty_unknown;
+        e->type = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
         if (EMIT) {
           Ref sym = il_const_sym(&p->il, e->sym);
           e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, args, num_args);
@@ -2165,7 +2197,7 @@ static void primary(Parser* p, ExpDesc* e) {
           e->sym = gf->sym;
         }
       }
-      if (e->type.idx >= TY_NUM_FIXED) {
+      if (type_is_created(e->type)) {
         check_function_called(p, e, at);
       }
       e->shape = SH_NAME;
@@ -2198,7 +2230,7 @@ static void primary(Parser* p, ExpDesc* e) {
       next(p);
       at = p->ls.pos.t.offset;
       check(p, TK_LPAREN);
-      int size = builtin_type_size(sizeof_operand(p));
+      int size = type_size(p, sizeof_operand(p));
       check_match(p, TK_RPAREN, TK_LPAREN, at);
       // A known size is an untyped constant, so that it can be used as any
       // integer type, such as a u64 size for C.
@@ -2224,8 +2256,8 @@ static void primary(Parser* p, ExpDesc* e) {
       u32 value_at = p->ls.pos.t.offset;
       subexpr(p, -1, e);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
-      if (!castable(e->type, t)) {
-        error_at(p, value_at, "Can't cast %s to %s.", describe_type(e->type), describe_type(t));
+      if (!castable(p, e->type, t)) {
+        error_at(p, value_at, "Can't cast %s to %s.", type_str(p, e->type), type_str(p, t));
       }
       e->shape = SH_VALUE;
       if (e->kind == EK_CONST && (type_is_integer(t) || type_is_float(t)) &&
@@ -2472,7 +2504,7 @@ static void simple_stat(Parser* p) {
       if (T(p) == TK_NEWLINE || block_follow(T(p))) {
         if (p->ret_type.idx != TY_VOID && p->ret_type.idx != TY_UNKNOWN) {
           error_at(p, return_at, "Missing return value in a function returning %s.",
-                   describe_type(p->ret_type));
+                   type_str(p, p->ret_type));
         }
         if (EMIT) {
           il_emit(&p->il, OP_RET, IT_VOID, 0, 0);
@@ -2485,8 +2517,8 @@ static void simple_stat(Parser* p) {
           error_at(p, at, "Can't return a value from a function with no return type.");
         }
         if (!assignable(e.type, p->ret_type)) {
-          error_at(p, at, "Can't return %s from a function returning %s.", describe_type(e.type),
-                   describe_type(p->ret_type));
+          error_at(p, at, "Can't return %s from a function returning %s.", type_str(p, e.type),
+                   type_str(p, p->ret_type));
         }
         check_const_conversion(p, p->ret_type, &e, at);
         if (EMIT) {
@@ -2652,7 +2684,8 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, u32* name_at) {
   // The type is created before the name is declared, and the parameters are
   // added to it as they're parsed.
   TypeId ft = {p->types.num};
-  *vec_push(p->ls.ctx, &p->types) = (TypeInfo){TYPE_FUNC, ret, p->param_types.num, 0};
+  *vec_push(p->ls.ctx, &p->types) =
+      (TypeInfo){.kind = TYPE_FUNC, .ret = ret, .first_param = p->param_types.num};
   if (!is_method) {
     if (p->func_depth == 0) {
       u32 idx = p->global_funcs.num;
@@ -2691,7 +2724,7 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, u32* name_at) {
       }
       declare_local(p, name, at, LK_PARAM)->type = t;
       *vec_push(p->ls.ctx, &p->param_types) = t;
-      ++p->types.v[ft.idx].num_params;
+      ++type_info(p, ft)->num_params;
       first = false;
       if (!optional(p, TK_COMMA)) {
         break;
@@ -2738,7 +2771,7 @@ static void funcdef(Parser* p, bool is_method) {
   Flow flow = suite(p);
   if (flow == FLOW_FALLS_THROUGH && p->ret_type.idx != TY_VOID) {
     error_at(p, name_at, "Missing return at the end of a function returning %s.",
-             describe_type(p->ret_type));
+             type_str(p, p->ret_type));
   }
   if (EMIT) {
     if (flow == FLOW_FALLS_THROUGH) {

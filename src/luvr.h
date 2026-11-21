@@ -443,6 +443,10 @@ struct Ctx {
   const u8* err_buf;
   u32 err_offset;
 
+  // Strings made by ctx_err_str() for the arguments of an error message.
+  char err_scratch[1024];
+  u32 err_scratch_used;
+
   // Intern table. A slot's tag is from the hash of the name, and its val is
   // the index in names.
   HashTable name_table;
@@ -482,6 +486,12 @@ u32 ctx_sym_add(Ctx* ctx, NameId name);
 // Line and column are 1-based. They're found by scanning from the start of the
 // buffer, so this is only suitable for the error path.
 void ctx_error_location(const Ctx* ctx, u32* line, u32* col);
+
+// Formats a string for use as an argument of the next ctx_error(). Errors
+// are terminal, so the strings are never freed, and the space is only reused
+// once ctx_error() has formatted the message. When the space runs out, the
+// result is a fixed string saying so.
+const char* ctx_err_str(Ctx* ctx, const char* fmt, ...);
 
 // Records the error in ctx and longjmps to ctx->on_error.
 NORETURN void ctx_error(Ctx* ctx,

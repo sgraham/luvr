@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:13:    *u8 q = p
+# CERR: {ssss}                  ^ error: Can't assign *int to *u8.
+
+def int main():
+    *int p = null
+    *u8 q = p
+    return 0
