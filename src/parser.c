@@ -2060,12 +2060,25 @@ static u32 type_align(Parser* p, TypeId t) {
   return type_size(p, t);
 }
 
-// `.field=` designators are only allowed in struct literals
-// (`Stuff(.a=1, true)`) because functions don't have named parameters.
+static const Field* struct_field(Parser* p, TypeId st, NameId name) {
+  const TypeInfo* info = type_info(p, st);
+  for (u32 i = 0; i < info->num_fields; ++i) {
+    const Field* f = &p->fields.v[info->first_field + i];
+    if (f->name.idx == name.idx) {
+      return f;
+    }
+  }
+  return NULL;
+}
+
+static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, u32 at) {
+  const Name* n = name_of(p, name);
+  error_at(p, at, "'%.*s' isn't a field of %s.", (int)n->len, (const char*)n->str, type_str(p, st));
+}
+
 // Arguments are checked against callee if it's a function type. When EMIT,
-// the arguments of a function call are put in args, and the return value is
-// how many there are.
-static u32 call_args(Parser* p, bool is_struct_literal, TypeId callee, Ref* args) {
+// the arguments are put in args, and the return value is how many there are.
+static u32 call_args(Parser* p, TypeId callee, Ref* args) {
   u32 at = p->ls.pos.t.offset;
   bool is_function = type_is_function(p, callee);
   u32 num_params = is_function ? type_info(p, callee)->num_params : 0;
@@ -2080,15 +2093,6 @@ static u32 call_args(Parser* p, bool is_struct_literal, TypeId callee, Ref* args
       }
       if (T(p) == TK_RPAREN) {
         error_at(p, p->ls.pos.t.offset, "Trailing commas aren't allowed in calls.");
-      }
-      if (T(p) == TK_DOT) {
-        if (!is_struct_literal) {
-          error_at(p, p->ls.pos.t.offset,
-                   "'.name=' arguments are only allowed in struct literals.");
-        }
-        next(p);
-        check_name(p, "field name");
-        check(p, TK_EQ);
       }
       u32 arg_at = p->ls.pos.t.offset;
       ExpDesc e;
@@ -2122,20 +2126,78 @@ static u32 call_args(Parser* p, bool is_struct_literal, TypeId callee, Ref* args
   return num_args;
 }
 
-static const Field* struct_field(Parser* p, TypeId st, NameId name) {
-  const TypeInfo* info = type_info(p, st);
-  for (u32 i = 0; i < info->num_fields; ++i) {
-    const Field* f = &p->fields.v[info->first_field + i];
-    if (f->name.idx == name.idx) {
-      return f;
+// struct_args -> '(' [struct_arg {',' struct_arg}] ')'
+// struct_arg  -> ['.' name '='] expr
+//
+// The arguments of a literal of struct st are checked against its fields.
+// They're given in order, a designator moves to its field, and later
+// arguments continue from there. Fields that aren't given get their defaults.
+// Literals of generic structs aren't checked yet.
+static void struct_args(Parser* p, TypeId st) {
+  u32 at = p->ls.pos.t.offset;
+  bool has_fields = type_is_struct(p, st);
+  u32 num_fields = has_fields ? type_info(p, st)->num_fields : 0;
+  u32 first_field = has_fields ? type_info(p, st)->first_field : 0;
+  u32 field = 0;  // the field that the next positional argument gives
+  // Which fields have been given. Nested literals are recursive calls, so
+  // each has its own.
+  bool* given = (bool*)ALLOCA(num_fields * sizeof(bool));
+  memset(given, 0, num_fields * sizeof(bool));
+  u32 num_args = 0;
+  next(p);  // '('
+  if (T(p) != TK_RPAREN) {
+    for (;;) {
+      ++num_args;
+      if (T(p) == TK_RPAREN) {
+        error_at(p, p->ls.pos.t.offset, "Trailing commas aren't allowed in calls.");
+      }
+      u32 field_at = p->ls.pos.t.offset;
+      if (optional(p, TK_DOT)) {
+        NameId name = p->ls.pos.t.v.name;
+        u32 name_at = p->ls.pos.t.offset;
+        check_name(p, "field name");
+        if (has_fields) {
+          const Field* f = struct_field(p, st, name);
+          if (!f) {
+            field_error(p, st, name, name_at);
+          }
+          field = (u32)(f - &p->fields.v[first_field]);
+        }
+        check(p, TK_EQ);
+      }
+      // Parsing the argument can't add fields, so f stays valid.
+      const Field* f = NULL;
+      if (has_fields) {
+        if (field == num_fields) {
+          error_at(p, field_at, "Too many arguments for %s, which has %u field%s.", type_str(p, st),
+                   num_fields, num_fields == 1 ? "" : "s");
+        }
+        f = &p->fields.v[first_field + field];
+        if (given[field]) {
+          const Name* n = name_of(p, f->name);
+          error_at(p, field_at, "Field '%.*s' is given twice.", (int)n->len, (const char*)n->str);
+        }
+        given[field] = true;
+        ++field;
+      }
+      u32 arg_at = p->ls.pos.t.offset;
+      ExpDesc e;
+      subexpr(p, -1, &e);
+      check_not_void(p, &e, arg_at);
+      if (f && !assignable(p, e.type, f->type)) {
+        const Name* n = name_of(p, f->name);
+        error_at(p, arg_at, "Argument %u is %s, but field '%.*s' is %s.", num_args,
+                 type_str(p, e.type), (int)n->len, (const char*)n->str, type_str(p, f->type));
+      }
+      if (f) {
+        check_const_conversion(p, f->type, &e, arg_at);
+      }
+      if (!optional(p, TK_COMMA)) {
+        break;
+      }
     }
   }
-  return NULL;
-}
-
-static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, u32 at) {
-  const Name* n = name_of(p, name);
-  error_at(p, at, "'%.*s' isn't a field of %s.", (int)n->len, (const char*)n->str, type_str(p, st));
+  check_match(p, TK_RPAREN, TK_LPAREN, at);
 }
 
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice). e is the
@@ -2226,9 +2288,14 @@ static void postfix(Parser* p, ExpDesc* e) {
         break;
       case TK_LPAREN: {
         u32 at = p->ls.pos.t.offset;
-        bool is_struct_literal = e->shape == SH_TYPE;
         if (EMIT && e->kind != EK_FUNC) {
           error_at(p, at, "This call isn't supported yet.");
+        }
+        if (e->shape == SH_TYPE) {
+          struct_args(p, e->type);
+          e->shape = SH_STRUCT_LITERAL;
+          exp_unemitted(e);
+          break;
         }
         TypeId callee = e->type;
 #if EMIT
@@ -2236,13 +2303,9 @@ static void postfix(Parser* p, ExpDesc* e) {
 #else
         Ref* args = NULL;
 #endif
-        u32 num_args = call_args(p, is_struct_literal, callee, args);
-        e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
-        if (is_struct_literal) {
-          e->type = callee;
-        } else {
-          e->type = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
-        }
+        u32 num_args = call_args(p, callee, args);
+        e->shape = SH_CALL;
+        e->type = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
         if (EMIT) {
           Ref sym = il_const_sym(&p->il, e->sym);
           e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, args, num_args);

@@ -1,0 +1,18 @@
+# RET: 0
+struct Inner:
+    i32 a
+    bool b
+
+struct Stuff:
+    *u8 data
+    Inner inner
+    u8 small
+    f64 ratio
+
+def int main():
+    s1 = Stuff(null, Inner(1, true), 255, 1)
+    s2 = Stuff(.inner=Inner(.b=false), 7)
+    s3 = Stuff(.ratio=2.5, .data=null)
+    s4 = Stuff(null, .small=3, 0.5)
+    *Stuff p = &Stuff(.small=1)
+    return 0

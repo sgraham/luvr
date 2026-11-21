@@ -112,6 +112,14 @@ typedef struct Token Token;
 #include <time.h>
 
 #if COMPILER_MSVC
+#  include <malloc.h>
+#  define ALLOCA(size) _alloca(size)
+#else
+#  include <alloca.h>
+#  define ALLOCA(size) alloca(size)
+#endif
+
+#if COMPILER_MSVC
 #  define FORCE_INLINE __forceinline
 #elif COMPILER_CLANG || COMPILER_GCC
 #  define FORCE_INLINE __attribute__((always_inline))

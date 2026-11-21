@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:9:15:    s = Stuff(256)
+# CERR: {ssss}                    ^ error: 256 doesn't fit in u8.
+
+struct Stuff:
+    u8 small
+
+def int main():
+    s = Stuff(256)
+    return 0

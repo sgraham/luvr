@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:9:16:    s = Stuff(.y=1)
+# CERR: {ssss}                     ^ error: 'y' isn't a field of Stuff.
+
+struct Stuff:
+    int x
+
+def int main():
+    s = Stuff(.y=1)
+    return 0
