@@ -13,6 +13,7 @@
 
 typedef union ConstValue ConstValue;
 typedef struct ExpDesc ExpDesc;
+typedef struct Field Field;
 typedef struct GlobalFunc GlobalFunc;
 typedef struct Local Local;
 typedef struct LogicalJoin LogicalJoin;
@@ -105,11 +106,13 @@ union ConstValue {
 typedef enum TypeKind {
   TYPE_FUNC,
   TYPE_PTR,
+  TYPE_STRUCT,
 } TypeKind;
 
 // A type that's created while parsing. Function types aren't interned, so
 // each function has its own, even when signatures are the same. Pointer types
-// are interned through `ptr`, so that they can be compared by index.
+// are interned through `ptr`, so that they can be compared by index. Each
+// struct definition creates one type.
 struct TypeInfo {
   TypeKind kind;
   TypeId ptr;  // *T for this T, or TY_UNKNOWN if it hasn't been created yet
@@ -120,7 +123,25 @@ struct TypeInfo {
       u32 num_params;
     };
     TypeId pointee;  // TYPE_PTR
+    struct {         // TYPE_STRUCT
+      NameId name;
+      u32 first_field;  // in Parser.fields
+      u32 num_fields;
+      // size, align and the fields' offsets are only set if has_layout (see
+      // type_has_layout()).
+      u32 size;
+      u32 align;
+      bool has_layout;
+    };
   };
+};
+
+// A struct's field. The offset is only set if the struct's TypeInfo has
+// has_layout set.
+struct Field {
+  NameId name;
+  TypeId type;
+  u32 offset;
 };
 
 // A named constant's value, which is kept apart from Local and Module.globals
@@ -166,7 +187,8 @@ typedef enum GlobalKind {
 
 // GlobalInfo is a GlobalKind in the low bits. The higher bits are the index of
 // the value in Parser.global_consts for GK_CONST, and in Parser.global_funcs
-// for GK_FUNC.
+// for GK_FUNC. For GK_TYPE, they're the TypeId, which is TY_UNKNOWN for a
+// generic struct, since each instantiation will be a different type.
 #define GLOBAL_KIND_BITS 3
 #define GLOBAL_KIND_MASK ((1u << GLOBAL_KIND_BITS) - 1)
 
@@ -186,6 +208,7 @@ struct Parser {
   VEC(GlobalFunc) global_funcs;
   VEC(TypeInfo) types;  // by TypeId, with unused entries for the FixedTypes
   VEC(TypeId) param_types;
+  VEC(Field) fields;
   u32 num_locals;
   u32 func_base;   // first of the current function's entries in locals
   u32 func_depth;  // 0 at top level
@@ -275,11 +298,19 @@ static bool type_is_pointer(Parser* p, TypeId t) {
   return type_is_created(t) && type_info(p, t)->kind == TYPE_PTR;
 }
 
+static bool type_is_struct(Parser* p, TypeId t) {
+  return type_is_created(t) && type_info(p, t)->kind == TYPE_STRUCT;
+}
+
 // Describes a type for error messages, as it would follow "not". The result
 // is only for the arguments of error_at().
 static const char* type_str(Parser* p, TypeId t) {
   if (type_is_pointer(p, t)) {
     return ctx_err_str(p->ls.ctx, "*%s", type_str(p, type_info(p, t)->pointee));
+  }
+  if (type_is_struct(p, t)) {
+    const Name* n = lex_name(p->ls.ctx, type_info(p, t)->name);
+    return ctx_err_str(p->ls.ctx, "%.*s", (int)n->len, (const char*)n->str);
   }
   if (type_is_function(p, t)) {
     return "a function";
@@ -592,9 +623,13 @@ static void check_module_member(Parser* p, const Module* m, NameId mod) {
   }
 }
 
+static TypeId global_type(GlobalInfo info) {
+  return (TypeId){info >> GLOBAL_KIND_BITS};
+}
+
 // The rest of a module.TypeName type, after the '.'. mod is the module's name,
-// at offset at.
-static void qualified_type_rest(Parser* p, NameId mod, u32 at) {
+// at offset at. Type arguments make a type that isn't known yet.
+static TypeId qualified_type_rest(Parser* p, NameId mod, u32 at) {
   const Module* m = imported_module(p, mod);
   if (!m) {
     const Name* n = name_of(p, mod);
@@ -604,10 +639,13 @@ static void qualified_type_rest(Parser* p, NameId mod, u32 at) {
     error_expected(p, "type name after module name");
   }
   check_module_member(p, m, mod);
+  TypeId t = global_type(module_global_info(m, p->ls.pos.t.v.name));
   next(p);
   if (T(p) == TK_LBRACE) {
     type_args(p);
+    return ty_unknown;
   }
+  return t;
 }
 
 static void check_type_param(Parser* p) {
@@ -618,12 +656,14 @@ static void check_type_param(Parser* p) {
   }
 }
 
-static void check_type_name(Parser* p) {
+static TypeId check_type_name(Parser* p) {
   NameId name = p->ls.pos.t.v.name;
-  if (global_kind(p, name) != GK_TYPE) {
+  GlobalInfo info = module_global_info(p->mod, name);
+  if ((info & GLOBAL_KIND_MASK) != GK_TYPE) {
     const Name* n = name_of(p, name);
     error_at(p, p->ls.pos.t.offset, "Undefined type '%.*s'.", (int)n->len, (const char*)n->str);
   }
+  return global_type(info);
 }
 
 static TypeId builtin_type(TokenKind kind) {
@@ -696,19 +736,20 @@ static TypeId type(Parser* p) {
       check_type_param(p);
       next(p);
       return ty_unknown;
-    case TK_TYPENAME:
-      check_type_name(p);
+    case TK_TYPENAME: {
+      TypeId t = check_type_name(p);
       next(p);
       if (T(p) == TK_LBRACE) {
         type_args(p);
+        return ty_unknown;
       }
-      return ty_unknown;
+      return t;
+    }
     case TK_NAME: {
       NameId mod = p->ls.pos.t.v.name;
       next(p);
       check(p, TK_DOT);
-      qualified_type_rest(p, mod, at);
-      return ty_unknown;
+      return qualified_type_rest(p, mod, at);
     }
     case TK_TYPEOF:
       next(p);
@@ -1900,7 +1941,7 @@ static TypeId sizeof_operand(Parser* p) {
     u32 start = p->ls.pos.t.offset;
     primary(p, &e);
     if (e.shape == SH_TYPE) {
-      return ty_unknown;
+      return e.type;
     }
     binop_rest(p, -1, &e, start);
   } else {
@@ -1909,14 +1950,30 @@ static TypeId sizeof_operand(Parser* p) {
   return e.type;
 }
 
-// The size of a bool, numeric or pointer type, which is also its alignment,
-// or 0 for types whose layout isn't known yet.
-static int type_size(Parser* p, TypeId t) {
-  if (type_is_integer(t) && !type_is_untyped(t)) {
-    return type_int_bits(t) / 8;
+// Whether a type's size and alignment are known. They're not for a struct
+// until the end of its definition, or for a struct with a field whose layout
+// isn't known, as with generic struct fields and fixed-size arrays.
+static bool type_has_layout(Parser* p, TypeId t) {
+  if (type_is_struct(p, t)) {
+    return type_info(p, t)->has_layout;
+  }
+  if (type_is_integer(t)) {
+    return !type_is_untyped(t);
+  }
+  return type_is_pointer(p, t) || t.idx == TY_BOOL || t.idx == TY_F32 || t.idx == TY_F64 ||
+         t.idx == TY_STR;
+}
+
+static u32 type_size(Parser* p, TypeId t) {
+  ASSERT(type_has_layout(p, t));
+  if (type_is_integer(t)) {
+    return (u32)type_int_bits(t) / 8;
   }
   if (type_is_pointer(p, t)) {
     return 8;
+  }
+  if (type_is_struct(p, t)) {
+    return type_info(p, t)->size;
   }
   switch ((FixedType)t.idx) {
     case TY_BOOL:
@@ -1925,9 +1982,24 @@ static int type_size(Parser* p, TypeId t) {
       return 4;
     case TY_F64:
       return 8;
+    case TY_STR:
+      return 16;
     default:
+      ASSERT(false && "type without a size");
       return 0;
   }
+}
+
+// Scalars are aligned to their size.
+static u32 type_align(Parser* p, TypeId t) {
+  ASSERT(type_has_layout(p, t));
+  if (type_is_struct(p, t)) {
+    return type_info(p, t)->align;
+  }
+  if (t.idx == TY_STR) {
+    return 8;
+  }
+  return type_size(p, t);
 }
 
 // `.field=` designators are only allowed in struct literals
@@ -2066,7 +2138,11 @@ static void postfix(Parser* p, ExpDesc* e) {
 #endif
         u32 num_args = call_args(p, is_struct_literal, callee, args);
         e->shape = is_struct_literal ? SH_STRUCT_LITERAL : SH_CALL;
-        e->type = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
+        if (is_struct_literal) {
+          e->type = callee;
+        } else {
+          e->type = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
+        }
         if (EMIT) {
           Ref sym = il_const_sym(&p->il, e->sym);
           e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, args, num_args);
@@ -2084,6 +2160,7 @@ static void postfix(Parser* p, ExpDesc* e) {
           return;
         }
         type_args(p);
+        e->type = ty_unknown;
         if (T(p) == TK_LBRACE) {
           error_at(p, p->ls.pos.t.offset, "Type arguments were given twice.");
         }
@@ -2179,7 +2256,9 @@ static void primary(Parser* p, ExpDesc* e) {
         u32 member_at = p->ls.pos.t.offset;
         e->shape = T(p) == TK_TYPENAME ? SH_TYPE : SH_LVALUE;
         next(p);
-        if (member_kind == GK_CONST) {
+        if (member_kind == GK_TYPE) {
+          e->type = global_type(member);
+        } else if (member_kind == GK_CONST) {
           load_named_const(e, &p->global_consts.v[member >> GLOBAL_KIND_BITS]);
         } else if (member_kind == GK_FUNC) {
           e->type = p->global_funcs.v[member >> GLOBAL_KIND_BITS].type;
@@ -2229,7 +2308,7 @@ static void primary(Parser* p, ExpDesc* e) {
       e->shape = SH_TYPE;
       break;
     case TK_TYPENAME:
-      check_type_name(p);
+      e->type = check_type_name(p);
       next(p);
       e->shape = SH_TYPE;
       break;
@@ -2246,18 +2325,25 @@ static void primary(Parser* p, ExpDesc* e) {
       dict_literal(p);
       break;
     case TK_SIZEOF:
-    case TK_ALIGNOF:
+    case TK_ALIGNOF: {
+      bool is_size = T(p) == TK_SIZEOF;
       next(p);
       at = p->ls.pos.t.offset;
       check(p, TK_LPAREN);
-      int size = type_size(p, sizeof_operand(p));
+      TypeId t = sizeof_operand(p);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
       // A known size is an untyped constant, so that it can be used as any
       // integer type, such as a u64 size for C.
-      e->type = size ? ty_untyped_int : ty_i64;
-      e->kind = size ? EK_CONST : EK_REF;
-      e->v.i = size;
+      if (type_has_layout(p, t)) {
+        e->type = ty_untyped_int;
+        e->kind = EK_CONST;
+        e->v.i = is_size ? type_size(p, t) : type_align(p, t);
+      } else {
+        e->type = ty_i64;
+        exp_unemitted(e);
+      }
       break;
+    }
     case TK_OFFSETOF:
       next(p);
       at = p->ls.pos.t.offset;
@@ -2403,7 +2489,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
     ExpDesc exp;
     primary(p, &exp);
     if (exp.shape == SH_TYPE) {
-      decl_rest(p, toplevel, ty_unknown);
+      decl_rest(p, toplevel, exp.type);
       return;
     }
     if (T(p) == TK_EQ || is_augassign(T(p))) {
@@ -2689,8 +2775,7 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, u32* name_at) {
   if (T(p) == TK_NAME) {
     next(p);
     if (optional(p, TK_DOT)) {  // module.Type return type
-      qualified_type_rest(p, name, at);
-      ret = ty_unknown;
+      ret = qualified_type_rest(p, name, at);
       name = expect_name(p, "function name", &at);
     }
   } else {
@@ -2736,7 +2821,7 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, u32* name_at) {
       if (T(p) == TK_NAME) {
         next(p);
         if (optional(p, TK_DOT)) {  // module.Type param
-          qualified_type_rest(p, name, at);
+          t = qualified_type_rest(p, name, at);
           name = expect_name(p, "parameter name", &at);
         } else if (!(is_method && first)) {
           error_at(p, p->ls.pos.t.offset, "Parameter needs a type.");
@@ -2889,26 +2974,69 @@ static Flow stat(Parser* p) {
 // Top level
 
 // struct_body -> INDENT field {field} DEDENT
-// field       -> type name ['=' expr] end | 'pass' end
-static void struct_body(Parser* p) {
+// field       -> type name ['=' expr] end
+//
+// Fields are laid out as in C. A field whose layout isn't known makes the
+// whole struct's layout unknown. Defaults have to be constants, so that a
+// struct's initial value can be a constant image.
+static void struct_body(Parser* p, TypeId st) {
   if (T(p) != TK_INDENT) {
     error_expected(p, "an indented block of fields");
   }
   next(p);
+  u32 first = p->fields.num;
+  u32 size = 0;
+  u32 align = 1;
+  bool known = true;
   for (;;) {
-    if (!optional(p, TK_PASS)) {
-      type(p);
-      check_name(p, "field name");
-      if (optional(p, TK_EQ)) {
-        expr(p);
+    u32 type_at = p->ls.pos.t.offset;
+    TypeId t = type(p);
+    if (t.idx == st.idx) {
+      const Name* n = name_of(p, type_info(p, st)->name);
+      error_at(p, type_at, "'%.*s' can't contain itself.", (int)n->len, (const char*)n->str);
+    }
+    NameId name = p->ls.pos.t.v.name;
+    u32 name_at = p->ls.pos.t.offset;
+    check_name(p, "field name");
+    for (u32 i = first; i < p->fields.num; ++i) {
+      if (p->fields.v[i].name.idx == name.idx) {
+        const Name* n = name_of(p, name);
+        error_at(p, name_at, "Duplicate struct field name '%.*s'.", (int)n->len,
+                 (const char*)n->str);
       }
     }
+    if (optional(p, TK_EQ)) {
+      u32 value_at = p->ls.pos.t.offset;
+      ExpDesc v;
+      subexpr(p, -1, &v);
+      check_assign(p, t, &v, value_at);
+      if (v.kind != EK_CONST) {
+        error_at(p, value_at, "Expected a constant expression.");
+      }
+    }
+    known = known && type_has_layout(p, t);
+    u32 offset = 0;
+    if (known) {
+      u32 field_align = type_align(p, t);
+      offset = align_up(size, field_align);
+      size = offset + type_size(p, t);
+      align = field_align > align ? field_align : align;
+    }
+    *vec_push(p->ls.ctx, &p->fields) = (Field){name, t, offset};
     end_of_stat(p);
     if (block_follow(T(p))) {
       break;
     }
   }
   check(p, TK_DEDENT);
+  TypeInfo* info = type_info(p, st);
+  info->first_field = first;
+  info->num_fields = p->fields.num - first;
+  info->has_layout = known;
+  if (known) {
+    info->size = align_up(size, align);
+    info->align = align;
+  }
 }
 
 // receiver -> TypeName [type_params] | builtin
@@ -2993,19 +3121,27 @@ static void toplevel_stat(Parser* p) {
         funcdef(p, /*is_method=*/true);
       }
       return;
-    case TK_STRUCT:
+    case TK_STRUCT: {
       next(p);
       if (T(p) != TK_TYPENAME) {
         error_expected(p, "struct name (a TypeName)");
       }
-      declare_definition(p, p->ls.pos.t.v.name, p->ls.pos.t.offset, GK_TYPE);
+      NameId name = p->ls.pos.t.v.name;
+      u32 at = p->ls.pos.t.offset;
       next(p);
       if (T(p) == TK_LBRACE) {
         type_params(p);
       }
+      // The layout isn't known until the body ends, so the struct can only
+      // refer to itself through pointers.
+      TypeId st = {p->types.num};
+      *vec_push(p->ls.ctx, &p->types) = (TypeInfo){.kind = TYPE_STRUCT, .name = name};
+      TypeId bound = p->type_params ? ty_unknown : st;
+      declare_definition(p, name, at, GK_TYPE | (bound.idx << GLOBAL_KIND_BITS));
       check(p, TK_COLON);
-      struct_body(p);
+      struct_body(p, st);
       return;
+    }
     case TK_FOREIGN:
       next(p);
       foreign_decl(p, /*is_method=*/false);
@@ -3209,6 +3345,7 @@ static void parse_end(Parser* p) {
   free(p->global_funcs.v);
   free(p->types.v);
   free(p->param_types.v);
+  free(p->fields.v);
   free(p);
 }
 
@@ -3228,6 +3365,8 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   p->types.num = p->types.cap = 0;
   p->param_types.v = NULL;
   p->param_types.num = p->param_types.cap = 0;
+  p->fields.v = NULL;
+  p->fields.num = p->fields.cap = 0;
   p->func_base = 0;
   p->func_depth = 0;
   p->ret_type = ty_unknown;

@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:9:13:    int x = f()
+# CERR: {ssss}                  ^ error: Expected a constant expression.
+
+def int f():
+    return 1
+
+struct Stuff:
+    int x = f()

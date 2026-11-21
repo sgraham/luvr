@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:6:13:    int x = true
+# CERR: {ssss}                  ^ error: Can't assign bool to int.
+
+struct Stuff:
+    int x = true

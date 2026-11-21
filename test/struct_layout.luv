@@ -1,0 +1,52 @@
+# OUT: 8
+# OUT: 4
+# OUT: 3
+# OUT: 1
+# OUT: 16
+# OUT: 8
+# OUT: 12
+# OUT: 4
+# OUT: 24
+# OUT: 8
+# OUT: 16
+# OUT: 8
+struct Padded:
+    u8 a
+    i32 b
+
+struct Bytes:
+    u8 a
+    u8 b
+    u8 c
+
+struct Node:
+    *Node next
+    u8 tag
+
+struct Outer:
+    Padded inner
+    u8 tail
+
+struct Named:
+    str name
+    bool flag
+
+PADDED_SIZE = sizeof(Padded)
+
+def int main():
+    print PADDED_SIZE
+    print alignof(Padded)
+    print sizeof(Bytes)
+    print alignof(Bytes)
+    print sizeof(Node)
+    print alignof(Node)
+    print sizeof(Outer)
+    print alignof(Outer)
+    print sizeof(Named)
+    print alignof(Named)
+    n = Node(null, 1)
+    [sizeof(n)]u8 buf
+    print sizeof(buf)
+    Node m
+    print alignof(m)
+    return 0

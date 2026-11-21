@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:9:15:    Stuff s = 5
+# CERR: {ssss}                    ^ error: Can't assign an integer constant to Stuff.
+
+struct Stuff:
+    int x
+
+def int main():
+    Stuff s = 5
+    return 0

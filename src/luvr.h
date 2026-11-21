@@ -168,6 +168,11 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
+// align must be a power of 2.
+static inline u32 align_up(u32 v, u32 align) {
+  return (v + align - 1) & ~(align - 1);
+}
+
 // A growable array of T. The elements are v[0..num).
 #define VEC(T) \
   struct {     \

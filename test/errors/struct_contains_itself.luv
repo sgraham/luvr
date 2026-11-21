@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:7:5:    Node next
+# CERR: {ssss}         ^ error: 'Node' can't contain itself.
+
+struct Node:
+    int value
+    Node next

@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:6:13:    int s = sizeof(Stuff)
+# CERR: {ssss}                  ^ error: Expected a constant expression.
+
+struct Stuff:
+    int s = sizeof(Stuff)

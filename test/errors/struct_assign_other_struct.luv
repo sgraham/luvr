@@ -1,0 +1,14 @@
+# CRET: 1
+# CERR: {self}:13:16:    Second b = a
+# CERR: {ssss}                      ^ error: Can't assign First to Second.
+
+struct First:
+    int x
+
+struct Second:
+    int x
+
+def int main():
+    First a
+    Second b = a
+    return 0
