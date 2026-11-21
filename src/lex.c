@@ -55,7 +55,7 @@ static u64 mix64(u64 h) {
 // because of LEX_PADDING. The extra bytes are masked off, so the result only
 // depends on s[0..len).
 static u64 hash_ident(const u8* s, u32 len) {
-  u64 h = 0x9e3779b97f4a7c15ull ^ len;
+  u64 h = HASH_GOLDEN ^ len;
   while (len >= 8) {
     u64 w;
     memcpy(&w, s, 8);

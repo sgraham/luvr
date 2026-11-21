@@ -79,7 +79,7 @@ static Ref il_const(IlFunc* f, IlType ty, u64 v) {
   // Constants are interned so that each value and type has only one Ref. Then
   // operands can be compared by Ref alone, both when looking for common
   // subexpressions and when folding.
-  u32 tag = hashtable_tag((v ^ ty) * 0x9e3779b97f4a7c15ull);
+  u32 tag = hashtable_tag_of_key(v ^ ty);
   HashSlot* s = hashtable_first(&f->const_map, tag);
   for (; s->tag != 0; s = hashtable_next(&f->const_map, s, tag)) {
     if (f->consts.v[s->val] == v && f->const_types.v[s->val] == ty) {

@@ -225,6 +225,17 @@ static inline u32 hashtable_tag(u64 h) {
   return tag ? tag : 1;
 }
 
+// 2^64 divided by the golden ratio. It's odd and its bits are irregular, so
+// multiplying by it spreads the bits of a key into the high 32 bits, which
+// are the ones hashtable_tag() keeps.
+#define HASH_GOLDEN 0x9e3779b97f4a7c15ull
+
+// A tag for a key that's a small integer or a few packed fields, rather than
+// a hash.
+static inline u32 hashtable_tag_of_key(u64 key) {
+  return hashtable_tag(key * HASH_GOLDEN);
+}
+
 static inline HashSlot* hashtable_probe_(const HashTable* t, u32 tag, u32 pos) {
   for (;;) {
     HashSlot* s = &t->v[pos];

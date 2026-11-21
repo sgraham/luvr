@@ -1,0 +1,32 @@
+# OUT: 24
+# OUT: 2
+# OUT: 6
+# OUT: 1
+# OUT: 8
+# OUT: 4
+# OUT: 32
+# OUT: 0
+# OUT: 24
+# OUT: 7
+struct Header:
+    [3]u8 tag
+    i32 len
+
+struct Names:
+    [2]str names
+
+def int main():
+    print sizeof([3]int)
+    print alignof([3]i16)
+    print sizeof([2][3]u8)
+    print alignof([2][3]u8)
+    print sizeof(Header)
+    print alignof(Header)
+    print sizeof(Names)
+    print sizeof([0]int)
+    [3]int nums
+    print sizeof(nums)
+    nums[2] = 7
+    int last = nums[2]
+    print last
+    return 0

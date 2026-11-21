@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:5:    [1 << 30][8]u8 a
+# CERR: {ssss}         ^ error: Array is too large.
+
+def int main():
+    [1 << 30][8]u8 a
+    return 0

@@ -107,12 +107,14 @@ typedef enum TypeKind {
   TYPE_FUNC,
   TYPE_PTR,
   TYPE_STRUCT,
+  TYPE_ARRAY,
 } TypeKind;
 
 // A type that's created while parsing. Function types aren't interned, so
 // each function has its own, even when signatures are the same. Pointer types
-// are interned through `ptr`, so that they can be compared by index. Each
-// struct definition creates one type.
+// are interned through `ptr`, and fixed-size arrays through
+// Parser.array_types, so that they can be compared by index. Each struct
+// definition creates one type.
 struct TypeInfo {
   TypeKind kind;
   TypeId ptr;  // *T for this T, or TY_UNKNOWN if it hasn't been created yet
@@ -131,7 +133,11 @@ struct TypeInfo {
       // type_has_layout()).
       u32 size;
       u32 align;
-      bool has_layout;
+      bool has_layout;  // TODO: consider removing this and using align==0 as flag.
+    };
+    struct {  // TYPE_ARRAY
+      TypeId elem;
+      u32 count;
     };
   };
 };
@@ -209,6 +215,8 @@ struct Parser {
   VEC(TypeInfo) types;  // by TypeId, with unused entries for the FixedTypes
   VEC(TypeId) param_types;
   VEC(Field) fields;
+  // Each [N]T, by a hash of N and T. The slot's val is the TypeId.
+  HashTable array_types;
   u32 num_locals;
   u32 func_base;   // first of the current function's entries in locals
   u32 func_depth;  // 0 at top level
@@ -266,7 +274,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e);
 static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start);
 static void primary(Parser* p, ExpDesc* e);
 static TypeId type(Parser* p);
-static void array_size(Parser* p);
+static u32 array_size(Parser* p);
 static Flow stat(Parser* p);
 static Flow suite(Parser* p);
 static void parse_module(Parser* p);
@@ -302,11 +310,19 @@ static bool type_is_struct(Parser* p, TypeId t) {
   return type_is_created(t) && type_info(p, t)->kind == TYPE_STRUCT;
 }
 
+static bool type_is_array(Parser* p, TypeId t) {
+  return type_is_created(t) && type_info(p, t)->kind == TYPE_ARRAY;
+}
+
 // Describes a type for error messages, as it would follow "not". The result
 // is only for the arguments of error_at().
 static const char* type_str(Parser* p, TypeId t) {
   if (type_is_pointer(p, t)) {
     return ctx_err_str(p->ls.ctx, "*%s", type_str(p, type_info(p, t)->pointee));
+  }
+  if (type_is_array(p, t)) {
+    const TypeInfo* info = type_info(p, t);
+    return ctx_err_str(p->ls.ctx, "[%u]%s", info->count, type_str(p, info->elem));
   }
   if (type_is_struct(p, t)) {
     const Name* n = lex_name(p->ls.ctx, type_info(p, t)->name);
@@ -712,20 +728,49 @@ static TypeId type_pointer_to(Parser* p, TypeId t) {
   return type_info(p, t)->ptr;
 }
 
+static bool type_has_layout(Parser* p, TypeId t);
+static u32 type_size(Parser* p, TypeId t);
+
+// [count]elem, which is at offset at. Like pointers, an array of an unknown
+// type is unknown.
+static TypeId type_array_of(Parser* p, TypeId elem, u32 count, u32 at) {
+  if (elem.idx == TY_UNKNOWN) {
+    return ty_unknown;
+  }
+  if (type_has_layout(p, elem) && (u64)count * type_size(p, elem) > UINT32_MAX) {
+    error_at(p, at, "Array is too large.");
+  }
+  u32 tag = hashtable_tag_of_key((u64)elem.idx << 32 | count);
+  HashSlot* s = hashtable_first(&p->array_types, tag);
+  for (; s->tag != 0; s = hashtable_next(&p->array_types, s, tag)) {
+    const TypeInfo* info = &p->types.v[s->val];
+    if (info->elem.idx == elem.idx && info->count == count) {
+      return (TypeId){s->val};
+    }
+  }
+  TypeId arr = {p->types.num};
+  *vec_push(p->ls.ctx, &p->types) = (TypeInfo){.kind = TYPE_ARRAY, .elem = elem, .count = count};
+  hashtable_insert(p->ls.ctx, &p->array_types, s, tag, arr.idx);
+  return arr;
+}
+
 static TypeId type(Parser* p) {
   u32 at = p->ls.pos.t.offset;
   switch (T(p)) {
     case TK_STAR:
       next(p);
       return type_pointer_to(p, type(p));
-    case TK_LSQUARE:
+    case TK_LSQUARE: {
       next(p);
-      if (T(p) != TK_RSQUARE) {
-        array_size(p);
+      if (T(p) == TK_RSQUARE) {  // []T isn't typed yet
+        next(p);
+        type(p);
+        return ty_unknown;
       }
+      u32 count = array_size(p);
       check_match(p, TK_RSQUARE, TK_LSQUARE, at);
-      type(p);
-      return ty_unknown;
+      return type_array_of(p, type(p), count, at);
+    }
     case TK_LBRACE:
       next(p);
       type(p);
@@ -1016,9 +1061,9 @@ static NOINLINE NORETURN void assign_type_error(Parser* p, TypeId from, TypeId t
   error_at(p, at, "Can't assign %s to %s.", type_str(p, from), type_str(p, to));
 }
 
-// The size in [N]T has to be a constant integer that fits in int, and can't
-// be negative.
-static void array_size(Parser* p) {
+// The size in [N]T has to be a constant integer, and can't be negative. It's
+// limited to u32, like the size in bytes of every type.
+static u32 array_size(Parser* p) {
   u32 at = p->ls.pos.t.offset;
   ExpDesc e;
   subexpr(p, -1, &e);
@@ -1028,7 +1073,10 @@ static void array_size(Parser* p) {
   if (e.v.i < 0) {
     error_at(p, at, "Array size can't be negative.");
   }
-  check_const_fits(p, &e, ty_i64, at);
+  if (e.v.i > UINT32_MAX) {
+    error_at(p, at, "Array size %s is too large.", int_str(p, e.v.i));
+  }
+  return (u32)e.v.i;
 }
 
 // There's no syntax for function types, so functions can't be values. Out of
@@ -1952,10 +2000,14 @@ static TypeId sizeof_operand(Parser* p) {
 
 // Whether a type's size and alignment are known. They're not for a struct
 // until the end of its definition, or for a struct with a field whose layout
-// isn't known, as with generic struct fields and fixed-size arrays.
+// isn't known, as with generic struct fields. An array has a layout if its
+// element type does.
 static bool type_has_layout(Parser* p, TypeId t) {
   if (type_is_struct(p, t)) {
     return type_info(p, t)->has_layout;
+  }
+  if (type_is_array(p, t)) {
+    return type_has_layout(p, type_info(p, t)->elem);
   }
   if (type_is_integer(t)) {
     return !type_is_untyped(t);
@@ -1975,6 +2027,9 @@ static u32 type_size(Parser* p, TypeId t) {
   if (type_is_struct(p, t)) {
     return type_info(p, t)->size;
   }
+  if (type_is_array(p, t)) {
+    return type_info(p, t)->count * type_size(p, type_info(p, t)->elem);
+  }
   switch ((FixedType)t.idx) {
     case TY_BOOL:
       return 1;
@@ -1990,11 +2045,14 @@ static u32 type_size(Parser* p, TypeId t) {
   }
 }
 
-// Scalars are aligned to their size.
+// Scalars are aligned to their size, and arrays to their element type.
 static u32 type_align(Parser* p, TypeId t) {
   ASSERT(type_has_layout(p, t));
   if (type_is_struct(p, t)) {
     return type_info(p, t)->align;
+  }
+  if (type_is_array(p, t)) {
+    return type_align(p, type_info(p, t)->elem);
   }
   if (t.idx == TY_STR) {
     return 8;
@@ -2066,7 +2124,8 @@ static u32 call_args(Parser* p, bool is_struct_literal, TypeId callee, Ref* args
 
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice). e is the
 // expression being indexed, and is replaced by the result. Only indexing a
-// pointer is typed so far, and gives the pointee.
+// pointer or a fixed-size array is typed so far. A constant index into an
+// array is checked against its size.
 static void index_or_slice(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
   next(p);  // '['
@@ -2082,12 +2141,19 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   }
   check_match(p, TK_RSQUARE, TK_LSQUARE, at);
   TypeId result = ty_unknown;
-  if (!is_slice && type_is_pointer(p, e->type)) {
+  bool is_pointer = type_is_pointer(p, e->type);
+  bool is_array = type_is_array(p, e->type);
+  if (!is_slice && (is_pointer || is_array)) {
     if (first.type.idx != TY_UNKNOWN && !type_is_integer(first.type)) {
       error_at(p, first_at, "Index must be an integer, not %s.", type_str(p, first.type));
     }
     check_const_conversion(p, ty_i64, &first, first_at);
-    result = type_info(p, e->type)->pointee;
+    const TypeInfo* info = type_info(p, e->type);
+    if (is_array && first.kind == EK_CONST && (first.v.i < 0 || first.v.i >= info->count)) {
+      error_at(p, first_at, "Index %s is out of range for %s.", int_str(p, first.v.i),
+               type_str(p, e->type));
+    }
+    result = is_pointer ? info->pointee : info->elem;
   }
   e->shape = is_slice ? SH_VALUE : SH_LVALUE;
   e->type = result;
@@ -2991,7 +3057,11 @@ static void struct_body(Parser* p, TypeId st) {
   for (;;) {
     u32 type_at = p->ls.pos.t.offset;
     TypeId t = type(p);
-    if (t.idx == st.idx) {
+    TypeId inner = t;
+    while (type_is_array(p, inner)) {
+      inner = type_info(p, inner)->elem;
+    }
+    if (inner.idx == st.idx) {
       const Name* n = name_of(p, type_info(p, st)->name);
       error_at(p, type_at, "'%.*s' can't contain itself.", (int)n->len, (const char*)n->str);
     }
@@ -3346,6 +3416,7 @@ static void parse_end(Parser* p) {
   free(p->types.v);
   free(p->param_types.v);
   free(p->fields.v);
+  hashtable_free(&p->array_types);
   free(p);
 }
 
@@ -3367,6 +3438,7 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   p->param_types.num = p->param_types.cap = 0;
   p->fields.v = NULL;
   p->fields.num = p->fields.cap = 0;
+  memset(&p->array_types, 0, sizeof(p->array_types));
   p->func_base = 0;
   p->func_depth = 0;
   p->ret_type = ty_unknown;
@@ -3387,6 +3459,9 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   memset(p->types.v, 0, TY_NUM_FIXED * sizeof(TypeInfo));
   p->types.num = TY_NUM_FIXED;
   vec_reserve(ctx, &p->param_types, INITIAL_TYPES);
+  if (!hashtable_init(&p->array_types, 64)) {
+    ctx_error(ctx, path, NULL, 0, "Out of memory.");
+  }
   if (EMIT) {
     il_init(&p->il, ctx);
   }

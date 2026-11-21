@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:16:    [4]int b = a
+# CERR: {ssss}                     ^ error: Can't assign [3]int to [4]int.
+
+def int main():
+    [3]int a
+    [4]int b = a
+    return 0
