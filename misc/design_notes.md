@@ -3211,15 +3211,15 @@ Delaying the load of `EK_LOCAL` lets `x = y` be a `LOAD` and a `STORE`,
 and lets `&x` use the slot's address without a load. `EK_STR` stays
 unemitted until it's used, because it becomes two values.
 
-Emission helpers are in `parser.c` next to `ExpDesc`, named `exp_*`:
+Emission helpers are in `parser.c` next to `ExpDesc`, named `emit_*`:
 
-- `exp_to_ref(p, e, t)`: emits whatever is needed to make `e` one value of
+- `emit_to_ref(p, e, t)`: emits whatever is needed to make `e` one value of
   type `t`, and returns its `Ref`. Untyped constants get their type from
   `t`, which has already been checked by `check_assign` or
   `type_for_arith`.
-- `exp_to_str_refs(p, e, refs)`: the two values (data and len) of a `str`.
-- `exp_store(p, local, e)`: an assignment or declaration.
-- `exp_infix(p, e)`: called after a binary operator is read and before
+- `emit_to_str_refs(p, e, refs)`: the two values (data and len) of a `str`.
+- `emit_store_local(p, local, e)`: an assignment or declaration.
+- `emit_infix(p, e)`: called after a binary operator is read and before
   its right operand is parsed. A non-constant left operand is turned into a
   `Ref`, so that it's evaluated before the right operand. A constant is
   kept so that folding still works.

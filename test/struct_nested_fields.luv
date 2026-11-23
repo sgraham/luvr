@@ -1,0 +1,32 @@
+# RET: 42
+# OUT: 200
+# OUT: -3
+# OUT: 65535
+# OUT: true
+# OUT: 42
+# OUT: true
+struct Inner:
+    i8 small
+    u16 wide
+    bool flag
+
+struct Outer:
+    u8 tag
+    Inner inner
+    int total
+
+def int main():
+    Outer o
+    o.tag = 200
+    o.inner.small = -3
+    o.inner.wide = 65535
+    o.inner.flag = true
+    o.total = 40
+    o.total = o.total + 2
+    print o.tag
+    print o.inner.small
+    print o.inner.wide
+    print o.inner.flag
+    print o.total
+    print o.inner.small < 0
+    return o.total

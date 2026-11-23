@@ -248,23 +248,30 @@ typedef enum ExpKind {
   EK_REF,    // the result of an instruction or constant, in ExpDesc.ref
   EK_CONST,  // in ExpDesc.v
   EK_LOCAL,  // in ExpDesc.slot, not loaded yet
+  EK_ADDR,   // in memory at ExpDesc.base + ExpDesc.offset, not loaded yet
   EK_STR,    // a string literal, whose bytes are Ctx.data at ExpDesc.data
   EK_FUNC,   // a function, whose symbol is ExpDesc.sym
 } ExpKind;
 
 // What is known about an expression that has been parsed but not yet emitted.
 struct ExpDesc {
-  Shape shape;
   TypeId type;
-  ExpKind kind;
+  u8 shape;  // Shape
+  u8 kind;   // ExpKind
   union {
     u32 slot;  // EK_LOCAL
     Ref ref;   // EK_REF
     u32 data;  // EK_STR
     u32 sym;   // EK_FUNC
+    struct {   // EK_ADDR
+      Ref base;
+      u32 offset;
+    };
   };
   ConstValue v;
 };
+
+static_assert(sizeof(ExpDesc) == 32, "unexpected ExpDesc size");
 
 static void expr(Parser* p);
 static void subexpr(Parser* p, int limit, ExpDesc* e);
@@ -272,6 +279,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start);
 static void primary(Parser* p, ExpDesc* e);
 static TypeId type(Parser* p);
 static u32 array_size(Parser* p);
+static IlType il_mem_type_of(Parser* p, TypeId t);
 static Flow stat(Parser* p);
 static Flow suite(Parser* p);
 static void parse_module(Parser* p);
@@ -1456,7 +1464,7 @@ static IlOp il_compare_op(BinOpr op, TypeId t) {
 }
 
 // A value that the emitting build doesn't emit yet. Its ref is 0, which
-// isn't a valid Ref, so that exp_to_ref() gives an error if it's used,
+// isn't a valid Ref, so that emit_to_ref() gives an error if it's used,
 // rather than using whatever e was before.
 static void exp_unemitted(ExpDesc* e) {
   e->kind = EK_REF;
@@ -1465,10 +1473,17 @@ static void exp_unemitted(ExpDesc* e) {
   }
 }
 
+static Ref emit_addr(Parser* p, const ExpDesc* e) {
+  if (e->offset == 0) {
+    return e->base;
+  }
+  return il_emit(&p->il, OP_ADD, IT_I64, e->base, il_const_int(&p->il, IT_I64, e->offset));
+}
+
 // Emits whatever is needed to make e one value of type t, and returns its Ref.
 // t has already been checked against e's type. If e is an untyped constant
 // it will take on t's type.
-static Ref exp_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
+static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
   IlType ty = il_type_of(p, t, at);
   if (e->kind == EK_CONST && t.idx == TY_BOOL) {
     return il_const_int(&p->il, ty, e->v.b);
@@ -1480,19 +1495,27 @@ static Ref exp_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
     Ref addr = il_emit(&p->il, OP_SLOT, IT_I64, e->slot, 0);
     return il_emit(&p->il, OP_LOAD, ty, addr, 0);
   }
+  if (e->kind == EK_ADDR) {
+    return il_emit(&p->il, OP_LOAD, il_mem_type_of(p, e->type), emit_addr(p, e), 0);
+  }
   if (e->kind == EK_REF && e->ref != 0) {
     return e->ref;
   }
   error_at(p, at, "This expression isn't supported yet.");
 }
 
-static void exp_store(Parser* p, const Local* l, const ExpDesc* e, u32 at) {
+static void emit_store_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e, u32 at) {
+  Ref v = emit_to_ref(p, e, dst->type, at);
+  il_emit(&p->il, OP_STORE, il_mem_type_of(p, dst->type), v, emit_addr(p, dst));
+}
+
+static void emit_store_local(Parser* p, const Local* l, const ExpDesc* e, u32 at) {
   Ref addr = il_emit(&p->il, OP_SLOT, IT_I64, l->slot, 0);
-  Ref v = exp_to_ref(p, e, l->type, at);
+  Ref v = emit_to_ref(p, e, l->type, at);
   il_emit(&p->il, OP_STORE, il_type_of(p, l->type, at), v, addr);
 }
 
-static void exp_print(Parser* p, const ExpDesc* e, u32 at) {
+static void emit_print(Parser* p, const ExpDesc* e, u32 at) {
   TypeId t = type_concrete(e->type);
   RuntimeSym sym;
   switch ((FixedType)t.idx) {
@@ -1527,7 +1550,7 @@ static void exp_print(Parser* p, const ExpDesc* e, u32 at) {
     args[1] = il_const_int(&p->il, IT_I64, p->ls.ctx->data.v[e->data].len);
     nargs = 2;
   } else {
-    args[0] = exp_to_ref(p, e, t, at);
+    args[0] = emit_to_ref(p, e, t, at);
   }
   // Integers narrower than 64 bits are i32s, which are widened for the
   // runtime's printers.
@@ -1540,9 +1563,9 @@ static void exp_print(Parser* p, const ExpDesc* e, u32 at) {
 
 // Called after a binary operator and before its right operand, so that the
 // left operand is evaluated first. Constants are kept so they can be folded.
-static void exp_infix(Parser* p, ExpDesc* e, u32 at) {
-  if (e->kind == EK_LOCAL) {
-    e->ref = exp_to_ref(p, e, e->type, at);
+static void emit_infix(Parser* p, ExpDesc* e, u32 at) {
+  if (e->kind == EK_LOCAL || e->kind == EK_ADDR) {
+    e->ref = emit_to_ref(p, e, e->type, at);
     e->kind = EK_REF;
   }
 }
@@ -1556,8 +1579,8 @@ struct LogicalJoin {
 
 // Called after the left operand of 'and' or 'or'. The right operand is only
 // evaluated when the left one hasn't determined the final result.
-static void exp_logical_begin(Parser* p, BinOpr op, const ExpDesc* e, u32 at, LogicalJoin* join) {
-  Ref left = exp_to_ref(p, e, ty_bool, at);
+static void emit_logical_begin(Parser* p, BinOpr op, const ExpDesc* e, u32 at, LogicalJoin* join) {
+  Ref left = emit_to_ref(p, e, ty_bool, at);
   join->slot = il_slot_add(&p->il, IT_I32, (NameId){IL_SLOT_UNNAMED});
   join->end = il_block_declare(&p->il);
   il_emit(&p->il, OP_STORE, IT_I32, left, il_emit(&p->il, OP_SLOT, IT_I64, join->slot, 0));
@@ -1571,8 +1594,8 @@ static void exp_logical_begin(Parser* p, BinOpr op, const ExpDesc* e, u32 at, Lo
   }
 }
 
-static void exp_logical_end(Parser* p, const ExpDesc* rhs, u32 at, const LogicalJoin* join) {
-  Ref right = exp_to_ref(p, rhs, ty_bool, at);
+static void emit_logical_end(Parser* p, const ExpDesc* rhs, u32 at, const LogicalJoin* join) {
+  Ref right = emit_to_ref(p, rhs, ty_bool, at);
   il_emit(&p->il, OP_STORE, IT_I32, right, il_emit(&p->il, OP_SLOT, IT_I64, join->slot, 0));
   il_block_start(&p->il, join->end);
 }
@@ -1630,7 +1653,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
         e->v.b = !e->v.b;
       } else if (EMIT && e->type.idx == TY_BOOL) {
         // A bool is 0 or 1.
-        Ref v = exp_to_ref(p, e, ty_bool, at);
+        Ref v = emit_to_ref(p, e, ty_bool, at);
         e->ref = il_emit(&p->il, OP_XOR, IT_I32, v, il_const_int(&p->il, IT_I32, 1));
         e->kind = EK_REF;
       } else {
@@ -1684,7 +1707,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
     u32 at = p->ls.pos.t.offset;
     next(p);
     if (EMIT) {
-      exp_infix(p, e, start);
+      emit_infix(p, e, start);
     }
     if (op == OPR_NOTIN) {
       check(p, TK_IN);
@@ -1694,7 +1717,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
     if (logical) {
       expect_bool(p, e, at, logical);
       if (EMIT) {
-        exp_logical_begin(p, op, e, start, &join);
+        emit_logical_begin(p, op, e, start, &join);
       }
     }
     u32 rhs_at = p->ls.pos.t.offset;
@@ -1703,7 +1726,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
     if (logical) {
       expect_bool(p, &rhs, rhs_at, logical);
       if (EMIT) {
-        exp_logical_end(p, &rhs, rhs_at, &join);
+        emit_logical_end(p, &rhs, rhs_at, &join);
       }
     }
     BinOpr nextop = tok_to_binopr(T(p));
@@ -1730,8 +1753,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
         }
       }
       if (!folded && EMIT && (t.idx == TY_BOOL || type_is_integer(t))) {
-        Ref left = exp_to_ref(p, e, t, start);
-        Ref right = exp_to_ref(p, &rhs, t, rhs_at);
+        Ref left = emit_to_ref(p, e, t, start);
+        Ref right = emit_to_ref(p, &rhs, t, rhs_at);
         e->kind = EK_REF;
         e->ref = il_emit(&p->il, il_compare_op(op, t), il_type_of(p, t, at), left, right);
       } else if (!folded) {
@@ -1759,8 +1782,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       if (e->kind == EK_CONST && rhs.kind == EK_CONST && t.idx != TY_UNKNOWN && t.idx != TY_STR) {
         fold_arith(p, op, t, e, &rhs, at);
       } else if (EMIT && il_arith_op(op) != OP_NUM_OPS && (t.idx == TY_I32 || t.idx == TY_I64)) {
-        Ref left = exp_to_ref(p, e, t, start);
-        Ref right = exp_to_ref(p, &rhs, t, rhs_at);
+        Ref left = emit_to_ref(p, e, t, start);
+        Ref right = emit_to_ref(p, &rhs, t, rhs_at);
         e->kind = EK_REF;
         e->ref = il_emit(&p->il, il_arith_op(op), il_type_of(p, t, at), left, right);
       } else {
@@ -1786,7 +1809,7 @@ static Ref cond(Parser* p) {
   ExpDesc e;
   subexpr(p, -1, &e);
   expect_bool(p, &e, at, "Condition");
-  return EMIT ? exp_to_ref(p, &e, ty_bool, at) : 0;
+  return EMIT ? emit_to_ref(p, &e, ty_bool, at) : 0;
 }
 
 // "...\(e)...\(e)..."
@@ -2156,7 +2179,7 @@ static u32 call_args(Parser* p, TypeId callee, Ref* args) {
           if (num_args > MAX_CALL_ARGS) {
             error_at(p, arg_at, "Calls can't have more than %d arguments.", MAX_CALL_ARGS);
           }
-          args[num_args - 1] = exp_to_ref(p, &e, t, arg_at);
+          args[num_args - 1] = emit_to_ref(p, &e, t, arg_at);
         }
       }
       if (!optional(p, TK_COMMA)) {
@@ -2312,19 +2335,28 @@ static void postfix(Parser* p, ExpDesc* e) {
         NameId name = p->ls.pos.t.v.name;
         u32 name_at = p->ls.pos.t.offset;
         next(p);
-        e->shape = SH_LVALUE;
-        e->type = ty_unknown;
-        exp_unemitted(e);
-        if (type_is_struct(p, base)) {
-          const Field* f = struct_field(p, base, name);
-          // Methods aren't typed yet, so a name that isn't a field is only an
-          // error if it isn't called.
-          if (f) {
-            e->type = f->type;
-          } else if (T(p) != TK_LPAREN) {
-            field_error(p, base, name, name_at);
-          }
+        const Field* f = type_is_struct(p, base) ? struct_field(p, base, name) : NULL;
+        // Methods aren't typed yet, so a name that isn't a field is only an
+        // error if it isn't called.
+        if (type_is_struct(p, base) && !f && T(p) != TK_LPAREN) {
+          field_error(p, base, name, name_at);
         }
+        if (EMIT && f && type_is_struct(p, e->type) && e->kind == EK_LOCAL) {
+          // A field of a struct local is in the local's slot, so the slot's
+          // address is the base.
+          Ref slot_addr = il_emit(&p->il, OP_SLOT, IT_I64, e->slot, 0);
+          e->kind = EK_ADDR;
+          e->base = slot_addr;
+          e->offset = f->offset;
+        } else if (EMIT && f && type_is_struct(p, e->type) && e->kind == EK_ADDR) {
+          // A field of a nested struct is in the same memory as the outer
+          // struct, so only the offset changes.
+          e->offset += f->offset;
+        } else {
+          exp_unemitted(e);
+        }
+        e->shape = SH_LVALUE;
+        e->type = f ? f->type : ty_unknown;
         break;
       }
       case TK_LSQUARE:
@@ -2686,7 +2718,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
       if (!has_value) {
         v = (ExpDesc){.type = t, .kind = EK_CONST};
       }
-      exp_store(p, l, &v, value_at);
+      emit_store_local(p, l, &v, value_at);
     }
   }
 }
@@ -2760,7 +2792,8 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       }
       bool is_plain = T(p) == TK_EQ;
       bool declares = exp.shape == SH_NAME && is_plain;
-      if (EMIT && !toplevel && !declares) {
+      bool stores_field = is_plain && exp.kind == EK_ADDR;
+      if (EMIT && !toplevel && !declares && !stores_field) {
         error_at(p, at, "This statement isn't supported yet.");
       }
       TokenKind op_kind = T(p);
@@ -2805,9 +2838,11 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
             }
           }
           if (EMIT) {
-            exp_store(p, loc, &v, value_at);
+            emit_store_local(p, loc, &v, value_at);
           }
         }
+      } else if (EMIT && stores_field) {
+        emit_store_addr(p, &exp, &v, value_at);
       }
       return;
     }
@@ -2867,7 +2902,7 @@ static void simple_stat(Parser* p) {
         }
         check_const_conversion(p, p->ret_type, &e, at);
         if (EMIT) {
-          il_emit(&p->il, OP_RET, p->il.ret, exp_to_ref(p, &e, p->ret_type, at), 0);
+          il_emit(&p->il, OP_RET, p->il.ret, emit_to_ref(p, &e, p->ret_type, at), 0);
         }
       }
       return;
@@ -2884,7 +2919,7 @@ static void simple_stat(Parser* p) {
       subexpr(p, -1, &e);
       check_not_void(p, &e, at);
       if (EMIT) {
-        exp_print(p, &e, at);
+        emit_print(p, &e, at);
       }
       return;
     }

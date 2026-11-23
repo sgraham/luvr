@@ -699,6 +699,10 @@ def gen_struct(idx):
         default = None
         if rnd.random() < 0.25:
             default = const_leaf(t).text
+            # Field defaults have to be constants, which strings can't be yet.
+            # The leaf is still made so that the random sequence is unchanged.
+            if t == "str":
+                default = None
         fields.append((f, t, default))
     out = [f"struct {name}:\n"]
     for f, t, d in fields:
