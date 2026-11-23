@@ -305,7 +305,7 @@ static bool type_is_created(TypeId t) {
 }
 
 static TypeInfo* type_info(Parser* p, TypeId t) {
-  return &p->types.v[t.u];
+  return &p->types.items[t.u];
 }
 
 static bool type_is_function(Parser* p, TypeId t) {
@@ -491,7 +491,7 @@ static NOINLINE void load_named_const(ExpDesc* e, const NamedConst* c) {
 // and is visible from there to the end of the function.
 
 static Name* name_of(Parser* p, NameId name) {
-  return &p->ls.ctx->names.v[name.u];
+  return &p->ls.ctx->names.items[name.u];
 }
 
 static Local* lookup(Parser* p, NameId name) {
@@ -630,7 +630,7 @@ static const Module* imported_module(Parser* p, NameId name) {
     return NULL;
   }
   const u32* idx = namemap_find(&p->mod->imports, name);
-  return idx ? p->ls.ctx->modules.v[*idx] : NULL;
+  return idx ? p->ls.ctx->modules.items[*idx] : NULL;
 }
 
 // Checks that the current token, which follows `mod.`, is a type or variable
@@ -753,7 +753,7 @@ static TypeId type_array_of(Parser* p, TypeId elem, u32 count, u32 at) {
   u32 tag = hashtable_tag_of_key((u64)elem.u << 32 | count);
   HashSlot* s = hashtable_first(&p->array_types, tag);
   for (; s->tag != 0; s = hashtable_next(&p->array_types, s, tag)) {
-    const TypeInfo* info = &p->types.v[s->val];
+    const TypeInfo* info = &p->types.items[s->val];
     if (info->elem.u == elem.u && info->count == count) {
       return (TypeId){s->val};
     }
@@ -1587,7 +1587,7 @@ static void emit_print(Parser* p, const ExpDesc* e, u32 at) {
       error_at(p, at, "This expression isn't supported yet.");
     }
     args[0] = il_const_data(&p->il, e->data);
-    args[1] = il_const_int(&p->il, IT_I64, p->ls.ctx->data.v[e->data.u].len);
+    args[1] = il_const_int(&p->il, IT_I64, p->ls.ctx->data.items[e->data.u].len);
     nargs = 2;
   } else {
     args[0] = emit_to_ref(p, e, t, at);
@@ -2152,7 +2152,7 @@ static void type_agg_leaves(Parser* p, TypeId t, u32 offset, AggLeaf* leaves, u3
   if (type_is_struct(p, t)) {
     const TypeInfo* info = type_info(p, t);
     for (u32 i = 0; i < info->num_fields; ++i) {
-      const Field* f = &p->fields.v[info->first_field + i];
+      const Field* f = &p->fields.items[info->first_field + i];
       type_agg_leaves(p, f->type, offset + f->offset, leaves, num_leaves);
     }
   } else if (type_is_array(p, t)) {
@@ -2172,7 +2172,7 @@ static void type_agg_leaves(Parser* p, TypeId t, u32 offset, AggLeaf* leaves, u3
 static const Field* struct_field(Parser* p, TypeId st, NameId name) {
   const TypeInfo* info = type_info(p, st);
   for (u32 i = 0; i < info->num_fields; ++i) {
-    const Field* f = &p->fields.v[info->first_field + i];
+    const Field* f = &p->fields.items[info->first_field + i];
     if (f->name.u == name.u) {
       return f;
     }
@@ -2208,7 +2208,7 @@ static u32 call_args(Parser* p, TypeId callee, Ref* args) {
       subexpr(p, -1, &e);
       check_not_void(p, &e, arg_at);
       if (num_args <= num_params) {
-        TypeId t = p->param_types.v[first_param + num_args - 1];
+        TypeId t = p->param_types.items[first_param + num_args - 1];
         if (!assignable(p, e.type, t)) {
           error_at(p, arg_at, "Argument %u is %s, but the parameter is %s.", num_args,
                    type_str(p, e.type), type_str(p, t));
@@ -2283,7 +2283,7 @@ static void struct_args(Parser* p, ExpDesc* e) {
           if (!f) {
             field_error(p, st, name, name_at);
           }
-          field = (u32)(f - &p->fields.v[first_field]);
+          field = (u32)(f - &p->fields.items[first_field]);
         }
         check(p, TK_EQ);
       }
@@ -2294,7 +2294,7 @@ static void struct_args(Parser* p, ExpDesc* e) {
           error_at(p, field_at, "Too many arguments for %s, which has %u field%s.", type_str(p, st),
                    num_fields, num_fields == 1 ? "" : "s");
         }
-        f = &p->fields.v[first_field + field];
+        f = &p->fields.items[first_field + field];
         if (given[field]) {
           const Name* n = name_of(p, f->name);
           error_at(p, field_at, "Field '%.*s' is given twice.", (int)n->len, (const char*)n->str);
@@ -2565,9 +2565,9 @@ static void primary(Parser* p, ExpDesc* e) {
         if (member_kind == GK_TYPE) {
           e->type = global_type(member);
         } else if (member_kind == GK_CONST) {
-          load_named_const(e, &p->global_consts.v[member >> GLOBAL_KIND_BITS]);
+          load_named_const(e, &p->global_consts.items[member >> GLOBAL_KIND_BITS]);
         } else if (member_kind == GK_FUNC) {
-          e->type = p->global_funcs.v[member >> GLOBAL_KIND_BITS].type;
+          e->type = p->global_funcs.items[member >> GLOBAL_KIND_BITS].type;
           check_function_called(p, e, member_at);
         }
         break;
@@ -2593,9 +2593,9 @@ static void primary(Parser* p, ExpDesc* e) {
           e->ref = l->ref;
         }
       } else if (kind == GK_CONST) {
-        load_named_const(e, &p->global_consts.v[info >> GLOBAL_KIND_BITS]);
+        load_named_const(e, &p->global_consts.items[info >> GLOBAL_KIND_BITS]);
       } else if (kind == GK_FUNC) {
-        const GlobalFunc* gf = &p->global_funcs.v[info >> GLOBAL_KIND_BITS];
+        const GlobalFunc* gf = &p->global_funcs.items[info >> GLOBAL_KIND_BITS];
         e->type = gf->type;
         if (EMIT && gf->sym != FUNC_NO_SYM) {
           e->kind = EK_FUNC;
@@ -3306,7 +3306,7 @@ static Flow stat(Parser* p) {
 // Grows p->image to size bytes with zeros.
 static void image_extend(Parser* p, u32 size) {
   vec_reserve(p->ls.ctx, &p->image, size - p->image.num);
-  memset(&p->image.v[p->image.num], 0, size - p->image.num);
+  memset(&p->image.items[p->image.num], 0, size - p->image.num);
   p->image.num = size;
 }
 
@@ -3314,11 +3314,11 @@ static void image_extend(Parser* p, u32 size) {
 // Every target is little-endian.
 static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, u32 at) {
   if (t.u == TY_BOOL) {
-    p->image.v[offset] = defval->cv.b;
+    p->image.items[offset] = defval->cv.b;
   } else if (type_is_integer(t)) {
     u64 bits = (u64)defval->cv.i;
     for (u32 i = 0; i < type_size(p, t); ++i) {
-      p->image.v[offset + i] = (u8)(bits >> (8 * i));
+      p->image.items[offset + i] = (u8)(bits >> (8 * i));
     }
   } else if (!type_is_pointer(p, t)) {
     error_at(p, at, "This field default isn't supported yet.");
@@ -3335,15 +3335,15 @@ static bool image_add_field(Parser* p, TypeId t, u32 offset) {
     }
     u32 elem_size = type_size(p, info->elem);
     for (u32 i = 1; i < info->count; ++i) {
-      memcpy(&p->image.v[offset + i * elem_size], &p->image.v[offset], elem_size);
+      memcpy(&p->image.items[offset + i * elem_size], &p->image.items[offset], elem_size);
     }
     return true;
   }
   if (!type_is_struct(p, t) || type_info(p, t)->image.u == DATA_NONE) {
     return false;
   }
-  const IlData* d = &p->ls.ctx->data.v[type_info(p, t)->image.u];
-  memcpy(&p->image.v[offset], &p->ls.ctx->databytes.v[d->off], d->len);
+  const IlData* d = &p->ls.ctx->data.items[type_info(p, t)->image.u];
+  memcpy(&p->image.items[offset], &p->ls.ctx->databytes.items[d->off], d->len);
   return true;
 }
 
@@ -3379,7 +3379,7 @@ static void struct_body(Parser* p, TypeId st) {
     u32 name_at = p->ls.pos.t.offset;
     check_name(p, "field name");
     for (u32 i = first; i < p->fields.num; ++i) {
-      if (p->fields.v[i].name.u == name.u) {
+      if (p->fields.items[i].name.u == name.u) {
         const Name* n = name_of(p, name);
         error_at(p, name_at, "Duplicate struct field name '%.*s'.", (int)n->len,
                  (const char*)n->str);
@@ -3430,7 +3430,7 @@ static void struct_body(Parser* p, TypeId st) {
     info->agg = il_agg_add(p->ls.ctx, size, align, leaves, num_leaves);
     if (EMIT && has_image) {
       image_extend(p, size);
-      info->image = il_data_add(p->ls.ctx, p->image.v, size, align);
+      info->image = il_data_add(p->ls.ctx, p->image.items, size, align);
     }
   }
 }
@@ -3635,7 +3635,7 @@ static void parse_import(Parser* p, Module* m) {
   p->ls.pos = pos;
 }
 
-// Reports an import of ctx->modules.v[idx], which is still loading.
+// Reports an import of ctx->modules.items[idx], which is still loading.
 NORETURN static void error_import_cycle(Parser* p, u32 idx, u32 at) {
   // The modules that are loading are the chain of imports that led here, and
   // they're in Ctx.modules in the same order.
@@ -3643,14 +3643,14 @@ NORETURN static void error_import_cycle(Parser* p, u32 idx, u32 at) {
   char chain[1000];
   size_t len = 0;
   for (u32 i = idx; i < ctx->modules.num && len < sizeof(chain); ++i) {
-    const Module* m = ctx->modules.v[i];
+    const Module* m = ctx->modules.items[i];
     if (m->loading) {
       const Name* n = lex_name(ctx, m->name);
       len += (size_t)snprintf(chain + len, sizeof(chain) - len, "%.*s -> ", (int)n->len,
                               (const char*)n->str);
     }
   }
-  const Name* n = lex_name(ctx, ctx->modules.v[idx]->name);
+  const Name* n = lex_name(ctx, ctx->modules.items[idx]->name);
   error_at(p, at, "Import cycle: %s%.*s.", chain, (int)n->len, (const char*)n->str);
 }
 
@@ -3678,7 +3678,7 @@ static u32 import_module(Parser* p, const u8* path, u32 len, u32 at) {
     // The module's name was already interned when it was added, so the Name
     // doesn't point into name_buf.
     free(name_buf);
-    if (ctx->modules.v[*idx]->loading) {
+    if (ctx->modules.items[*idx]->loading) {
       error_import_cycle(p, *idx, at);
     }
     return *idx;
@@ -3687,7 +3687,7 @@ static u32 import_module(Parser* p, const u8* path, u32 len, u32 at) {
   // Modules that m imports are added after it.
   u32 m_idx = ctx->modules.num - 1;
   // Files are found relative to the root module's directory.
-  const char* root = ctx->modules.v[0]->src.filename;
+  const char* root = ctx->modules.items[0]->src.filename;
   u32 root_dir = path_dir_len((const u8*)root, (u32)strlen(root));
   char* filename = filename_new(ctx, root_dir + name_len + strlen(".luv"));
   memcpy(filename, root, root_dir);
@@ -3738,12 +3738,12 @@ static void parse_end(Parser* p) {
   if (EMIT) {
     il_free(&p->il);
   }
-  free(p->global_consts.v);
-  free(p->global_funcs.v);
-  free(p->types.v);
-  free(p->param_types.v);
-  free(p->fields.v);
-  free(p->image.v);
+  free(p->global_consts.items);
+  free(p->global_funcs.items);
+  free(p->types.items);
+  free(p->param_types.items);
+  free(p->fields.items);
+  free(p->image.items);
   hashtable_free(&p->array_types);
   free(p);
 }
@@ -3756,15 +3756,15 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
     ctx_error(ctx, path, NULL, 0, "Out of memory.");
   }
   p->num_locals = 0;
-  p->global_consts.v = NULL;
+  p->global_consts.items = NULL;
   p->global_consts.num = p->global_consts.cap = 0;
-  p->global_funcs.v = NULL;
+  p->global_funcs.items = NULL;
   p->global_funcs.num = p->global_funcs.cap = 0;
-  p->types.v = NULL;
+  p->types.items = NULL;
   p->types.num = p->types.cap = 0;
-  p->param_types.v = NULL;
+  p->param_types.items = NULL;
   p->param_types.num = p->param_types.cap = 0;
-  p->fields.v = NULL;
+  p->fields.items = NULL;
   p->fields.num = p->fields.cap = 0;
   memset(&p->array_types, 0, sizeof(p->array_types));
   p->func_base = 0;
@@ -3784,7 +3784,7 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
     longjmp(*outer, 1);
   }
   vec_reserve(ctx, &p->types, INITIAL_TYPES);
-  memset(p->types.v, 0, TY_NUM_FIXED * sizeof(TypeInfo));
+  memset(p->types.items, 0, TY_NUM_FIXED * sizeof(TypeInfo));
   p->types.num = TY_NUM_FIXED;
   vec_reserve(ctx, &p->param_types, INITIAL_TYPES);
   if (!hashtable_init(&p->array_types, 64)) {

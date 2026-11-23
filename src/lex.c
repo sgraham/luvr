@@ -117,7 +117,7 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) 
   u32 tag = hashtable_tag(h);
   HashSlot* slot = hashtable_first(t, tag);
   for (; slot->tag != 0; slot = hashtable_next(t, slot, tag)) {
-    const Name* n = &ctx->names.v[slot->val];
+    const Name* n = &ctx->names.items[slot->val];
     if (n->len == len && memcmp(n->str, s, len) == 0) {
       return slot->val;
     }
@@ -139,8 +139,8 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) 
 bool lex_intern_init(Ctx* ctx) {
   bool table_ok = hashtable_init(&ctx->name_table, 1u << 12);
   ctx->names.cap = 1u << 10;
-  ctx->names.v = (Name*)malloc(ctx->names.cap * sizeof(Name));
-  if (!table_ok || !ctx->names.v) {
+  ctx->names.items = (Name*)malloc(ctx->names.cap * sizeof(Name));
+  if (!table_ok || !ctx->names.items) {
     return false;
   }
   // Keywords and builtin types are in the same table, so one lookup is
@@ -167,7 +167,7 @@ bool lex_intern_init(Ctx* ctx) {
   for (size_t i = 0; i < COUNTOF(builtins); ++i) {
     u32 len = (u32)strlen(builtins[i]);
     u32 idx = intern(ctx, (const u8*)builtins[i], len, hash_ident_safe(builtins[i], len), TK_NAME);
-    ctx->names.v[idx].is_builtin = true;
+    ctx->names.items[idx].is_builtin = true;
   }
   return true;
 }
@@ -188,7 +188,7 @@ static void strbytes_append(Ctx* ctx, const u8* s, size_t n) {
     return;
   }
   vec_reserve(ctx, &ctx->strbytes, n);
-  memcpy(ctx->strbytes.v + ctx->strbytes.num, s, n);
+  memcpy(ctx->strbytes.items + ctx->strbytes.num, s, n);
   ctx->strbytes.num += (u32)n;
 }
 
@@ -201,9 +201,9 @@ static u32 strs_add(Ctx* ctx, u32 off, u32 len) {
 
 const u8* lex_str(const LexState* ls, const Token* t, u32* len) {
   if (t->flags & TF_ESCAPED) {
-    const StrRef* r = &ls->ctx->strs.v[t->v.str];
+    const StrRef* r = &ls->ctx->strs.items[t->v.str];
     *len = r->len;
-    return ls->ctx->strbytes.v + r->off;
+    return ls->ctx->strbytes.items + r->off;
   }
   *len = t->v.len;
   return ls->src.buf + t->offset + 1;
@@ -802,7 +802,7 @@ void lex_next(LexState* ls) {
           }
           u32 len = (u32)(p - s);
           u32 idx = intern(ls->ctx, s, len, hash_ident(s, len), 0);
-          t->kind = ls->ctx->names.v[idx].kind;
+          t->kind = ls->ctx->names.items[idx].kind;
           t->offset = (u32)(s - ls->src.buf);
           t->v.name = (NameId){idx};
           ls->pos.p = p;

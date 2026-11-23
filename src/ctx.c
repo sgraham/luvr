@@ -5,8 +5,8 @@ bool ctx_init(Ctx* ctx) {
   // on_error isn't set yet, so adding the runtime's symbols can't be allowed
   // to grow syms.
   ctx->syms.cap = SYM_NUM_RUNTIME;
-  ctx->syms.v = (NameId*)malloc(ctx->syms.cap * sizeof(NameId));
-  if (!ctx->syms.v || !lex_intern_init(ctx) || !namemap_init(&ctx->module_ids, 16)) {
+  ctx->syms.items = (NameId*)malloc(ctx->syms.cap * sizeof(NameId));
+  if (!ctx->syms.items || !lex_intern_init(ctx) || !namemap_init(&ctx->module_ids, 16)) {
     ctx_free(ctx);
     return false;
   }
@@ -23,15 +23,15 @@ bool ctx_init(Ctx* ctx) {
 
 void ctx_free(Ctx* ctx) {
   hashtable_free(&ctx->name_table);
-  free(ctx->names.v);
-  free(ctx->strs.v);
-  free(ctx->strbytes.v);
-  free(ctx->syms.v);
-  free(ctx->data.v);
-  free(ctx->databytes.v);
-  free(ctx->aggs.v);
+  free(ctx->names.items);
+  free(ctx->strs.items);
+  free(ctx->strbytes.items);
+  free(ctx->syms.items);
+  free(ctx->data.items);
+  free(ctx->databytes.items);
+  free(ctx->aggs.items);
   for (u32 i = 0; i < ctx->modules.num; ++i) {
-    Module* m = ctx->modules.v[i];
+    Module* m = ctx->modules.items[i];
     namemap_free(&m->globals);
     namemap_free(&m->imports);
     free(m->name_buf);
@@ -39,7 +39,7 @@ void ctx_free(Ctx* ctx) {
     free((void*)m->src.buf);
     free(m);
   }
-  free(ctx->modules.v);
+  free(ctx->modules.items);
   namemap_free(&ctx->module_ids);
   memset(ctx, 0, sizeof(*ctx));
 }

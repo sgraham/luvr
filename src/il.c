@@ -42,13 +42,13 @@ void il_init(IlFunc* f, Ctx* ctx) {
 }
 
 void il_free(IlFunc* f) {
-  free(f->ins.v);
-  free(f->consts.v);
-  free(f->const_types.v);
+  free(f->ins.items);
+  free(f->consts.items);
+  free(f->const_types.items);
   hashtable_free(&f->const_map);
-  free(f->block_starts.v);
-  free(f->slots.v);
-  free(f->source_pos.v);
+  free(f->block_starts.items);
+  free(f->slots.items);
+  free(f->source_pos.items);
   memset(f, 0, sizeof(*f));
 }
 
@@ -83,7 +83,7 @@ static Ref il_const(IlFunc* f, IlType ty, u64 v) {
   u32 tag = hashtable_tag_of_key(v ^ ty);
   HashSlot* s = hashtable_first(&f->const_map, tag);
   for (; s->tag != 0; s = hashtable_next(&f->const_map, s, tag)) {
-    if (f->consts.v[s->val] == v && f->const_types.v[s->val] == ty) {
+    if (f->consts.items[s->val] == v && f->const_types.items[s->val] == ty) {
       return s->val + 1;
     }
   }
@@ -120,7 +120,7 @@ DataId il_data_add(Ctx* ctx, const u8* s, u32 n, u32 align) {
   d->align = align;
   if (n != 0) {
     vec_reserve(ctx, &ctx->databytes, n);
-    memcpy(&ctx->databytes.v[ctx->databytes.num], s, n);
+    memcpy(&ctx->databytes.items[ctx->databytes.num], s, n);
     ctx->databytes.num += n;
   }
   return (DataId){ctx->data.num - 1};
@@ -149,8 +149,8 @@ BlockId il_block_declare(IlFunc* f) {
 }
 
 void il_block_start(IlFunc* f, BlockId b) {
-  ASSERT(f->block_starts.v[b.u] == IL_BLOCK_UNSTARTED);
-  f->block_starts.v[b.u] = f->ins.num;
+  ASSERT(f->block_starts.items[b.u] == IL_BLOCK_UNSTARTED);
+  f->block_starts.items[b.u] = f->ins.num;
   il_emit(f, OP_BLOCK, IT_VOID, b.u, 0);
 }
 
@@ -176,7 +176,7 @@ SlotId il_slot_add(IlFunc* f, IlType ty, NameId name) {
 SlotId il_slot_add_agg(IlFunc* f, AggId agg, NameId name) {
   ASSERT(agg.u != AGG_NONE);
   SlotId slot = il_slot_add(f, IT_AGG, name);
-  f->slots.v[slot.u].agg = agg;
+  f->slots.items[slot.u].agg = agg;
   return slot;
 }
 
@@ -209,13 +209,13 @@ static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
     return;
   }
   u32 idx = r - 1;
-  u64 v = f->consts.v[idx];
-  if (f->const_types.v[idx] == IT_SYM) {
-    const Name* name = lex_name(f->ctx, f->ctx->syms.v[v]);
+  u64 v = f->consts.items[idx];
+  if (f->const_types.items[idx] == IT_SYM) {
+    const Name* name = lex_name(f->ctx, f->ctx->syms.items[v]);
     fprintf(out, "@%.*s", (int)name->len, name->str);
     return;
   }
-  if (f->const_types.v[idx] == IT_DATA) {
+  if (f->const_types.items[idx] == IT_DATA) {
     fprintf(out, "@.dat%" PRIu64, v);
     return;
   }
@@ -230,7 +230,7 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   const Name* name = lex_name(f->ctx, f->name);
   fprintf(out, "@%.*s\n", (int)name->len, name->str);
   for (u32 i = 0; i < f->slots.num; ++i) {
-    const IlSlot* s = &f->slots.v[i];
+    const IlSlot* s = &f->slots.items[i];
     if (s->type == IT_AGG) {
       fprintf(out, "  slot $%u #%u", i, s->agg.u);
     } else {
@@ -244,10 +244,10 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   }
   u32 pos = 0;
   for (u32 i = 0; i < f->ins.num; ++i) {
-    for (; pos < f->source_pos.num && f->source_pos.v[pos].ins == i; ++pos) {
-      il_dump_source_line(src, f->source_pos.v[pos].offset, out);
+    for (; pos < f->source_pos.num && f->source_pos.items[pos].ins == i; ++pos) {
+      il_dump_source_line(src, f->source_pos.items[pos].offset, out);
     }
-    Ins ins = f->ins.v[i];
+    Ins ins = f->ins.items[i];
     IlOp op = ins_op(ins);
     IlType ty = ins_type(ins);
     if (op == OP_BLOCK) {
@@ -271,7 +271,7 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
       fputc(' ', out);
       il_dump_ref(f, ins_a(ins), out);
       for (u32 j = 0; j < ins_b(ins); ++j) {
-        Ins ext = f->ins.v[i + 1 + j / 2];
+        Ins ext = f->ins.items[i + 1 + j / 2];
         fputs(", ", out);
         il_dump_ref(f, j % 2 ? ins_b(ext) : ins_a(ext), out);
       }
@@ -283,7 +283,7 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
       il_dump_ref(f, ins_a(ins), out);
       fputs(", ", out);
       il_dump_ref(f, ins_b(ins), out);
-      fprintf(out, ", #%u\n", ins_a(f->ins.v[i + 1]));
+      fprintf(out, ", #%u\n", ins_a(f->ins.items[i + 1]));
       continue;
     }
     u32 operands[2] = {ins_a(ins), ins_b(ins)};
@@ -309,19 +309,19 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   }
   // Statements at the end that emitted nothing.
   for (; pos < f->source_pos.num; ++pos) {
-    il_dump_source_line(src, f->source_pos.v[pos].offset, out);
+    il_dump_source_line(src, f->source_pos.items[pos].offset, out);
   }
 }
 
 void il_dump_data(const Ctx* ctx, u32 i, FILE* out) {
-  const IlData* d = &ctx->data.v[i];
+  const IlData* d = &ctx->data.items[i];
   fprintf(out, "data @.dat%u ", i);
   if (d->align > 1) {
     fprintf(out, "align %u ", d->align);
   }
   fputc('"', out);
   for (u32 j = 0; j < d->len; ++j) {
-    u8 c = ctx->databytes.v[d->off + j];
+    u8 c = ctx->databytes.items[d->off + j];
     if (c == '"' || c == '\\') {
       fprintf(out, "\\%c", c);
     } else if (c == '\n') {
@@ -338,7 +338,7 @@ void il_dump_data(const Ctx* ctx, u32 i, FILE* out) {
 }
 
 void il_dump_agg(const Ctx* ctx, u32 i, FILE* out) {
-  const AggInfo* agg = &ctx->aggs.v[i];
+  const AggInfo* agg = &ctx->aggs.items[i];
   fprintf(out, "agg #%u %u %u", i, agg->size, 1u << agg->align_log2);
   static const char* const abi_names[] = {"sse0", "sse1", "hfa_f32", "hfa_f64"};
   for (u32 bit = 0; bit < COUNTOF(abi_names); ++bit) {

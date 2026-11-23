@@ -187,23 +187,23 @@ static inline u32 align_up(u32 v, u32 align) {
   return (v + align - 1) & ~(align - 1);
 }
 
-// A growable array of T. The elements are v[0..num).
+// A growable array of T. The elements are items[0..num).
 #define VEC(T) \
   struct {     \
-    T* v;      \
+    T* items;  \
     u32 num;   \
     u32 cap;   \
   }
 
 // Makes room for n more elements in vec.
-#define vec_reserve(ctx, vec, n)                                                             \
-  ((size_t)(vec)->num + (n) > (vec)->cap                                                     \
-       ? (void)((vec)->v = vec_grow_((ctx), (vec)->v, &(vec)->cap, (size_t)(vec)->num + (n), \
-                                     sizeof(*(vec)->v)))                                     \
+#define vec_reserve(ctx, vec, n)                                                           \
+  ((size_t)(vec)->num + (n) > (vec)->cap                                                   \
+       ? (void)((vec)->items = vec_grow_((ctx), (vec)->items, &(vec)->cap,                 \
+                                         (size_t)(vec)->num + (n), sizeof(*(vec)->items))) \
        : (void)0)
 
 // Appends an uninitialized element to vec, and returns a pointer to it.
-#define vec_push(ctx, vec) (vec_reserve((ctx), (vec), 1), &(vec)->v[(vec)->num++])
+#define vec_push(ctx, vec) (vec_reserve((ctx), (vec), 1), &(vec)->items[(vec)->num++])
 
 // Grows *cap to at least need, and returns v reallocated to match. Running out
 // of memory, or needing more than 2^32 elements, is an error.
@@ -740,7 +740,7 @@ NameId lex_intern_padded(Ctx* ctx, const u8* s, u32 len);
 NameId lex_intern_safe(Ctx* ctx, const char* s);
 
 static inline const Name* lex_name(const Ctx* ctx, NameId id) {
-  return &ctx->names.v[id.u];
+  return &ctx->names.items[id.u];
 }
 
 // Content of a STRING* token (not NUL-terminated).
@@ -759,10 +759,10 @@ typedef u64 Ins;
 // they're an index in IlFunc.consts + 1, so that 0 means no operand. For
 // example:
 //   0x000000  no operand
-//   0x000001  the first constant, IlFunc.consts.v[0]
-//   0x000002  the second constant, IlFunc.consts.v[1]
-//   0x800000  the first instruction, IlFunc.ins.v[0], dumped as %0
-//   0x800005  IlFunc.ins.v[5], dumped as %5
+//   0x000001  the first constant, IlFunc.consts.items[0]
+//   0x000002  the second constant, IlFunc.consts.items[1]
+//   0x800000  the first instruction, IlFunc.ins.items[0], dumped as %0
+//   0x800005  IlFunc.ins.items[5], dumped as %5
 typedef u32 Ref;
 #define REF_INS (1u << 23)
 
@@ -908,8 +908,8 @@ struct IlFunc {
   Ctx* ctx;
   NameId name;
   IlType ret;
-  VEC(Ins) ins;  // ins.v[i] is the instruction at REF_INS | i
-  // The constant at i + 1 is consts.v[i], and its type is const_types.v[i].
+  VEC(Ins) ins;  // ins.items[i] is the instruction at REF_INS | i
+  // The constant at i + 1 is consts.items[i], and its type is const_types.items[i].
   VEC(u64) consts;
   VEC(u8) const_types;  // IlType
   // Interns constants, so that equal constants have the same Ref. A hash
@@ -1034,5 +1034,5 @@ void il_dump_agg(const Ctx* ctx, u32 i, FILE* out);
 AggId il_agg_add(Ctx* ctx, u32 size, u32 align, const AggLeaf* leaves, u32 num_leaves);
 
 static inline const AggInfo* il_agg(const Ctx* ctx, AggId id) {
-  return &ctx->aggs.v[id.u];
+  return &ctx->aggs.items[id.u];
 }

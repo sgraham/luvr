@@ -90,7 +90,7 @@ static bool run_file(ParseFn fn,
   fn(&ctx, path);
   *secs += now_sec() - t0;
   for (u32 j = 0; j < ctx.modules.num; ++j) {
-    const FileBuf* src = &ctx.modules.v[j]->src;
+    const FileBuf* src = &ctx.modules.items[j]->src;
     *nbytes += (size_t)(src->end - src->buf);
   }
   ctx_free(&ctx);
