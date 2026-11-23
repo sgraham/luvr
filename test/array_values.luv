@@ -1,0 +1,62 @@
+# OUT: 7
+# OUT: 0
+# OUT: 7
+# OUT: 5
+# OUT: 3
+# OUT: 9
+# OUT: 2
+# OUT: 30
+# OUT: 0
+# OUT: 6
+# OUT: 1
+# OUT: 4
+# OUT: 7
+# OUT: 9
+# OUT: 9
+struct Point:
+    i16 x = 7
+    i16 y
+
+struct Path:
+    int len
+    [3]Point points
+
+def int main():
+    [3]Point pts
+    print pts[2].x
+    print pts[2].y
+
+    [3]Point copy = pts
+    pts[1].x = 5
+    print copy[1].x
+    print pts[1].x
+
+    [2][3]u8 grid
+    u32 row = 1
+    i8 col = 2
+    grid[row][col] = 3
+    grid[0][col] = 9
+    print grid[1][2]
+    print grid[0][2]
+
+    Path path = Path(2, pts)
+    print path.len
+    path.points[col].y = 30
+    print path.points[2].y
+    print pts[2].y
+
+    [4]int nums
+    *int third = &nums[2]
+    third[0] = 6
+    print nums[2]
+
+    [2][3]u8 grid2 = grid
+    grid2[1] = grid[0]
+    grid[0][2] = 1
+    print grid[0][2]
+    grid2[1][0] = 4
+    print grid2[1][0]
+    print path.points[0].x
+    print grid2[1][2]
+    print grid2[0][2]
+    return 0

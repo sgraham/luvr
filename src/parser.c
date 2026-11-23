@@ -125,20 +125,27 @@ struct TypeInfo {
       u32 num_params;
     };
     TypeId pointee;  // TYPE_PTR
-    struct {         // TYPE_STRUCT
-      NameId name;
-      u32 first_field;  // in Parser.fields
-      u32 num_fields;
-      // agg.u is AGG_NONE if the layout isn't known (see type_has_layout()).
-      // The fields' offsets are only set if it's known.
+    struct {  // TYPE_STRUCT and TYPE_ARRAY (because of shared .agg/.image)
+      // A struct's agg.u is AGG_NONE if its layout isn't known (see
+      // type_has_layout()). An array's is added by type_agg() when it's
+      // first needed.
       AggId agg;
-      // The struct's initial value, or DATA_NONE if it's all zeros. Only set
-      // when EMIT.
+      // The initial value, or DATA_NONE if it's all zeros. Only set when
+      // EMIT. An array only has one when its elements are structs with
+      // defaults, and it's added along with its agg.
       DataId image;
-    };
-    struct {  // TYPE_ARRAY
-      TypeId elem;
-      u32 count;
+      union {
+        struct {  // TYPE_STRUCT
+          NameId name;
+          u32 first_field;  // in Parser.fields
+          // The fields' offsets are only set if the layout is known.
+          u32 num_fields;
+        };
+        struct {  // TYPE_ARRAY
+          TypeId elem;
+          u32 count;
+        };
+      };
     };
   };
 };
@@ -285,6 +292,7 @@ static void primary(Parser* p, ExpDesc* e);
 static TypeId type(Parser* p);
 static u32 array_size(Parser* p);
 static IlType il_mem_type_of(Parser* p, TypeId t);
+static AggId type_agg(Parser* p, TypeId t);
 static Flow stat(Parser* p);
 static Flow suite(Parser* p);
 static void parse_module(Parser* p);
@@ -322,6 +330,10 @@ static bool type_is_struct(Parser* p, TypeId t) {
 
 static bool type_is_array(Parser* p, TypeId t) {
   return type_is_created(t) && type_info(p, t)->kind == TYPE_ARRAY;
+}
+
+static bool type_is_aggregate(Parser* p, TypeId t) {
+  return type_is_struct(p, t) || type_is_array(p, t);
 }
 
 // Describes a type for error messages, as it would follow "not". The result
@@ -759,7 +771,8 @@ static TypeId type_array_of(Parser* p, TypeId elem, u32 count, SrcLoc at) {
     }
   }
   TypeId arr = {p->types.num};
-  *vec_push(p->ls.ctx, &p->types) = (TypeInfo){.kind = TYPE_ARRAY, .elem = elem, .count = count};
+  *vec_push(p->ls.ctx, &p->types) = (TypeInfo){
+      .kind = TYPE_ARRAY, .agg = {AGG_NONE}, .image = {DATA_NONE}, .elem = elem, .count = count};
   hashtable_insert(p->ls.ctx, &p->array_types, s, tag, arr.u);
   return arr;
 }
@@ -1521,9 +1534,9 @@ static Ref emit_agg_addr(Parser* p, const ExpDesc* e, SrcLoc at) {
 }
 
 static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e, SrcLoc at) {
-  if (type_is_struct(p, dst->type)) {
+  if (type_is_aggregate(p, dst->type)) {
     Ref src = emit_agg_addr(p, e, at);
-    il_copy(&p->il, emit_addr(p, dst), src, type_info(p, dst->type)->agg);
+    il_copy(&p->il, emit_addr(p, dst), src, type_agg(p, dst->type));
     return;
   }
   Ref v = emit_to_ref(p, e, dst->type, at);
@@ -1532,27 +1545,28 @@ static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e,
 
 static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, SrcLoc at) {
   Ref addr = il_slot_addr(&p->il, l->slot);
-  if (type_is_struct(p, l->type)) {
-    il_copy(&p->il, addr, emit_agg_addr(p, e, at), type_info(p, l->type)->agg);
+  if (type_is_aggregate(p, l->type)) {
+    il_copy(&p->il, addr, emit_agg_addr(p, e, at), type_agg(p, l->type));
     return;
   }
   Ref v = emit_to_ref(p, e, l->type, at);
   il_emit(&p->il, OP_STORE, il_type_of(p, l->type, at), v, addr);
 }
 
-// Gives the struct of type st at addr its initial value.
-static void emit_struct_init(Parser* p, Ref addr, TypeId st) {
-  const TypeInfo* info = type_info(p, st);
-  if (info->image.u == DATA_NONE) {
-    il_emit(&p->il, OP_ZERO, IT_VOID, addr, info->agg.u);
+// Gives the struct or array of type t at addr its initial value.
+static void emit_agg_init(Parser* p, Ref addr, TypeId t) {
+  AggId agg = type_agg(p, t);
+  DataId image = type_info(p, t)->image;
+  if (image.u == DATA_NONE) {
+    il_emit(&p->il, OP_ZERO, IT_VOID, addr, agg.u);
   } else {
-    il_copy(&p->il, addr, il_const_data(&p->il, info->image), info->agg);
+    il_copy(&p->il, addr, il_const_data(&p->il, image), agg);
   }
 }
 
 static SlotId emit_local_slot(Parser* p, TypeId t, NameId name, SrcLoc at) {
-  if (type_is_struct(p, t) && type_has_layout(p, t)) {
-    return il_slot_add_agg(&p->il, type_info(p, t)->agg, name);
+  if (type_is_aggregate(p, t) && type_has_layout(p, t)) {
+    return il_slot_add_agg(&p->il, type_agg(p, t), name);
   }
   return il_slot_add(&p->il, il_type_of(p, t, at), name);
 }
@@ -2083,14 +2097,14 @@ static TypeId sizeof_operand(Parser* p) {
   return e.type;
 }
 
-// Whether a type's size and alignment are known. They're not for a struct
-// until the end of its definition, or for a struct with a field whose layout
-// isn't known, as with generic struct fields. An array has a layout if its
-// element type does.
 static const AggInfo* struct_agg(Parser* p, TypeId st) {
   return il_agg(p->ls.ctx, type_info(p, st)->agg);
 }
 
+// Whether a type's size and alignment are known. They're not for a struct
+// until the end of its definition, or for a struct with a field whose layout
+// isn't known, as with generic struct fields. An array has a layout if its
+// element type does.
 static bool type_has_layout(Parser* p, TypeId t) {
   if (type_is_struct(p, t)) {
     return type_info(p, t)->agg.u != AGG_NONE;
@@ -2281,7 +2295,7 @@ static void struct_args(Parser* p, ExpDesc* e) {
     }
     AggId agg = type_info(p, st)->agg;
     temp = il_slot_addr(&p->il, il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED}));
-    emit_struct_init(p, temp, st);
+    emit_agg_init(p, temp, st);
   }
   u32 num_fields = has_fields ? type_info(p, st)->num_fields : 0;
   u32 first_field = has_fields ? type_info(p, st)->first_field : 0;
@@ -2359,24 +2373,31 @@ static void struct_args(Parser* p, ExpDesc* e) {
   }
 }
 
-// Makes ptr, the pointer that was loaded into base, the element at index
-// idx. Its type has already been changed to the pointee. A constant index
-// that fits is kept in the offset, so that a field of the element adds to it.
-static void emit_pointer_index(Parser* p, ExpDesc* ptr, Ref base, const ExpDesc* idx, SrcLoc at) {
-  if (!type_has_layout(p, ptr->type)) {
+// Makes elem the element at index idx of the pointer or array at base +
+// offset. Its type has already been changed to the element's. A constant
+// index that fits is kept in the offset, so that a field of the element adds
+// to it.
+static void emit_index(Parser* p,
+                       ExpDesc* elem,
+                       Ref base,
+                       u32 offset,
+                       const ExpDesc* idx,
+                       SrcLoc at) {
+  if (!type_has_layout(p, elem->type)) {
     error_at(p, at, "This expression isn't supported yet.");
   }
-  u32 size = type_size(p, ptr->type);
-  ptr->kind = EK_ADDR;
-  ptr->base = base;
-  ptr->offset = 0;
+  u32 size = type_size(p, elem->type);
+  elem->kind = EK_ADDR;
+  elem->base = base;
+  elem->offset = offset;
   if (idx->kind == EK_CONST) {
-    ConstInt offset = idx->cv.i * size;
-    if (offset >= 0 && offset <= UINT32_MAX) {
-      ptr->offset = (u32)offset;
+    ConstInt total = offset + idx->cv.i * size;
+    if (total >= 0 && total <= UINT32_MAX) {
+      elem->offset = (u32)total;
     } else {
-      Ref delta = il_const_int(&p->il, IT_I64, (u64)offset);
-      ptr->base = il_emit(&p->il, OP_ADD, IT_I64, base, delta);
+      Ref delta = il_const_int(&p->il, IT_I64, (u64)total);
+      elem->base = il_emit(&p->il, OP_ADD, IT_I64, base, delta);
+      elem->offset = 0;
     }
     return;
   }
@@ -2384,7 +2405,7 @@ static void emit_pointer_index(Parser* p, ExpDesc* ptr, Ref base, const ExpDesc*
   if (size != 1) {
     delta = il_emit(&p->il, OP_MUL, IT_I64, delta, il_const_int(&p->il, IT_I64, size));
   }
-  ptr->base = il_emit(&p->il, OP_ADD, IT_I64, base, delta);
+  elem->base = il_emit(&p->il, OP_ADD, IT_I64, base, delta);
 }
 
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice). e is the
@@ -2395,11 +2416,18 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   SrcLoc at = p->ls.pos.t.loc;
   bool is_pointer = type_is_pointer(p, e->type);
   bool is_array = type_is_array(p, e->type);
-  // The pointer is loaded before the index is evaluated, like the left operand
-  // of a binary operator.
+  // The pointer is loaded, or the array's address found, before the index is
+  // evaluated, like the left operand of a binary operator.
   Ref base = 0;
+  u32 offset = 0;
+  bool emits = EMIT && (is_pointer || (is_array && (e->kind == EK_LOCAL || e->kind == EK_ADDR)));
   if (EMIT && is_pointer) {
     base = emit_to_ref(p, e, e->type, at);
+  } else if (EMIT && is_array && e->kind == EK_LOCAL) {
+    base = il_slot_addr(&p->il, e->slot);
+  } else if (EMIT && is_array && e->kind == EK_ADDR) {
+    base = e->base;
+    offset = e->offset;
   }
   next(p);  // '['
   // The index, or the slice's start, which can be left out.
@@ -2428,8 +2456,8 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   }
   e->shape = is_slice ? SH_VALUE : SH_LVALUE;
   e->type = result;
-  if (EMIT && is_pointer && !is_slice) {
-    emit_pointer_index(p, e, base, &first, first_at);
+  if (emits && !is_slice) {
+    emit_index(p, e, base, offset, &first, first_at);
   } else {
     exp_unemitted(e);
   }
@@ -2848,8 +2876,8 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
     if (EMIT) {
       Local* l = lookup_in_func(p, name);
       l->slot = emit_local_slot(p, t, name, at);
-      if (!has_value && type_is_struct(p, t)) {
-        emit_struct_init(p, il_slot_addr(&p->il, l->slot), t);
+      if (!has_value && type_is_aggregate(p, t)) {
+        emit_agg_init(p, il_slot_addr(&p->il, l->slot), t);
         return;
       }
       if (!has_value) {
@@ -3010,7 +3038,7 @@ static void simple_stat(Parser* p) {
   if (EMIT) {
     il_source_pos(&p->il, p->ls.pos.t.loc);
     if (T(p) != TK_RETURN && T(p) != TK_PASS && T(p) != TK_PRINT && !is_builtin_type(T(p)) &&
-        T(p) != TK_NAME && T(p) != TK_TYPENAME && T(p) != TK_STAR) {
+        T(p) != TK_NAME && T(p) != TK_TYPENAME && T(p) != TK_STAR && T(p) != TK_LSQUARE) {
       error_at(p, p->ls.pos.t.loc, "This statement isn't supported yet.");
     }
   }
@@ -3422,6 +3450,29 @@ static bool image_add_field(Parser* p, TypeId t, u32 offset) {
   const IlData* d = &p->ls.ctx->data.items[type_info(p, t)->image.u];
   memcpy(&p->image.items[offset], &p->ls.ctx->databytes.items[d->off], d->len);
   return true;
+}
+
+// Returns the AggId of a struct or array type t. A struct's was added at the
+// end of its definition. An array's is added the first time it's needed.
+static AggId type_agg(Parser* p, TypeId t) {
+  TypeInfo* info = type_info(p, t);
+  if (info->agg.u != AGG_NONE) {
+    return info->agg;
+  }
+  ASSERT(info->kind == TYPE_ARRAY && type_has_layout(p, t));
+  u32 size = type_size(p, t);
+  AggLeaf leaves[AGG_MAX_CLASSIFIED];
+  u32 num_leaves = 0;
+  if (size <= AGG_MAX_CLASSIFIED) {
+    type_agg_leaves(p, t, 0, leaves, &num_leaves);
+  }
+  info->agg = il_agg_add(p->ls.ctx, size, type_align(p, t), leaves, num_leaves);
+  p->image.num = 0;
+  image_extend(p, size);
+  if (image_add_field(p, t, 0)) {
+    info->image = il_data_add(p->ls.ctx, p->image.items, size, type_align(p, t));
+  }
+  return info->agg;
 }
 
 // struct_body -> INDENT field {field} DEDENT
