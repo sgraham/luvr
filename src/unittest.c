@@ -101,6 +101,9 @@ static void test_path_normalize(void) {
 static void expect_il_dump(const IlFunc* f, const char* src, const char* want, const char* what) {
   FILE* tmp = tmpfile();
   CHECK(tmp);
+  for (u32 i = 0; i < f->ctx->aggs.num; ++i) {
+    il_dump_agg(f->ctx, i, tmp);
+  }
   for (u32 i = 0; i < f->ctx->data.num; ++i) {
     il_dump_data(f->ctx, i, tmp);
   }
@@ -343,6 +346,34 @@ static void test_il_agg_add(void) {
   ctx_free(&ctx);
 }
 
+static void test_il_agg_slot(void) {
+  Ctx ctx;
+  CHECK(ctx_init(&ctx));
+  IlFunc f;
+  il_init_test(&f, &ctx, IT_VOID);
+  AggLeaf leaves[] = {{0, IT_I64}, {8, IT_U8}};
+  AggId agg = il_agg_add(&ctx, 16, 8, leaves, 2);
+  AggLeaf float_leaves[] = {{0, IT_F64}, {8, IT_F64}};
+  il_agg_add(&ctx, 16, 8, float_leaves, 2);
+  u32 slot = il_slot_add_agg(&f, agg, lex_intern_safe(&ctx, "s"));
+  il_block_start(&f, il_block_declare(&f));
+  Ref addr = il_emit(&f, OP_SLOT, IT_I64, slot, 0);
+  il_emit(&f, OP_ZERO, IT_VOID, addr, agg.idx);
+  il_emit(&f, OP_RET, IT_VOID, 0, 0);
+  expect_il_dump(&f, "",
+                 "agg #0 16 8\n"
+                 "agg #1 16 8 sse0 sse1 hfa_f64\n"
+                 "func @f\n"
+                 "  slot $0 #0 s\n"
+                 ":0\n"
+                 "  %1 = SLOT $0\n"
+                 "  ZERO %1, #0\n"
+                 "  RET\n",
+                 "test_il_agg_slot");
+  il_free(&f);
+  ctx_free(&ctx);
+}
+
 int main(void) {
   test_path_dir_len();
   test_path_stem();
@@ -355,5 +386,6 @@ int main(void) {
   test_il_call();
   test_il_data();
   test_il_agg_add();
+  test_il_agg_slot();
   return failures ? 1 : 0;
 }

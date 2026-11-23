@@ -140,8 +140,6 @@ struct TypeInfo {
   };
 };
 
-#define AGG_NONE UINT32_MAX
-
 // A struct's field. The offset is only set if the struct's layout is known.
 struct Field {
   NameId name;
@@ -2677,6 +2675,13 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
     declare_if_new(p, name, at, t);
     if (EMIT) {
       Local* l = lookup_in_func(p, name);
+      if (!has_value && type_is_struct(p, t) && type_has_layout(p, t)) {
+        AggId agg = type_info(p, t)->agg;
+        l->slot = il_slot_add_agg(&p->il, agg, name);
+        Ref addr = il_emit(&p->il, OP_SLOT, IT_I64, l->slot, 0);
+        il_emit(&p->il, OP_ZERO, IT_VOID, addr, agg.idx);
+        return;
+      }
       l->slot = il_slot_add(&p->il, il_type_of(p, t, at), name);
       if (!has_value) {
         v = (ExpDesc){.type = t, .kind = EK_CONST};
@@ -2833,7 +2838,7 @@ static void simple_stat(Parser* p) {
   if (EMIT) {
     il_source_pos(&p->il, p->ls.pos.t.offset);
     if (T(p) != TK_RETURN && T(p) != TK_PASS && T(p) != TK_PRINT && !is_builtin_type(T(p)) &&
-        T(p) != TK_NAME) {
+        T(p) != TK_NAME && T(p) != TK_TYPENAME) {
       error_at(p, p->ls.pos.t.offset, "This statement isn't supported yet.");
     }
   }
@@ -3247,6 +3252,9 @@ static void struct_body(Parser* p, TypeId st) {
       check_assign(p, t, &v, value_at);
       if (v.kind != EK_CONST) {
         error_at(p, value_at, "Expected a constant expression.");
+      }
+      if (EMIT) {
+        error_at(p, value_at, "Field defaults aren't supported yet.");
       }
     }
     known = known && type_has_layout(p, t);

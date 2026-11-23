@@ -19,7 +19,7 @@ INT_SIZES = {"i8": 1, "u8": 1, "i16": 2, "u16": 2, "i32": 4, "i64": 8}
 
 # The first character of an operand says what it is, except for integer
 # constants.
-OPERAND_KINDS = {"%": "ins", ":": "block", "$": "slot", "@": "sym"}
+OPERAND_KINDS = {"%": "ins", ":": "block", "$": "slot", "@": "sym", "#": "agg"}
 
 
 class Error(Exception):
@@ -29,7 +29,7 @@ class Error(Exception):
 @dataclass
 class Operand:
     kind: str  # "int", or a value of OPERAND_KINDS
-    val: int | str  # the n of %n, :n or $n, an integer constant, or a symbol name
+    val: int | str  # the n of %n, :n, $n or #n, an integer constant, or a symbol name
 
 
 # All of the program's memory: data, then the frames of the calls that are
@@ -44,12 +44,20 @@ class Memory:
 class Program:
     funcs: dict  # Funcs by symbol name
     data: dict  # Addresses in mem by symbol name
+    aggs: dict  # Aggs by number
     mem: Memory
 
 
 @dataclass
+class Agg:
+    size: int
+    align: int
+
+
+@dataclass
 class Slot:
-    ty: str
+    size: int
+    align: int
     name: str | None  # None for an unnamed temporary
 
 
@@ -128,6 +136,7 @@ def store(mem, addr, ty, v):
 def parse(text):
     funcs = {}
     data = {}
+    aggs = {}
     mem = Memory(bytearray(), 8)
     f = None
     for lineno, raw in enumerate(text.split("\n"), 1):
@@ -143,6 +152,11 @@ def parse(text):
                 addr = alloc(mem, len(b), 1)
                 mem.bytes[addr:addr + len(b)] = b
                 data[name[1:]] = addr
+            elif line.startswith("agg "):
+                # agg #0 16 8 sse0, with the size, alignment, and ABI bits,
+                # which only a back end needs.
+                _, name, size, align, *_ = line.split()
+                aggs[int(name[1:])] = Agg(int(size), int(align))
             elif line.startswith("func "):
                 # func i64 @main, or func @f when it returns nothing.
                 words = line.split()
@@ -152,16 +166,22 @@ def parse(text):
             elif f is None:
                 raise Error("expected 'func'")
             elif line.startswith("slot "):
-                # slot $0 i64 x, or slot $1 i32 for an unnamed temporary.
+                # slot $0 i64 x, slot $1 i32 for an unnamed temporary, or
+                # slot $2 #0 s for an aggregate.
                 words = line.split()
-                f.slots.append(Slot(words[2], words[3] if len(words) > 3 else None))
+                if words[2].startswith("#"):
+                    agg = aggs[int(words[2][1:])]
+                    size, align = agg.size, agg.align
+                else:
+                    size = align = INT_SIZES[words[2]]
+                f.slots.append(Slot(size, align, words[3] if len(words) > 3 else None))
             elif line.startswith(":"):
                 f.blocks[int(line[1:])] = len(f.ins)
             else:
                 f.ins.append(parse_ins(line))
         except (Error, ValueError, IndexError, SyntaxError) as e:
             raise Error(f"line {lineno}: {e}: {raw}")
-    return Program(funcs, data, mem)
+    return Program(funcs, data, aggs, mem)
 
 
 def value_of(values, prog, operand):
@@ -225,7 +245,7 @@ def run(prog, f, args):
     values = {}
     mem = prog.mem
     frame_base = mem.top
-    slot_addrs = [alloc(mem, INT_SIZES[s.ty], INT_SIZES[s.ty]) for s in f.slots]
+    slot_addrs = [alloc(mem, s.size, s.align) for s in f.slots]
     pc = 0
     while pc < len(f.ins):
         ins = f.ins[pc]
@@ -242,6 +262,11 @@ def run(prog, f, args):
         if ins.op == "STORE":
             addr = value_of(values, prog, ins.operands[1])
             store(mem, addr, ins.ty, value_of(values, prog, ins.operands[0]))
+            continue
+        if ins.op == "ZERO":
+            addr = value_of(values, prog, ins.operands[0])
+            size = prog.aggs[ins.operands[1].val].size
+            mem.bytes[addr:addr + size] = bytes(size)
             continue
         if ins.op in ARITH:
             a, b = (value_of(values, prog, o) for o in ins.operands)

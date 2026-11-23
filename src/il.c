@@ -30,6 +30,7 @@ static const char* const il_type_names[] = {
     [IT_F64] = "f64",    //
     [IT_SYM] = "sym",    //
     [IT_DATA] = "data",  //
+    [IT_AGG] = "agg",    //
 };
 
 void il_init(IlFunc* f, Ctx* ctx) {
@@ -162,9 +163,15 @@ u32 il_slot_add(IlFunc* f, IlType ty, NameId name) {
     il_error_too_large(f);
   }
   IlSlot* s = vec_push(f->ctx, &f->slots);
-  s->name = name;
-  s->type = ty;
+  *s = (IlSlot){.name = name, .type = ty, .agg = {AGG_NONE}};
   return f->slots.num - 1;
+}
+
+u32 il_slot_add_agg(IlFunc* f, AggId agg, NameId name) {
+  ASSERT(agg.idx != AGG_NONE);
+  u32 slot = il_slot_add(f, IT_AGG, name);
+  f->slots.v[slot].agg = agg;
+  return slot;
 }
 
 void il_source_pos(IlFunc* f, u32 offset) {
@@ -214,7 +221,11 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   fprintf(out, "@%.*s\n", (int)name->len, name->str);
   for (u32 i = 0; i < f->slots.num; ++i) {
     const IlSlot* s = &f->slots.v[i];
-    fprintf(out, "  slot $%u %s", i, il_type_names[s->type]);
+    if (s->type == IT_AGG) {
+      fprintf(out, "  slot $%u #%u", i, s->agg.idx);
+    } else {
+      fprintf(out, "  slot $%u %s", i, il_type_names[s->type]);
+    }
     if (s->name.idx != IL_SLOT_UNNAMED) {
       const Name* n = lex_name(f->ctx, s->name);
       fprintf(out, " %.*s", (int)n->len, n->str);
@@ -268,6 +279,8 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
         fprintf(out, ":%u", operands[j]);
       } else if (kind == OPND_SLOT) {
         fprintf(out, "$%u", operands[j]);
+      } else if (kind == OPND_AGG) {
+        fprintf(out, "#%u", operands[j]);
       } else if (kind == OPND_NUM) {
         fprintf(out, "%u", operands[j]);
       } else {
@@ -300,6 +313,18 @@ void il_dump_data(const Ctx* ctx, u32 i, FILE* out) {
     }
   }
   fputs("\"\n", out);
+}
+
+void il_dump_agg(const Ctx* ctx, u32 i, FILE* out) {
+  const AggInfo* agg = &ctx->aggs.v[i];
+  fprintf(out, "agg #%u %u %u", i, agg->size, 1u << agg->align_log2);
+  static const char* const abi_names[] = {"sse0", "sse1", "hfa_f32", "hfa_f64"};
+  for (u32 bit = 0; bit < COUNTOF(abi_names); ++bit) {
+    if (agg->abi & (1u << bit)) {
+      fprintf(out, " %s", abi_names[bit]);
+    }
+  }
+  fputc('\n', out);
 }
 
 static bool il_type_is_float(IlType ty) {
@@ -344,5 +369,9 @@ AggId il_agg_add(Ctx* ctx, u32 size, u32 align, const AggLeaf* leaves, u32 num_l
     ++align_log2;
   }
   *vec_push(ctx, &ctx->aggs) = (AggInfo){.size = size, .align_log2 = align_log2, .abi = abi};
-  return (AggId){ctx->aggs.num - 1};
+  AggId id = {ctx->aggs.num - 1};
+  if (ctx->on_agg) {
+    ctx->on_agg(ctx, id);
+  }
+  return id;
 }

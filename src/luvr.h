@@ -441,6 +441,10 @@ typedef u8* (*LoadFileFn)(const char* path, size_t* len);
 // returns. src is the source of the module that f is in.
 typedef void (*FuncDoneFn)(Ctx* ctx, const IlFunc* f, const u8* src);
 
+// Called with each aggregate when it's added, which is before any function
+// that uses it is done.
+typedef void (*AggDoneFn)(Ctx* ctx, AggId agg);
+
 // The runtime's functions, which are the first symbols in Ctx.syms, in this
 // order.
 #define RUNTIME_SYMS(X) \
@@ -492,6 +496,7 @@ struct Ctx {
 
   // Gets the IL from parse_file_emit(). It's not called if it's NULL.
   FuncDoneFn on_func;
+  AggDoneFn on_agg;
 
   // Functions that IL constants can refer to, by index.
   VEC(NameId) syms;
@@ -765,6 +770,7 @@ typedef enum IlOperand {
   OPND_REF,
   OPND_BLOCK,  // an index in IlFunc.block_starts
   OPND_SLOT,   // an index in IlFunc.slots
+  OPND_AGG,    // an index in Ctx.aggs
   // A number, such as a PARAM's index, or a CALL's number of arguments in the
   // EXTs that follow it.
   OPND_NUM,
@@ -792,6 +798,7 @@ typedef enum IlOperand {
   X(SLOT, SLOT, NONE, true)    \
   X(LOAD, REF, NONE, true)     \
   X(STORE, REF, REF, false)    \
+  X(ZERO, REF, AGG, false)     \
   X(BLOCK, BLOCK, NONE, false) \
   X(JMP, BLOCK, NONE, false)   \
   X(BR, REF, BLOCK, false)     \
@@ -829,6 +836,8 @@ typedef enum IlType {
   // Only the type of a constant, whose value is an index in Ctx.data. It's
   // used as an i64 address.
   IT_DATA,
+  // Only the type of a slot that holds an aggregate. The slot's agg says which.
+  IT_AGG,
   IT_NUM_TYPES,
 } IlType;
 
@@ -851,10 +860,18 @@ static inline Ref ins_b(Ins i) {
   return (Ref)(i >> 40);
 }
 
+// Index of an AggInfo in Ctx.aggs.
+struct AggId {
+  u32 idx;
+};
+
+#define AGG_NONE UINT32_MAX
+
 // A piece of the function's frame, which holds a local.
 struct IlSlot {
   NameId name;  // name.idx is IL_SLOT_UNNAMED for a compiler temporary
   IlType type;
+  AggId agg;  // AGG_NONE unless type is IT_AGG
 };
 
 #define IL_SLOT_UNNAMED UINT32_MAX
@@ -916,11 +933,6 @@ struct AggInfo {
   u8 abi;  // AggAbi bits
 };
 
-// Index of an AggInfo in Ctx.aggs.
-struct AggId {
-  u32 idx;
-};
-
 // The largest aggregate that can have any AggAbi bits, which is an HFA of
 // four f64s. Larger aggregates are classified by their size alone.
 #define AGG_MAX_CLASSIFIED 32
@@ -971,6 +983,8 @@ void il_branch(IlFunc* f, Ref cond, u32 b);
 // which LOAD and STORE use.
 u32 il_slot_add(IlFunc* f, IlType ty, NameId name);
 
+u32 il_slot_add_agg(IlFunc* f, AggId agg, NameId name);
+
 // Records that a statement at offset in the source starts at the next
 // instruction.
 void il_source_pos(IlFunc* f, u32 offset);
@@ -981,6 +995,9 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out);
 
 // Writes the text form of Ctx.data[i].
 void il_dump_data(const Ctx* ctx, u32 i, FILE* out);
+
+// Writes the text form of Ctx.aggs[i].
+void il_dump_agg(const Ctx* ctx, u32 i, FILE* out);
 
 // Adds an aggregate that's made of the num_leaves scalars at leaves. The
 // leaves are only read if size <= AGG_MAX_CLASSIFIED.
