@@ -1404,6 +1404,9 @@ static NOINLINE bool fold_compare(BinOpr op, const ExpDesc* a, const ExpDesc* b)
 
 // bool and integers up to 32 bits are i32, and the other integers are i64.
 static IlType il_type_of(Parser* p, TypeId t, u32 at) {
+  if (type_is_pointer(p, t)) {
+    return IT_I64;
+  }
   switch (t.u) {
     case TY_VOID:
       return IT_VOID;
@@ -1443,10 +1446,9 @@ static IlOp il_arith_op(BinOpr op) {
   }
 }
 
-// The IL op for a comparison of integers or bools. Narrow integers are kept
-// extended to i32, so the compare is the same for every width.
-static IlOp il_compare_op(BinOpr op, TypeId t) {
-  bool is_unsigned = type_is_unsigned(t);
+// The IL op for a comparison of integers, bools or pointers. Narrow integers
+// are kept extended to i32, so the compare is the same for every width.
+static IlOp il_compare_op(BinOpr op, bool is_unsigned) {
   switch (op) {
     case OPR_EQ:
       return OP_EQ;
@@ -1491,7 +1493,7 @@ static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
   if (e->kind == EK_CONST && t.u == TY_BOOL) {
     return il_const_int(&p->il, ty, e->cv.b);
   }
-  if (e->kind == EK_CONST && type_is_integer(t)) {
+  if (e->kind == EK_CONST && (type_is_integer(t) || type_is_pointer(p, t))) {
     return il_const_int(&p->il, ty, (u64)e->cv.i);
   }
   if (e->kind == EK_LOCAL) {
@@ -1555,6 +1557,14 @@ static SlotId emit_local_slot(Parser* p, TypeId t, NameId name, u32 at) {
   return il_slot_add(&p->il, il_type_of(p, t, at), name);
 }
 
+// Integers narrower than 64 bits are i32s. Extends v to i64 if it's narrower.
+static Ref emit_extend_if_necessary(Parser* p, Ref v, TypeId t) {
+  if (type_int_bits(t) == 64) {
+    return v;
+  }
+  return il_emit(&p->il, type_is_unsigned(t) ? OP_ZEXT32 : OP_SEXT32, IT_I64, v, 0);
+}
+
 static void emit_print(Parser* p, const ExpDesc* e, u32 at) {
   TypeId t = type_concrete(e->type);
   RuntimeSym sym;
@@ -1592,10 +1602,8 @@ static void emit_print(Parser* p, const ExpDesc* e, u32 at) {
   } else {
     args[0] = emit_to_ref(p, e, t, at);
   }
-  // Integers narrower than 64 bits are i32s, which are widened for the
-  // runtime's printers.
-  if (type_is_integer(t) && type_int_bits(t) < 64) {
-    args[0] = il_emit(&p->il, type_is_unsigned(t) ? OP_ZEXT32 : OP_SEXT32, IT_I64, args[0], 0);
+  if (type_is_integer(t)) {
+    args[0] = emit_extend_if_necessary(p, args[0], t);
   }
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), args, nargs);
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_end), NULL, 0);
@@ -1726,9 +1734,17 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       if (e->kind == EK_CONST) {
         error_at(p, at, "Can't take the address of a constant.");
       }
+      if (EMIT && e->shape != SH_STRUCT_LITERAL && e->kind == EK_LOCAL) {
+        e->ref = il_slot_addr(&p->il, e->slot);
+        e->kind = EK_REF;
+      } else if (EMIT && e->shape != SH_STRUCT_LITERAL && e->kind == EK_ADDR) {
+        e->ref = emit_addr(p, e);
+        e->kind = EK_REF;
+      } else {
+        exp_unemitted(e);
+      }
       e->shape = SH_VALUE;
       e->type = type_pointer_to(p, e->type);
-      exp_unemitted(e);
       break;
     }
     default:
@@ -1792,11 +1808,16 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
           folded = true;
         }
       }
-      if (!folded && EMIT && (t.u == TY_BOOL || type_is_integer(t))) {
+      if (t.u == TY_NULL) {
+        t = rhs.type;
+      }
+      bool is_pointer = type_is_pointer(p, t);
+      if (!folded && EMIT && (t.u == TY_BOOL || type_is_integer(t) || is_pointer)) {
         Ref left = emit_to_ref(p, e, t, start);
         Ref right = emit_to_ref(p, &rhs, t, rhs_at);
+        IlOp cmp = il_compare_op(op, type_is_unsigned(t) || is_pointer);
         e->kind = EK_REF;
-        e->ref = il_emit(&p->il, il_compare_op(op, t), il_type_of(p, t, at), left, right);
+        e->ref = il_emit(&p->il, cmp, il_type_of(p, t, at), left, right);
       } else if (!folded) {
         exp_unemitted(e);
       }
@@ -2334,12 +2355,48 @@ static void struct_args(Parser* p, ExpDesc* e) {
   }
 }
 
+// Makes ptr, the pointer that was loaded into base, the element at index
+// idx. Its type has already been changed to the pointee. A constant index
+// that fits is kept in the offset, so that a field of the element adds to it.
+static void emit_pointer_index(Parser* p, ExpDesc* ptr, Ref base, const ExpDesc* idx, u32 at) {
+  if (!type_has_layout(p, ptr->type)) {
+    error_at(p, at, "This expression isn't supported yet.");
+  }
+  u32 size = type_size(p, ptr->type);
+  ptr->kind = EK_ADDR;
+  ptr->base = base;
+  ptr->offset = 0;
+  if (idx->kind == EK_CONST) {
+    ConstInt offset = idx->cv.i * size;
+    if (offset >= 0 && offset <= UINT32_MAX) {
+      ptr->offset = (u32)offset;
+    } else {
+      Ref delta = il_const_int(&p->il, IT_I64, (u64)offset);
+      ptr->base = il_emit(&p->il, OP_ADD, IT_I64, base, delta);
+    }
+    return;
+  }
+  Ref delta = emit_extend_if_necessary(p, emit_to_ref(p, idx, idx->type, at), idx->type);
+  if (size != 1) {
+    delta = il_emit(&p->il, OP_MUL, IT_I64, delta, il_const_int(&p->il, IT_I64, size));
+  }
+  ptr->base = il_emit(&p->il, OP_ADD, IT_I64, base, delta);
+}
+
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice). e is the
 // expression being indexed, and is replaced by the result. Only indexing a
 // pointer or a fixed-size array is typed so far. A constant index into an
 // array is checked against its size.
 static void index_or_slice(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
+  bool is_pointer = type_is_pointer(p, e->type);
+  bool is_array = type_is_array(p, e->type);
+  // The pointer is loaded before the index is evaluated, like the left operand
+  // of a binary operator.
+  Ref base = 0;
+  if (EMIT && is_pointer) {
+    base = emit_to_ref(p, e, e->type, at);
+  }
   next(p);  // '['
   // The index, or the slice's start, which can be left out.
   ExpDesc first;
@@ -2353,8 +2410,6 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   }
   check_match(p, TK_RSQUARE, TK_LSQUARE, at);
   TypeId result = ty_unknown;
-  bool is_pointer = type_is_pointer(p, e->type);
-  bool is_array = type_is_array(p, e->type);
   if (!is_slice && (is_pointer || is_array)) {
     if (first.type.u != TY_UNKNOWN && !type_is_integer(first.type)) {
       error_at(p, first_at, "Index must be an integer, not %s.", type_str(p, first.type));
@@ -2369,7 +2424,11 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   }
   e->shape = is_slice ? SH_VALUE : SH_LVALUE;
   e->type = result;
-  exp_unemitted(e);
+  if (EMIT && is_pointer && !is_slice) {
+    emit_pointer_index(p, e, base, &first, first_at);
+  } else {
+    exp_unemitted(e);
+  }
 }
 
 // postfix -> { '.' name | '.' TypeName | '[' index_or_slice ']' | '(' args ')'
@@ -2405,7 +2464,18 @@ static void postfix(Parser* p, ExpDesc* e) {
         if (type_is_struct(p, base) && !f && T(p) != TK_LPAREN) {
           field_error(p, base, name, name_at);
         }
-        if (EMIT && f && type_is_struct(p, e->type) && e->kind == EK_LOCAL) {
+        if (EMIT && f && type_is_pointer(p, e->type)) {
+          // Each pointer but the last is loaded through to get the next one,
+          // and the last one's value is the base.
+          Ref ptr = emit_to_ref(p, e, e->type, name_at);
+          for (TypeId t = type_info(p, e->type)->pointee; type_is_pointer(p, t);
+               t = type_info(p, t)->pointee) {
+            ptr = il_emit(&p->il, OP_LOAD, IT_I64, ptr, 0);
+          }
+          e->kind = EK_ADDR;
+          e->base = ptr;
+          e->offset = f->offset;
+        } else if (EMIT && f && type_is_struct(p, e->type) && e->kind == EK_LOCAL) {
           // A field of a struct local is in the local's slot, so the slot's
           // address is the base.
           Ref slot_addr = il_slot_addr(&p->il, e->slot);
@@ -2689,10 +2759,14 @@ static void primary(Parser* p, ExpDesc* e) {
         error_at(p, value_at, "Can't cast %s to %s.", type_str(p, e->type), type_str(p, t));
       }
       e->shape = SH_VALUE;
+      // Pointers and u64 are all i64s, so casting between them doesn't change
+      // the value.
+      bool is_bitcast = (type_is_pointer(p, e->type) || e->type.u == TY_U64) &&
+                        (type_is_pointer(p, t) || t.u == TY_U64);
       if (e->kind == EK_CONST && (type_is_integer(t) || type_is_float(t)) &&
           (type_is_integer(e->type) || type_is_float(e->type))) {
         fold_cast(p, e, t, value_at);
-      } else {
+      } else if (!EMIT || !is_bitcast) {
         exp_unemitted(e);
       }
       e->type = t;
@@ -2932,7 +3006,7 @@ static void simple_stat(Parser* p) {
   if (EMIT) {
     il_source_pos(&p->il, p->ls.pos.t.offset);
     if (T(p) != TK_RETURN && T(p) != TK_PASS && T(p) != TK_PRINT && !is_builtin_type(T(p)) &&
-        T(p) != TK_NAME && T(p) != TK_TYPENAME) {
+        T(p) != TK_NAME && T(p) != TK_TYPENAME && T(p) != TK_STAR) {
       error_at(p, p->ls.pos.t.offset, "This statement isn't supported yet.");
     }
   }

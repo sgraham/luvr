@@ -1,0 +1,54 @@
+# OUT: 2
+# OUT: 3
+# OUT: 30
+# OUT: 40
+# OUT: 1
+# OUT: 30
+# OUT: 40
+# OUT: true
+# OUT: false
+# OUT: 50
+# OUT: 60
+struct Inner:
+    int a
+    int b
+
+struct Outer:
+    int first
+    Inner inner
+    int last
+
+def set_b(*Inner inner, int v):
+    inner.b = v
+
+def *int pick(*Outer o, bool want_last):
+    if want_last:
+        return &o.last
+    return &o.first
+
+def int main():
+    Outer o = Outer(1, Inner(2, 3), 4)
+    *Outer po = &o
+    **Outer ppo = &po
+    print po.inner.a
+    print ppo.inner.b
+
+    set_b(&o.inner, 30)
+    po.inner.a = 40
+    print o.inner.b
+    print o.inner.a
+
+    *int pf = &o.first
+    print pf[0]
+    u8 two = 2
+    print pf[two]
+    *int pl = &o.last
+    print pl[-2]
+    print pf < pl
+    print pf == pl
+
+    pick(po, true)[0] = 50
+    pick(po, false)[0] = 60
+    print o.last
+    print o.first
+    return 0
