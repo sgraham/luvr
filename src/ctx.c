@@ -117,19 +117,19 @@ void ctx_error_unclosed(const LexState* ls,
 }
 
 bool hashtable_init(HashTable* t, u32 cap) {
-  t->v = (HashSlot*)calloc(cap, sizeof(HashSlot));
+  t->slots = (HashSlot*)calloc(cap, sizeof(HashSlot));
   t->num = 0;
   t->mask = cap - 1;
-  return t->v != NULL;
+  return t->slots != NULL;
 }
 
 void hashtable_free(HashTable* t) {
-  free(t->v);
+  free(t->slots);
   memset(t, 0, sizeof(*t));
 }
 
 void hashtable_clear(HashTable* t) {
-  memset(t->v, 0, ((size_t)t->mask + 1) * sizeof(HashSlot));
+  memset(t->slots, 0, ((size_t)t->mask + 1) * sizeof(HashSlot));
   t->num = 0;
 }
 
@@ -138,20 +138,20 @@ static void hashtable_grow(Ctx* ctx, HashTable* t) {
   // Testing whether each slot is empty is unpredictable at half load. Instead,
   // empty slots are all copied to an extra slot after the end, which stays
   // empty.
-  HashSlot* v = (HashSlot*)calloc((size_t)mask + 2, sizeof(HashSlot));
-  if (!v) {
+  HashSlot* grown = (HashSlot*)calloc((size_t)mask + 2, sizeof(HashSlot));
+  if (!grown) {
     ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
   }
   for (u32 j = 0; j <= t->mask; ++j) {
-    HashSlot s = t->v[j];
+    HashSlot s = t->slots[j];
     u32 i = s.tag != 0 ? s.tag & mask : mask + 1;
-    while (v[i].tag != 0) {
+    while (grown[i].tag != 0) {
       i = (i + 1) & mask;
     }
-    v[i] = s;
+    grown[i] = s;
   }
-  free(t->v);
-  t->v = v;
+  free(t->slots);
+  t->slots = grown;
   t->mask = mask;
 }
 

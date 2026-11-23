@@ -214,7 +214,7 @@ void* vec_grow_(Ctx* ctx, void* v, u32* cap, size_t need, size_t elem_size);
 // whole key, or part of a hash with the key stored elsewhere, in which case
 // a slot with a matching tag still has to be compared with the key.
 struct HashTable {
-  HashSlot* v;
+  HashSlot* slots;
   u32 num;
   // One less than a power of 2. The table is kept at most half full, so a
   // probe always reaches an empty slot.
@@ -252,7 +252,7 @@ static inline u32 hashtable_tag_of_key(u64 key) {
 
 static inline HashSlot* hashtable_probe_(const HashTable* t, u32 tag, u32 pos) {
   for (;;) {
-    HashSlot* s = &t->v[pos];
+    HashSlot* s = &t->slots[pos];
     if (s->tag == tag || s->tag == 0) {
       return s;
     }
@@ -269,7 +269,7 @@ static inline HashSlot* hashtable_first(const HashTable* t, u32 tag) {
 // Returns the next slot after s with tag, or the empty slot where it would be
 // inserted.
 static inline HashSlot* hashtable_next(const HashTable* t, const HashSlot* s, u32 tag) {
-  return hashtable_probe_(t, tag, (u32)(s - t->v + 1) & t->mask);
+  return hashtable_probe_(t, tag, (u32)(s - t->slots + 1) & t->mask);
 }
 
 // Fills the empty slot s, which was returned by hashtable_first() or
