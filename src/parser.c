@@ -240,9 +240,13 @@ struct Parser {
 // The syntactical shape of parsing an expression. Used to decide whether
 // an expression can be assigned to, used as a statement, or was a type.
 typedef enum Shape {
-  SH_VALUE,           // anything else: literals, operators, ...
-  SH_NAME,            // a bare name: assignable
-  SH_LVALUE,          // a field or index: assignable
+  SH_VALUE,   // anything else: literals, operators, ...
+  SH_NAME,    // a bare name: assignable
+  SH_LVALUE,  // a field or index: assignable
+  // A parameter of the current function, or a field or element of one that's
+  // a struct or array. Parameters are immutable, so this isn't assignable,
+  // and its address can't be taken.
+  SH_PARAM,
   SH_CALL,            // a function or method call: valid as a statement
   SH_TYPE,            // TypeName or module.TypeName
   SH_STRUCT_LITERAL,  // Stuff(...): '&' allocates it in the current arena
@@ -2257,7 +2261,12 @@ static u32 call_args(Parser* p, TypeId callee, Ref* args) {
           if (num_args > MAX_CALL_ARGS) {
             error_at(p, arg_at, "Calls can't have more than %d arguments.", MAX_CALL_ARGS);
           }
-          args[num_args - 1] = emit_to_ref(p, &e, t, arg_at);
+          if (type_is_aggregate(p, t)) {
+            Ref addr = emit_agg_addr(p, &e, arg_at);
+            args[num_args - 1] = il_emit(&p->il, OP_ARGAGG, IT_I64, addr, type_agg(p, t).u);
+          } else {
+            args[num_args - 1] = emit_to_ref(p, &e, t, arg_at);
+          }
         }
       }
       if (!optional(p, TK_COMMA)) {
@@ -2454,7 +2463,11 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
     }
     result = is_pointer ? info->pointee : info->elem;
   }
-  e->shape = is_slice ? SH_VALUE : SH_LVALUE;
+  if (is_slice) {
+    e->shape = SH_VALUE;
+  } else if (e->shape != SH_PARAM || !is_array) {
+    e->shape = SH_LVALUE;
+  }
   e->type = result;
   if (emits && !is_slice) {
     emit_index(p, e, base, offset, &first, first_at);
@@ -2521,7 +2534,8 @@ static void postfix(Parser* p, ExpDesc* e) {
         } else {
           exp_unemitted(e);
         }
-        e->shape = SH_LVALUE;
+        bool in_param = e->shape == SH_PARAM && type_is_struct(p, e->type);
+        e->shape = in_param ? SH_PARAM : SH_LVALUE;
         e->type = f ? f->type : ty_unknown;
         break;
       }
@@ -2559,7 +2573,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         break;
       }
       case TK_LBRACE:
-        if (e->shape == SH_NAME || e->shape == SH_LVALUE) {
+        if (e->shape == SH_NAME || e->shape == SH_LVALUE || e->shape == SH_PARAM) {
           error_at(p, p->ls.pos.t.loc, "Type arguments can only follow a type name.");
         }
         if (e->shape != SH_TYPE) {
@@ -2723,6 +2737,10 @@ static void primary(Parser* p, ExpDesc* e) {
         if (EMIT && l->kind == LK_VAR) {
           e->kind = EK_LOCAL;
           e->slot = l->slot;
+        } else if (EMIT && l->kind == LK_PARAM && type_is_aggregate(p, l->type)) {
+          e->kind = EK_ADDR;
+          e->base = l->ref;
+          e->offset = 0;
         } else if (EMIT && l->kind == LK_PARAM) {
           e->kind = EK_REF;
           e->ref = l->ref;
@@ -2740,7 +2758,9 @@ static void primary(Parser* p, ExpDesc* e) {
       if (type_is_created(e->type)) {
         check_function_called(p, e, at);
       }
-      e->shape = SH_NAME;
+      const Local* l = (const Local*)n->binding;
+      bool is_param = l && l->kind == LK_PARAM && l >= &p->locals[p->func_base];
+      e->shape = is_param ? SH_PARAM : SH_NAME;
       break;
     }
     case TK_TYPEPARAM:
@@ -2959,6 +2979,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       return;
     }
     if (T(p) == TK_EQ || is_augassign(T(p))) {
+      if (exp.shape == SH_PARAM) {
+        error_at(p, p->ls.pos.t.loc, "Function parameters are immutable.");
+      }
       if (exp.shape != SH_NAME && exp.shape != SH_LVALUE) {
         error_at(p, at, "Can't assign to this expression.");
       }
@@ -2979,9 +3002,6 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         }
         if (loc && loc < &p->locals[p->func_base]) {
           error_at(p, p->ls.pos.t.loc, "Upvalues are immutable.");
-        }
-        if (loc && loc->kind == LK_PARAM) {
-          error_at(p, p->ls.pos.t.loc, "Function parameters are immutable.");
         }
         if (loc &&
             (loc->kind == LK_CONST || (loc->kind == LK_GLOBAL && name_of(p, name)->is_const))) {
@@ -3340,7 +3360,12 @@ static void funcdef(Parser* p, bool is_method) {
     // are its parameters.
     for (u32 i = p->func_base; i < p->num_locals; ++i) {
       Local* l = &p->locals[i];
-      l->ref = il_emit(&p->il, OP_PARAM, il_type_of(p, l->type, name_at), i - p->func_base, 0);
+      u32 index = i - p->func_base;
+      if (type_is_aggregate(p, l->type) && type_has_layout(p, l->type)) {
+        l->ref = il_emit(&p->il, OP_PARAMAGG, IT_I64, index, type_agg(p, l->type).u);
+      } else {
+        l->ref = il_emit(&p->il, OP_PARAM, il_type_of(p, l->type, name_at), index, 0);
+      }
     }
   }
   check(p, TK_COLON);

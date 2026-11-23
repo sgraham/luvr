@@ -263,8 +263,9 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
       fprintf(out, "%%%u = ", i);
     }
     fputs(il_op_names[op], out);
-    // A SLOT is always an i64 address, so its type would only be clutter.
-    if (ty != IT_VOID && op != OP_SLOT) {
+    // These are always i64 addresses, so their type would only be clutter.
+    bool is_addr = op == OP_SLOT || op == OP_PARAMAGG || op == OP_ARGAGG;
+    if (ty != IT_VOID && !is_addr) {
       fprintf(out, " %s", il_type_names[ty]);
     }
     if (op == OP_CALL) {

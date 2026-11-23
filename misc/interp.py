@@ -254,8 +254,17 @@ def run(prog, f, args):
     while pc < len(f.ins):
         ins = f.ins[pc]
         pc += 1
-        if ins.op == "PARAM":
+        if ins.op in ("PARAM", "PARAMAGG"):
             values[ins.result] = args[ins.operands[0].val]
+            continue
+        if ins.op == "ARGAGG":
+            # The callee gets its own copy, made when the argument is
+            # evaluated. It's in the caller's frame, which outlives the call.
+            src = value_of(values, prog, ins.operands[0])
+            agg = prog.aggs[ins.operands[1].val]
+            addr = alloc(mem, agg.size, agg.align)
+            mem.bytes[addr:addr + agg.size] = mem.bytes[src:src + agg.size]
+            values[ins.result] = addr
             continue
         if ins.op == "SLOT":
             values[ins.result] = slot_addrs[ins.operands[0].val]

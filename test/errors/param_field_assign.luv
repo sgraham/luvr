@@ -1,0 +1,13 @@
+# CRET: 1
+# CERR: {self}:9:10:    pt.x = 100
+# CERR: {ssss}               ^ error: Function parameters are immutable.
+struct Point:
+    int x
+    int y
+
+def int clobber(Point pt):
+    pt.x = 100
+    return pt.x
+
+def int main():
+    return clobber(Point(1, 2))

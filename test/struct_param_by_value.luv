@@ -1,0 +1,54 @@
+# OUT: 3
+# OUT: 7
+# OUT: 1
+# OUT: 100
+# OUT: 30
+# OUT: 4
+# OUT: 12
+# OUT: 9
+# OUT: 5
+# OUT: 2
+struct Point:
+    int x
+    int y
+
+struct Box:
+    Point lo
+    Point hi
+    bool open = true
+
+def int sum(Point pt):
+    return pt.x + pt.y
+
+def int clobber(Point pt):
+    copy = pt
+    copy.x = 100
+    return copy.x
+
+def int width(Box b, int extra):
+    return sum(b.hi) - sum(b.lo) + extra
+
+def int last(int n, [3]int nums):
+    print nums[2]
+    return n
+
+def int nested(Box b):
+    Point hi = b.hi
+    return hi.y
+
+def int main():
+    p = Point(1, 2)
+    print sum(p)
+    print sum(Point(3, 4))
+    print clobber(p) - 99
+    print clobber(p)
+
+    b = Box(p, Point(10, 20))
+    print width(b, 3)
+    [3]int nums
+    nums[2] = 4
+    print last(12, nums)
+    print sum(b.lo) + nested(b) - 14
+    print b.lo.x + 4
+    print p.y
+    return 0

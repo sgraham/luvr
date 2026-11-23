@@ -365,11 +365,15 @@ static void test_il_agg_slot(void) {
   il_agg_add(&ctx, 16, 8, float_leaves, 2);
   SlotId slot = il_slot_add_agg(&f, agg, lex_intern_safe(&ctx, "s"));
   SlotId temp = il_slot_add_agg(&f, agg, (NameId){IL_SLOT_UNNAMED});
+  u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
   il_block_start(&f, il_block_declare(&f));
+  Ref param = il_emit(&f, OP_PARAMAGG, IT_I64, 0, agg.u);
   Ref addr = il_slot_addr(&f, slot);
   il_emit(&f, OP_ZERO, IT_VOID, addr, agg.u);
   Ref temp_addr = il_slot_addr(&f, temp);
-  il_copy(&f, temp_addr, addr, agg);
+  il_copy(&f, temp_addr, param, agg);
+  Ref arg = il_emit(&f, OP_ARGAGG, IT_I64, addr, agg.u);
+  il_call(&f, IT_VOID, il_const_sym(&f, sym), &arg, 1);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);
   expect_il_dump(&f, "",
                  "agg #0 16 8\n"
@@ -378,10 +382,13 @@ static void test_il_agg_slot(void) {
                  "  slot $0 #0 s\n"
                  "  slot $1 #0\n"
                  ":0\n"
-                 "  %1 = SLOT $0\n"
-                 "  ZERO %1, #0\n"
-                 "  %3 = SLOT $1\n"
-                 "  COPY %3, %1, #0\n"
+                 "  %1 = PARAMAGG 0, #0\n"
+                 "  %2 = SLOT $0\n"
+                 "  ZERO %2, #0\n"
+                 "  %4 = SLOT $1\n"
+                 "  COPY %4, %1, #0\n"
+                 "  %7 = ARGAGG %2, #0\n"
+                 "  CALL @g, %7\n"
                  "  RET\n",
                  "test_il_agg_slot");
   il_free(&f);

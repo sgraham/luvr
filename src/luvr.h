@@ -790,7 +790,9 @@ typedef enum IlOperand {
 
 // X(name, a, b, has_result), where a and b are IlOperands without OPND_.
 // EXTs hold the operands that don't fit in the instruction before them: a
-// CALL's arguments, or a COPY's AggId in a.
+// CALL's arguments, or a COPY's AggId in a. An aggregate is passed by value
+// as a CALL argument that's an ARGAGG of its address, and the callee gets
+// the address of its own copy from PARAMAGG.
 #define IL_OPS(X)              \
   X(ADD, REF, REF, true)       \
   X(SUB, REF, REF, true)       \
@@ -819,6 +821,8 @@ typedef enum IlOperand {
   X(BR, REF, BLOCK, false)     \
   X(RET, REF, NONE, false)     \
   X(PARAM, NUM, NONE, true)    \
+  X(PARAMAGG, NUM, AGG, true)  \
+  X(ARGAGG, REF, AGG, true)    \
   X(CALL, REF, NUM, true)      \
   X(EXT, REF, REF, false)
 
