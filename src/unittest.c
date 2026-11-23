@@ -181,7 +181,7 @@ static void test_il_blocks(void) {
   IlFunc f;
   il_init_test(&f, &ctx, IT_VOID);
   il_block_start(&f, il_block_declare(&f));
-  u32 end = il_block_declare(&f);
+  BlockId end = il_block_declare(&f);
   il_branch(&f, il_const_int(&f, IT_I32, 1), end);
   il_jump(&f, end);
   il_block_start(&f, end);
@@ -335,10 +335,10 @@ static void test_il_agg_add(void) {
     AggId agg =
         il_agg_add(&ctx, cases[i].size, cases[i].align, cases[i].leaves, cases[i].num_leaves);
     const AggInfo* got = il_agg(&ctx, agg);
-    if (agg.idx != i || got->size != cases[i].size || 1u << got->align_log2 != cases[i].align ||
+    if (agg.u != i || got->size != cases[i].size || 1u << got->align_log2 != cases[i].align ||
         got->abi != cases[i].want_abi) {
       printf("il_agg_add(%s) = #%u {size %u, align %u, abi %#x}, want #%zu {%u, %u, %#x}\n",
-             cases[i].what, agg.idx, got->size, 1u << got->align_log2, got->abi, i, cases[i].size,
+             cases[i].what, agg.u, got->size, 1u << got->align_log2, got->abi, i, cases[i].size,
              cases[i].align, cases[i].want_abi);
       ++failures;
     }
@@ -359,7 +359,7 @@ static void test_il_agg_slot(void) {
   SlotId temp = il_slot_add_agg(&f, agg, (NameId){IL_SLOT_UNNAMED});
   il_block_start(&f, il_block_declare(&f));
   Ref addr = il_slot_addr(&f, slot);
-  il_emit(&f, OP_ZERO, IT_VOID, addr, agg.idx);
+  il_emit(&f, OP_ZERO, IT_VOID, addr, agg.u);
   Ref temp_addr = il_slot_addr(&f, temp);
   il_copy(&f, temp_addr, addr, agg);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);

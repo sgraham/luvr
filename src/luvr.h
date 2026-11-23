@@ -3,6 +3,7 @@
 typedef struct AggId AggId;
 typedef struct AggInfo AggInfo;
 typedef struct AggLeaf AggLeaf;
+typedef struct BlockId BlockId;
 typedef struct Ctx Ctx;
 typedef struct FileBuf FileBuf;
 typedef struct HashSlot HashSlot;
@@ -278,10 +279,10 @@ void hashtable_insert(Ctx* ctx, HashTable* t, HashSlot* s, u32 tag, u32 val);
 // Index of an interned Name in Ctx.names. It's a struct so that it can't be
 // mixed up with offsets or other indices.
 struct NameId {
-  u32 idx;
+  u32 u;
 };
 
-// A hash table from NameId to u32. The tag is NameId.idx + 1, so a slot with a
+// A hash table from NameId to u32. The tag is NameId.u + 1, so a slot with a
 // matching tag is the name. A NameId is an index into Ctx.names, allocated in
 // the order that names are first interned, so ids are compact, and names that
 // are declared together are usually close together. Using the id itself as the
@@ -307,7 +308,7 @@ void namemap_set(Ctx* ctx, NameMap* m, NameId name, u32 val);
 
 // Returns the value for name, or NULL if it isn't in m.
 static inline u32* namemap_find(const NameMap* m, NameId name) {
-  HashSlot* s = hashtable_first(&m->table, name.idx + 1);
+  HashSlot* s = hashtable_first(&m->table, name.u + 1);
   return s->tag != 0 ? &s->val : NULL;
 }
 
@@ -738,7 +739,7 @@ NameId lex_intern_padded(Ctx* ctx, const u8* s, u32 len);
 NameId lex_intern_safe(Ctx* ctx, const char* s);
 
 static inline const Name* lex_name(const Ctx* ctx, NameId id) {
-  return &ctx->names.v[id.idx];
+  return &ctx->names.v[id.u];
 }
 
 // Content of a STRING* token (not NUL-terminated).
@@ -866,19 +867,24 @@ static inline Ref ins_b(Ins i) {
 
 // Index of an AggInfo in Ctx.aggs.
 struct AggId {
-  u32 idx;
+  u32 u;
 };
 
 // An index in IlFunc.slots.
 struct SlotId {
-  u32 idx;
+  u32 u;
+};
+
+// An index in IlFunc.block_starts.
+struct BlockId {
+  u32 u;
 };
 
 #define AGG_NONE UINT32_MAX
 
 // A piece of the function's frame, which holds a local.
 struct IlSlot {
-  NameId name;  // name.idx is IL_SLOT_UNNAMED for a compiler temporary
+  NameId name;  // name.u is IL_SLOT_UNNAMED for a compiler temporary
   IlType type;
   AggId agg;  // AGG_NONE unless type is IT_AGG
 };
@@ -914,7 +920,7 @@ struct IlFunc {
 
 #define IL_BLOCK_UNSTARTED UINT32_MAX
 
-// A block number that hasn't been declared yet.
+// A BlockId.u for a block that hasn't been declared yet.
 #define IL_BLOCK_NONE UINT32_MAX
 
 struct IlData {
@@ -980,16 +986,16 @@ Ref il_call(IlFunc* f, IlType ty, Ref callee, const Ref* args, u32 n);
 void il_copy(IlFunc* f, Ref dst, Ref src, AggId agg);
 
 // Returns a new block, which can be jumped to before it's started.
-u32 il_block_declare(IlFunc* f);
+BlockId il_block_declare(IlFunc* f);
 
 // Starts block b at the end of the instructions.
-void il_block_start(IlFunc* f, u32 b);
+void il_block_start(IlFunc* f, BlockId b);
 
-void il_jump(IlFunc* f, u32 b);
+void il_jump(IlFunc* f, BlockId b);
 
 // Goes to block b if cond is 0, and otherwise continues into a new block,
 // because a branch is always the last instruction of its block.
-void il_branch(IlFunc* f, Ref cond, u32 b);
+void il_branch(IlFunc* f, Ref cond, BlockId b);
 
 // Returns a new slot holding a value of type ty. il_slot_addr() gives its
 // address, which LOAD and STORE use.
@@ -1018,5 +1024,5 @@ void il_dump_agg(const Ctx* ctx, u32 i, FILE* out);
 AggId il_agg_add(Ctx* ctx, u32 size, u32 align, const AggLeaf* leaves, u32 num_leaves);
 
 static inline const AggInfo* il_agg(const Ctx* ctx, AggId id) {
-  return &ctx->aggs.v[id.idx];
+  return &ctx->aggs.v[id.u];
 }

@@ -23,10 +23,10 @@ typedef struct Targets Targets;
 typedef struct TypeId TypeId;
 typedef struct TypeInfo TypeInfo;
 
-// Types are compared by index. idx is a FixedType, or for types that are
+// Types are compared by index. u is a FixedType, or for types that are
 // created while parsing, an index >= TY_NUM_FIXED in Parser.types.
 struct TypeId {
-  u32 idx;
+  u32 u;
 };
 
 typedef enum FixedType {
@@ -129,7 +129,7 @@ struct TypeInfo {
       NameId name;
       u32 first_field;  // in Parser.fields
       u32 num_fields;
-      // agg.idx is AGG_NONE if the layout isn't known (see type_has_layout()).
+      // agg.u is AGG_NONE if the layout isn't known (see type_has_layout()).
       // The fields' offsets are only set if it's known.
       AggId agg;
     };
@@ -296,11 +296,11 @@ static void next(Parser* p) {
   ctx_error((p)->ls.ctx, (p)->ls.src.filename, (p)->ls.src.buf, (offset), __VA_ARGS__)
 
 static bool type_is_created(TypeId t) {
-  return t.idx >= TY_NUM_FIXED;
+  return t.u >= TY_NUM_FIXED;
 }
 
 static TypeInfo* type_info(Parser* p, TypeId t) {
-  return &p->types.v[t.idx];
+  return &p->types.v[t.u];
 }
 
 static bool type_is_function(Parser* p, TypeId t) {
@@ -336,7 +336,7 @@ static const char* type_str(Parser* p, TypeId t) {
   if (type_is_function(p, t)) {
     return "a function";
   }
-  switch ((FixedType)t.idx) {
+  switch ((FixedType)t.u) {
     case TY_UNKNOWN:
     case TY_NUM_FIXED:
       break;
@@ -486,7 +486,7 @@ static NOINLINE void load_named_const(ExpDesc* e, const NamedConst* c) {
 // and is visible from there to the end of the function.
 
 static Name* name_of(Parser* p, NameId name) {
-  return &p->ls.ctx->names.v[name.idx];
+  return &p->ls.ctx->names.v[name.u];
 }
 
 static Local* lookup(Parser* p, NameId name) {
@@ -722,10 +722,10 @@ static TypeId builtin_type(TokenKind kind) {
 // A pointer to an unknown type is unknown too, so that it passes checks
 // against any other pointer.
 static TypeId type_pointer_to(Parser* p, TypeId t) {
-  if (t.idx == TY_UNKNOWN) {
+  if (t.u == TY_UNKNOWN) {
     return ty_unknown;
   }
-  if (type_info(p, t)->ptr.idx == TY_UNKNOWN) {
+  if (type_info(p, t)->ptr.u == TY_UNKNOWN) {
     TypeId pt = {p->types.num};
     *vec_push(p->ls.ctx, &p->types) = (TypeInfo){.kind = TYPE_PTR, .pointee = t};
     type_info(p, t)->ptr = pt;
@@ -739,23 +739,23 @@ static u32 type_size(Parser* p, TypeId t);
 // [count]elem, which is at offset at. Like pointers, an array of an unknown
 // type is unknown.
 static TypeId type_array_of(Parser* p, TypeId elem, u32 count, u32 at) {
-  if (elem.idx == TY_UNKNOWN) {
+  if (elem.u == TY_UNKNOWN) {
     return ty_unknown;
   }
   if (type_has_layout(p, elem) && (u64)count * type_size(p, elem) > UINT32_MAX) {
     error_at(p, at, "Array is too large.");
   }
-  u32 tag = hashtable_tag_of_key((u64)elem.idx << 32 | count);
+  u32 tag = hashtable_tag_of_key((u64)elem.u << 32 | count);
   HashSlot* s = hashtable_first(&p->array_types, tag);
   for (; s->tag != 0; s = hashtable_next(&p->array_types, s, tag)) {
     const TypeInfo* info = &p->types.v[s->val];
-    if (info->elem.idx == elem.idx && info->count == count) {
+    if (info->elem.u == elem.u && info->count == count) {
       return (TypeId){s->val};
     }
   }
   TypeId arr = {p->types.num};
   *vec_push(p->ls.ctx, &p->types) = (TypeInfo){.kind = TYPE_ARRAY, .elem = elem, .count = count};
-  hashtable_insert(p->ls.ctx, &p->array_types, s, tag, arr.idx);
+  hashtable_insert(p->ls.ctx, &p->array_types, s, tag, arr.u);
   return arr;
 }
 
@@ -924,7 +924,7 @@ static bool binopr_is_comparison(BinOpr op) {
 // Returns t unchanged unless it's an untyped constant, in which case it returns
 // a storage type for it.
 static TypeId type_concrete(TypeId t) {
-  switch ((FixedType)t.idx) {
+  switch ((FixedType)t.u) {
     case TY_UNTYPED_INT:
       return ty_i64;
     case TY_UNTYPED_FLOAT:
@@ -935,24 +935,24 @@ static TypeId type_concrete(TypeId t) {
 }
 
 static bool type_is_untyped(TypeId t) {
-  return t.idx == TY_UNTYPED_INT || t.idx == TY_UNTYPED_FLOAT;
+  return t.u == TY_UNTYPED_INT || t.u == TY_UNTYPED_FLOAT;
 }
 
 static bool type_is_integer(TypeId t) {
-  return t.idx == TY_UNTYPED_INT || (t.idx >= TY_FIRST_INT && t.idx <= TY_LAST_INT);
+  return t.u == TY_UNTYPED_INT || (t.u >= TY_FIRST_INT && t.u <= TY_LAST_INT);
 }
 
 static bool type_is_float(TypeId t) {
-  return t.idx == TY_UNTYPED_FLOAT || t.idx == TY_F32 || t.idx == TY_F64;
+  return t.u == TY_UNTYPED_FLOAT || t.u == TY_F32 || t.u == TY_F64;
 }
 
 static bool type_is_unsigned(TypeId t) {
-  return t.idx >= TY_U8 && t.idx <= TY_U64;
+  return t.u >= TY_U8 && t.u <= TY_U64;
 }
 
 // The integer types are ordered by width, signed and then unsigned.
 static int type_int_bits(TypeId t) {
-  return 8 << ((t.idx - TY_I8) & 3);
+  return 8 << ((t.u - TY_I8) & 3);
 }
 
 static bool const_fits_in_type(ConstInt v, TypeId t) {
@@ -1005,11 +1005,10 @@ static const char* const_str(Parser* p, const ExpDesc* e) {
 // expected. An integer constant can become a float, but not the reverse, even
 // when the float constant is integral.
 static bool assignable(Parser* p, TypeId from, TypeId to) {
-  return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN ||
-         (to.idx == from.idx && from.idx != TY_VOID) ||
-         (from.idx == TY_NULL && type_is_pointer(p, to)) ||
-         (from.idx == TY_UNTYPED_INT && (type_is_integer(to) || type_is_float(to))) ||
-         (from.idx == TY_UNTYPED_FLOAT && type_is_float(to));
+  return to.u == TY_UNKNOWN || from.u == TY_UNKNOWN || (to.u == from.u && from.u != TY_VOID) ||
+         (from.u == TY_NULL && type_is_pointer(p, to)) ||
+         (from.u == TY_UNTYPED_INT && (type_is_integer(to) || type_is_float(to))) ||
+         (from.u == TY_UNTYPED_FLOAT && type_is_float(to));
 }
 
 // Whether `cast to(...)` accepts a value of type `from`. Numbers can be cast
@@ -1019,9 +1018,8 @@ static bool castable(Parser* p, TypeId from, TypeId to) {
   bool to_num = type_is_integer(to) || type_is_float(to);
   bool from_ptr = type_is_pointer(p, from);
   bool to_ptr = type_is_pointer(p, to);
-  return to.idx == TY_UNKNOWN || from.idx == TY_UNKNOWN || to.idx == from.idx ||
-         (from_num && to_num) || (from_ptr && (to_ptr || to.idx == TY_U64)) ||
-         (to_ptr && from.idx == TY_U64);
+  return to.u == TY_UNKNOWN || from.u == TY_UNKNOWN || to.u == from.u || (from_num && to_num) ||
+         (from_ptr && (to_ptr || to.u == TY_U64)) || (to_ptr && from.u == TY_U64);
 }
 
 // Integer constants have to be exactly representable as a float, since
@@ -1029,7 +1027,7 @@ static bool castable(Parser* p, TypeId from, TypeId to) {
 // The bound keeps the conversion back to ConstInt in range when v rounds up
 // to 2^127.
 static bool const_exact_in_float(ConstInt v, TypeId t) {
-  double d = t.idx == TY_F32 ? (double)(float)v : (double)v;
+  double d = t.u == TY_F32 ? (double)(float)v : (double)v;
   return d < 0x1p127 && (ConstInt)d == v;
 }
 
@@ -1039,12 +1037,12 @@ static bool const_exact_in_float(ConstInt v, TypeId t) {
 static NOINLINE void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
   if (!type_is_integer(e->type)) {
     float f = (float)e->v.f;
-    if (t.idx == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
+    if (t.u == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
       error_at(p, at, "%s doesn't fit in f32.", float_str(p, e->v.f));
     }
   } else if (type_is_integer(t) && !type_is_untyped(t) && !const_fits_in_type(e->v.i, t)) {
     error_at(p, at, "%s doesn't fit in %s.", int_str(p, e->v.i), type_str(p, t));
-  } else if ((t.idx == TY_F32 || t.idx == TY_F64) && !const_exact_in_float(e->v.i, t)) {
+  } else if ((t.u == TY_F32 || t.u == TY_F64) && !const_exact_in_float(e->v.i, t)) {
     error_at(p, at, "%s can't be represented exactly in %s.", int_str(p, e->v.i), type_str(p, t));
   }
 }
@@ -1056,7 +1054,7 @@ static void check_const_conversion(Parser* p, TypeId to, const ExpDesc* e, u32 a
   if (e->kind != EK_CONST || !type_is_untyped(e->type)) {
     return;
   }
-  if (e->type.idx != TY_UNTYPED_INT || (ConstUInt)e->v.i >= 128) {
+  if (e->type.u != TY_UNTYPED_INT || (ConstUInt)e->v.i >= 128) {
     check_const_fits(p, e, to, at);
   }
 }
@@ -1095,7 +1093,7 @@ static NOINLINE void check_function_called(Parser* p, const ExpDesc* e, u32 at) 
 // Most uses of a void result are caught as type mismatches. This is for the
 // uses that accept any type.
 static void check_not_void(Parser* p, const ExpDesc* e, u32 at) {
-  if (e->type.idx == TY_VOID) {
+  if (e->type.u == TY_VOID) {
     error_at(p, at, "Can't use the result of a function with no return type.");
   }
 }
@@ -1130,11 +1128,11 @@ static const char* const arith_error[] = {
 // of the same type, apart from untyped constants. Floats only have +, -, *
 // and /. A shift count can be any integer type, and strings can be added.
 static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
-  if (a.idx == TY_UNKNOWN || b.idx == TY_UNKNOWN) {
+  if (a.u == TY_UNKNOWN || b.u == TY_UNKNOWN) {
     return ty_unknown;
   }
   bool is_shift = op == OPR_SHL || op == OPR_SHR;
-  bool is_concat = op == OPR_ADD && a.idx == TY_STR && b.idx == TY_STR;
+  bool is_concat = op == OPR_ADD && a.u == TY_STR && b.u == TY_STR;
   bool same_type = assignable(p, a, b) || assignable(p, b, a);
   bool ints = type_is_integer(a) && type_is_integer(b) && (is_shift || same_type);
   bool floats =
@@ -1147,12 +1145,12 @@ static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
     return a;
   }
   // Two constants give a float constant if either is one.
-  return type_is_untyped(b) && a.idx == TY_UNTYPED_FLOAT ? a : b;
+  return type_is_untyped(b) && a.u == TY_UNTYPED_FLOAT ? a : b;
 }
 
 // `what` is the start of the error message, naming what needed the bool.
 static void expect_bool(Parser* p, const ExpDesc* e, u32 at, const char* what) {
-  if (e->type.idx != TY_UNKNOWN && e->type.idx != TY_BOOL) {
+  if (e->type.u != TY_UNKNOWN && e->type.u != TY_BOOL) {
     error_at(p, at, "%s expects bool, not %s.", what, type_str(p, e->type));
   }
 }
@@ -1248,7 +1246,7 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
         ASSERT(false && "not a folded float operator");
         break;
     }
-    if (t.idx == TY_F32) {
+    if (t.u == TY_F32) {
       fr = (float)fr;
     }
     overflow = isinf(fr);
@@ -1333,13 +1331,13 @@ static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
     double d;
     if (type_is_integer(e->type)) {
       // Every ConstInt is in range of f32.
-      d = t.idx == TY_F32 ? (double)(float)e->v.i : (double)e->v.i;
+      d = t.u == TY_F32 ? (double)(float)e->v.i : (double)e->v.i;
     } else {
       float f = (float)e->v.f;
-      if (t.idx == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
+      if (t.u == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
         error_at(p, at, "%s doesn't fit in f32.", float_str(p, e->v.f));
       }
-      d = t.idx == TY_F32 ? (double)f : e->v.f;
+      d = t.u == TY_F32 ? (double)f : e->v.f;
     }
     e->v.f = d;
     return;
@@ -1367,7 +1365,7 @@ static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
 // a constant, so the ordering is total.
 static NOINLINE bool fold_compare(BinOpr op, const ExpDesc* a, const ExpDesc* b) {
   int c;
-  if (a->type.idx == TY_BOOL) {
+  if (a->type.u == TY_BOOL) {
     c = (int)a->v.b - (int)b->v.b;
   } else if (type_is_float(a->type) || type_is_float(b->type)) {
     // An integer here can only be an untyped constant, which is converted to
@@ -1401,7 +1399,7 @@ static NOINLINE bool fold_compare(BinOpr op, const ExpDesc* a, const ExpDesc* b)
 
 // bool and integers up to 32 bits are i32, and the other integers are i64.
 static IlType il_type_of(Parser* p, TypeId t, u32 at) {
-  switch (t.idx) {
+  switch (t.u) {
     case TY_VOID:
       return IT_VOID;
     case TY_BOOL:
@@ -1485,7 +1483,7 @@ static Ref emit_addr(Parser* p, const ExpDesc* e) {
 // it will take on t's type.
 static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
   IlType ty = il_type_of(p, t, at);
-  if (e->kind == EK_CONST && t.idx == TY_BOOL) {
+  if (e->kind == EK_CONST && t.u == TY_BOOL) {
     return il_const_int(&p->il, ty, e->v.b);
   }
   if (e->kind == EK_CONST && type_is_integer(t)) {
@@ -1545,7 +1543,7 @@ static SlotId emit_local_slot(Parser* p, TypeId t, NameId name, u32 at) {
 static void emit_print(Parser* p, const ExpDesc* e, u32 at) {
   TypeId t = type_concrete(e->type);
   RuntimeSym sym;
-  switch ((FixedType)t.idx) {
+  switch ((FixedType)t.u) {
     case TY_BOOL:
       sym = SYM_luv_print_bool;
       break;
@@ -1569,7 +1567,7 @@ static void emit_print(Parser* p, const ExpDesc* e, u32 at) {
   }
   Ref args[2];
   u32 nargs = 1;
-  if (t.idx == TY_STR) {
+  if (t.u == TY_STR) {
     if (e->kind != EK_STR) {
       error_at(p, at, "This expression isn't supported yet.");
     }
@@ -1601,7 +1599,7 @@ static void emit_infix(Parser* p, ExpDesc* e, u32 at) {
 // and loaded after the paths join.
 struct LogicalJoin {
   SlotId slot;
-  u32 end;
+  BlockId end;
 };
 
 // Called after the left operand of 'and' or 'or'. The right operand is only
@@ -1614,7 +1612,7 @@ static void emit_logical_begin(Parser* p, BinOpr op, const ExpDesc* e, u32 at, L
   if (op == OPR_AND) {
     il_branch(&p->il, left, join->end);
   } else {
-    u32 right = il_block_declare(&p->il);
+    BlockId right = il_block_declare(&p->il);
     il_branch(&p->il, left, right);
     il_jump(&p->il, join->end);
     il_block_start(&p->il, right);
@@ -1630,7 +1628,7 @@ static void emit_logical_end(Parser* p, const ExpDesc* rhs, u32 at, const Logica
 // Unary '-' or '~', which give the operand's type. Constants are folded.
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
   TypeId t = e->type;
-  if (t.idx == TY_UNKNOWN) {
+  if (t.u == TY_UNKNOWN) {
     exp_unemitted(e);
     return;
   }
@@ -1676,9 +1674,9 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       subexpr(p, PRIORITY_NOT, e);
       expect_bool(p, e, at, "'not'");
       e->shape = SH_VALUE;
-      if (e->kind == EK_CONST && e->type.idx == TY_BOOL) {
+      if (e->kind == EK_CONST && e->type.u == TY_BOOL) {
         e->v.b = !e->v.b;
-      } else if (EMIT && e->type.idx == TY_BOOL) {
+      } else if (EMIT && e->type.u == TY_BOOL) {
         // A bool is 0 or 1.
         Ref v = emit_to_ref(p, e, ty_bool, at);
         e->ref = il_emit(&p->il, OP_XOR, IT_I32, v, il_const_int(&p->il, IT_I32, 1));
@@ -1773,13 +1771,13 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       bool folded = false;
       if (e->kind == EK_CONST || rhs.kind == EK_CONST) {
         check_const_operands(p, op, t, e, start, &rhs, rhs_at, at);
-        bool foldable = t.idx == TY_BOOL || type_is_integer(t) || type_is_float(t);
+        bool foldable = t.u == TY_BOOL || type_is_integer(t) || type_is_float(t);
         if (e->kind == EK_CONST && rhs.kind == EK_CONST && foldable) {
           e->v.b = fold_compare(op, e, &rhs);
           folded = true;
         }
       }
-      if (!folded && EMIT && (t.idx == TY_BOOL || type_is_integer(t))) {
+      if (!folded && EMIT && (t.u == TY_BOOL || type_is_integer(t))) {
         Ref left = emit_to_ref(p, e, t, start);
         Ref right = emit_to_ref(p, &rhs, t, rhs_at);
         e->kind = EK_REF;
@@ -1791,8 +1789,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
     } else if (is_bool) {
       // Only 'and' and 'or' of two constants are constant, even when one
       // operand is enough to decide the value.
-      if (logical && e->kind == EK_CONST && rhs.kind == EK_CONST && e->type.idx == TY_BOOL &&
-          rhs.type.idx == TY_BOOL) {
+      if (logical && e->kind == EK_CONST && rhs.kind == EK_CONST && e->type.u == TY_BOOL &&
+          rhs.type.u == TY_BOOL) {
         e->v.b = op == OPR_AND ? e->v.b && rhs.v.b : e->v.b || rhs.v.b;
       } else if (EMIT && logical) {
         e->kind = EK_LOCAL;
@@ -1806,9 +1804,9 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       if (e->kind == EK_CONST || rhs.kind == EK_CONST) {
         check_const_operands(p, op, t, e, start, &rhs, rhs_at, at);
       }
-      if (e->kind == EK_CONST && rhs.kind == EK_CONST && t.idx != TY_UNKNOWN && t.idx != TY_STR) {
+      if (e->kind == EK_CONST && rhs.kind == EK_CONST && t.u != TY_UNKNOWN && t.u != TY_STR) {
         fold_arith(p, op, t, e, &rhs, at);
-      } else if (EMIT && il_arith_op(op) != OP_NUM_OPS && (t.idx == TY_I32 || t.idx == TY_I64)) {
+      } else if (EMIT && il_arith_op(op) != OP_NUM_OPS && (t.u == TY_I32 || t.u == TY_I64)) {
         Ref left = emit_to_ref(p, e, t, start);
         Ref right = emit_to_ref(p, &rhs, t, rhs_at);
         e->kind = EK_REF;
@@ -2055,7 +2053,7 @@ static const AggInfo* struct_agg(Parser* p, TypeId st) {
 
 static bool type_has_layout(Parser* p, TypeId t) {
   if (type_is_struct(p, t)) {
-    return type_info(p, t)->agg.idx != AGG_NONE;
+    return type_info(p, t)->agg.u != AGG_NONE;
   }
   if (type_is_array(p, t)) {
     return type_has_layout(p, type_info(p, t)->elem);
@@ -2063,8 +2061,7 @@ static bool type_has_layout(Parser* p, TypeId t) {
   if (type_is_integer(t)) {
     return !type_is_untyped(t);
   }
-  return type_is_pointer(p, t) || t.idx == TY_BOOL || t.idx == TY_F32 || t.idx == TY_F64 ||
-         t.idx == TY_STR;
+  return type_is_pointer(p, t) || t.u == TY_BOOL || t.u == TY_F32 || t.u == TY_F64 || t.u == TY_STR;
 }
 
 static u32 type_size(Parser* p, TypeId t) {
@@ -2081,7 +2078,7 @@ static u32 type_size(Parser* p, TypeId t) {
   if (type_is_array(p, t)) {
     return type_info(p, t)->count * type_size(p, type_info(p, t)->elem);
   }
-  switch ((FixedType)t.idx) {
+  switch ((FixedType)t.u) {
     case TY_BOOL:
       return 1;
     case TY_F32:
@@ -2105,7 +2102,7 @@ static u32 type_align(Parser* p, TypeId t) {
   if (type_is_array(p, t)) {
     return type_align(p, type_info(p, t)->elem);
   }
-  if (t.idx == TY_STR) {
+  if (t.u == TY_STR) {
     return 8;
   }
   return type_size(p, t);
@@ -2113,13 +2110,13 @@ static u32 type_align(Parser* p, TypeId t) {
 
 // The type that a scalar is loaded and stored as.
 static IlType il_mem_type_of(Parser* p, TypeId t) {
-  if (t.idx == TY_F32) {
+  if (t.u == TY_F32) {
     return IT_F32;
   }
-  if (t.idx == TY_F64) {
+  if (t.u == TY_F64) {
     return IT_F64;
   }
-  bool is_unsigned = t.idx == TY_BOOL || type_is_unsigned(t);
+  bool is_unsigned = t.u == TY_BOOL || type_is_unsigned(t);
   switch (type_size(p, t)) {
     case 1:
       return is_unsigned ? IT_U8 : IT_I8;
@@ -2149,7 +2146,7 @@ static void type_agg_leaves(Parser* p, TypeId t, u32 offset, AggLeaf* leaves, u3
     for (u32 i = 0; i < type_info(p, t)->count; ++i) {
       type_agg_leaves(p, elem, offset + i * elem_size, leaves, num_leaves);
     }
-  } else if (t.idx == TY_STR) {
+  } else if (t.u == TY_STR) {
     leaves[(*num_leaves)++] = (AggLeaf){offset, IT_I64};
     leaves[(*num_leaves)++] = (AggLeaf){offset + 8, IT_I64};
   } else {
@@ -2161,7 +2158,7 @@ static const Field* struct_field(Parser* p, TypeId st, NameId name) {
   const TypeInfo* info = type_info(p, st);
   for (u32 i = 0; i < info->num_fields; ++i) {
     const Field* f = &p->fields.v[info->first_field + i];
-    if (f->name.idx == name.idx) {
+    if (f->name.u == name.u) {
       return f;
     }
   }
@@ -2244,7 +2241,7 @@ static void struct_args(Parser* p, ExpDesc* e) {
     }
     AggId agg = type_info(p, st)->agg;
     temp = il_slot_addr(&p->il, il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED}));
-    il_emit(&p->il, OP_ZERO, IT_VOID, temp, agg.idx);
+    il_emit(&p->il, OP_ZERO, IT_VOID, temp, agg.u);
   }
   u32 num_fields = has_fields ? type_info(p, st)->num_fields : 0;
   u32 first_field = has_fields ? type_info(p, st)->first_field : 0;
@@ -2344,7 +2341,7 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   bool is_pointer = type_is_pointer(p, e->type);
   bool is_array = type_is_array(p, e->type);
   if (!is_slice && (is_pointer || is_array)) {
-    if (first.type.idx != TY_UNKNOWN && !type_is_integer(first.type)) {
+    if (first.type.u != TY_UNKNOWN && !type_is_integer(first.type)) {
       error_at(p, first_at, "Index must be an integer, not %s.", type_str(p, first.type));
     }
     check_const_conversion(p, ty_i64, &first, first_at);
@@ -2659,7 +2656,7 @@ static void primary(Parser* p, ExpDesc* e) {
           e->kind = EK_CONST;
           e->v.i = f->offset;
         }
-      } else if (t.idx != TY_UNKNOWN) {
+      } else if (t.u != TY_UNKNOWN) {
         error_at(p, type_at, "offsetof expects a struct, not %s.", type_str(p, t));
       }
       check_match(p, TK_RPAREN, TK_LPAREN, at);
@@ -2709,7 +2706,7 @@ static void declare_const(Parser* p,
   NamedConst c = {t, v->v};
   if (type_is_float(t) && type_is_integer(v->type)) {
     c.v.f = (double)v->v.i;
-  } else if (t.idx == TY_F32) {
+  } else if (t.u == TY_F32) {
     c.v.f = (float)v->v.f;
   }
   if (toplevel) {
@@ -2760,7 +2757,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
       l->slot = emit_local_slot(p, t, name, at);
       if (!has_value && type_is_struct(p, t)) {
         Ref addr = il_slot_addr(&p->il, l->slot);
-        il_emit(&p->il, OP_ZERO, IT_VOID, addr, type_info(p, t)->agg.idx);
+        il_emit(&p->il, OP_ZERO, IT_VOID, addr, type_info(p, t)->agg.u);
         return;
       }
       if (!has_value) {
@@ -2867,7 +2864,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         declare_const(p, name, at, toplevel, v.type, &v, value_at);
       } else if (declares) {
         check_not_void(p, &v, value_at);
-        if (v.type.idx == TY_NULL && (toplevel || !loc)) {
+        if (v.type.u == TY_NULL && (toplevel || !loc)) {
           error_at(p, value_at, "Can't infer a type from null.");
         }
         TypeId t = type_concrete(v.type);
@@ -2930,7 +2927,7 @@ static void simple_stat(Parser* p) {
       u32 return_at = p->ls.pos.t.offset;
       next(p);
       if (T(p) == TK_NEWLINE || block_follow(T(p))) {
-        if (p->ret_type.idx != TY_VOID && p->ret_type.idx != TY_UNKNOWN) {
+        if (p->ret_type.u != TY_VOID && p->ret_type.u != TY_UNKNOWN) {
           error_at(p, return_at, "Missing return value in a function returning %s.",
                    type_str(p, p->ret_type));
         }
@@ -2941,7 +2938,7 @@ static void simple_stat(Parser* p) {
         u32 at = p->ls.pos.t.offset;
         ExpDesc e;
         subexpr(p, -1, &e);
-        if (p->ret_type.idx == TY_VOID) {
+        if (p->ret_type.u == TY_VOID) {
           error_at(p, at, "Can't return a value from a function with no return type.");
         }
         if (!assignable(p, e.type, p->ret_type)) {
@@ -3052,12 +3049,12 @@ static Flow suite(Parser* p) {
 // next branch. A suite that falls through jumps to the block after the whole
 // 'if', which is declared in *end when it's first needed, because there isn't
 // one if every branch returns.
-static Flow if_branch(Parser* p, u32* end) {
+static Flow if_branch(Parser* p, BlockId* end) {
   if (EMIT) {
     il_source_pos(&p->il, p->ls.pos.t.offset);
   }
   Ref condition = cond(p);
-  u32 next_branch = 0;
+  BlockId next_branch = {0};
   if (EMIT) {
     next_branch = il_block_declare(&p->il);
     il_branch(&p->il, condition, next_branch);
@@ -3066,7 +3063,7 @@ static Flow if_branch(Parser* p, u32* end) {
   Flow flow = suite(p);
   if (EMIT) {
     if (flow == FLOW_FALLS_THROUGH) {
-      if (*end == IL_BLOCK_NONE) {
+      if (end->u == IL_BLOCK_NONE) {
         *end = il_block_declare(&p->il);
       }
       il_jump(&p->il, *end);
@@ -3196,7 +3193,7 @@ static void funcdef(Parser* p, bool is_method) {
   }
   check(p, TK_COLON);
   Flow flow = suite(p);
-  if (flow == FLOW_FALLS_THROUGH && p->ret_type.idx != TY_VOID) {
+  if (flow == FLOW_FALLS_THROUGH && p->ret_type.u != TY_VOID) {
     error_at(p, name_at, "Missing return at the end of a function returning %s.",
              type_str(p, p->ret_type));
   }
@@ -3226,7 +3223,7 @@ static Flow stat(Parser* p) {
   switch (T(p)) {
     case TK_IF: {
       next(p);
-      u32 end = IL_BLOCK_NONE;
+      BlockId end = {IL_BLOCK_NONE};
       // &= rather than &&, so that every branch is still parsed.
       bool returns = if_branch(p, &end) == FLOW_RETURNS;
       while (optional(p, TK_ELIF)) {
@@ -3240,7 +3237,7 @@ static Flow stat(Parser* p) {
       }
       // The else suite, or the last condition being false, continues into
       // the end block.
-      if (EMIT && end != IL_BLOCK_NONE) {
+      if (EMIT && end.u != IL_BLOCK_NONE) {
         il_block_start(&p->il, end);
       }
       return returns ? FLOW_RETURNS : FLOW_FALLS_THROUGH;
@@ -3314,7 +3311,7 @@ static void struct_body(Parser* p, TypeId st) {
     while (type_is_array(p, inner)) {
       inner = type_info(p, inner)->elem;
     }
-    if (inner.idx == st.idx) {
+    if (inner.u == st.u) {
       const Name* n = name_of(p, type_info(p, st)->name);
       error_at(p, type_at, "'%.*s' can't contain itself.", (int)n->len, (const char*)n->str);
     }
@@ -3322,7 +3319,7 @@ static void struct_body(Parser* p, TypeId st) {
     u32 name_at = p->ls.pos.t.offset;
     check_name(p, "field name");
     for (u32 i = first; i < p->fields.num; ++i) {
-      if (p->fields.v[i].name.idx == name.idx) {
+      if (p->fields.v[i].name.u == name.u) {
         const Name* n = name_of(p, name);
         error_at(p, name_at, "Duplicate struct field name '%.*s'.", (int)n->len,
                  (const char*)n->str);
@@ -3468,7 +3465,7 @@ static void toplevel_stat(Parser* p) {
       *vec_push(p->ls.ctx, &p->types) =
           (TypeInfo){.kind = TYPE_STRUCT, .name = name, .agg = {AGG_NONE}};
       TypeId bound = p->type_params ? ty_unknown : st;
-      declare_definition(p, name, at, GK_TYPE | (bound.idx << GLOBAL_KIND_BITS));
+      declare_definition(p, name, at, GK_TYPE | (bound.u << GLOBAL_KIND_BITS));
       check(p, TK_COLON);
       struct_body(p, st);
       return;

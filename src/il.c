@@ -135,30 +135,30 @@ Ref il_call(IlFunc* f, IlType ty, Ref callee, const Ref* args, u32 n) {
 
 void il_copy(IlFunc* f, Ref dst, Ref src, AggId agg) {
   il_emit(f, OP_COPY, IT_VOID, dst, src);
-  il_emit(f, OP_EXT, IT_VOID, agg.idx, 0);
+  il_emit(f, OP_EXT, IT_VOID, agg.u, 0);
 }
 
-u32 il_block_declare(IlFunc* f) {
+BlockId il_block_declare(IlFunc* f) {
   // Block numbers are stored in an operand.
   if (f->block_starts.num >= (1u << 24)) {
     il_error_too_large(f);
   }
   *vec_push(f->ctx, &f->block_starts) = IL_BLOCK_UNSTARTED;
-  return f->block_starts.num - 1;
+  return (BlockId){f->block_starts.num - 1};
 }
 
-void il_block_start(IlFunc* f, u32 b) {
-  ASSERT(f->block_starts.v[b] == IL_BLOCK_UNSTARTED);
-  f->block_starts.v[b] = f->ins.num;
-  il_emit(f, OP_BLOCK, IT_VOID, b, 0);
+void il_block_start(IlFunc* f, BlockId b) {
+  ASSERT(f->block_starts.v[b.u] == IL_BLOCK_UNSTARTED);
+  f->block_starts.v[b.u] = f->ins.num;
+  il_emit(f, OP_BLOCK, IT_VOID, b.u, 0);
 }
 
-void il_jump(IlFunc* f, u32 b) {
-  il_emit(f, OP_JMP, IT_VOID, b, 0);
+void il_jump(IlFunc* f, BlockId b) {
+  il_emit(f, OP_JMP, IT_VOID, b.u, 0);
 }
 
-void il_branch(IlFunc* f, Ref cond, u32 b) {
-  il_emit(f, OP_BR, IT_VOID, cond, b);
+void il_branch(IlFunc* f, Ref cond, BlockId b) {
+  il_emit(f, OP_BR, IT_VOID, cond, b.u);
   il_block_start(f, il_block_declare(f));
 }
 
@@ -173,14 +173,14 @@ SlotId il_slot_add(IlFunc* f, IlType ty, NameId name) {
 }
 
 SlotId il_slot_add_agg(IlFunc* f, AggId agg, NameId name) {
-  ASSERT(agg.idx != AGG_NONE);
+  ASSERT(agg.u != AGG_NONE);
   SlotId slot = il_slot_add(f, IT_AGG, name);
-  f->slots.v[slot.idx].agg = agg;
+  f->slots.v[slot.u].agg = agg;
   return slot;
 }
 
 Ref il_slot_addr(IlFunc* f, SlotId slot) {
-  return il_emit(f, OP_SLOT, IT_I64, slot.idx, 0);
+  return il_emit(f, OP_SLOT, IT_I64, slot.u, 0);
 }
 
 void il_source_pos(IlFunc* f, u32 offset) {
@@ -231,11 +231,11 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   for (u32 i = 0; i < f->slots.num; ++i) {
     const IlSlot* s = &f->slots.v[i];
     if (s->type == IT_AGG) {
-      fprintf(out, "  slot $%u #%u", i, s->agg.idx);
+      fprintf(out, "  slot $%u #%u", i, s->agg.u);
     } else {
       fprintf(out, "  slot $%u %s", i, il_type_names[s->type]);
     }
-    if (s->name.idx != IL_SLOT_UNNAMED) {
+    if (s->name.u != IL_SLOT_UNNAMED) {
       const Name* n = lex_name(f->ctx, s->name);
       fprintf(out, " %.*s", (int)n->len, n->str);
     }

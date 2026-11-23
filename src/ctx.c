@@ -165,7 +165,7 @@ void hashtable_insert(Ctx* ctx, HashTable* t, HashSlot* s, u32 tag, u32 val) {
 }
 
 void namemap_set(Ctx* ctx, NameMap* m, NameId name, u32 val) {
-  u32 tag = name.idx + 1;
+  u32 tag = name.u + 1;
   HashSlot* s = hashtable_first(&m->table, tag);
   if (s->tag != 0) {
     s->val = val;

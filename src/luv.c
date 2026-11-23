@@ -134,7 +134,7 @@ static void print_func(Ctx* ctx, const IlFunc* f, const u8* src) {
 }
 
 static void print_agg(Ctx* ctx, AggId agg) {
-  il_dump_agg(ctx, agg.idx, stdout);
+  il_dump_agg(ctx, agg.u, stdout);
   fputc('\n', stdout);
 }
 

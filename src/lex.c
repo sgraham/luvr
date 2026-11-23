@@ -851,7 +851,7 @@ bool lex_same_pos_for_testing(const LexState* ls, const LexPos* a, const LexPos*
     case TK_NAME:
     case TK_TYPENAME:
     case TK_TYPEPARAM:
-      return ta->v.name.idx == tb->v.name.idx;
+      return ta->v.name.u == tb->v.name.u;
     case TK_INTLIT:
     case TK_FLOATLIT:
       return ta->v.i == tb->v.i;
@@ -865,6 +865,6 @@ bool lex_same_pos_for_testing(const LexState* ls, const LexPos* a, const LexPos*
       return alen == blen && memcmp(as, bs, alen) == 0;
     }
     default:
-      return ta->kind < TK_FIRST_KEYWORD || ta->v.name.idx == tb->v.name.idx;
+      return ta->kind < TK_FIRST_KEYWORD || ta->v.name.u == tb->v.name.u;
   }
 }
