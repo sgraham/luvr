@@ -129,11 +129,9 @@ struct TypeInfo {
       NameId name;
       u32 first_field;  // in Parser.fields
       u32 num_fields;
-      // size, align and the fields' offsets are only set if has_layout (see
-      // type_has_layout()).
-      u32 size;
-      u32 align;
-      bool has_layout;  // TODO: consider removing this and using align==0 as flag.
+      // agg.idx is AGG_NONE if the layout isn't known (see type_has_layout()).
+      // The fields' offsets are only set if it's known.
+      AggId agg;
     };
     struct {  // TYPE_ARRAY
       TypeId elem;
@@ -142,8 +140,9 @@ struct TypeInfo {
   };
 };
 
-// A struct's field. The offset is only set if the struct's TypeInfo has
-// has_layout set.
+#define AGG_NONE UINT32_MAX
+
+// A struct's field. The offset is only set if the struct's layout is known.
 struct Field {
   NameId name;
   TypeId type;
@@ -2002,9 +2001,13 @@ static TypeId sizeof_operand(Parser* p) {
 // until the end of its definition, or for a struct with a field whose layout
 // isn't known, as with generic struct fields. An array has a layout if its
 // element type does.
+static const AggInfo* struct_agg(Parser* p, TypeId st) {
+  return il_agg(p->ls.ctx, type_info(p, st)->agg);
+}
+
 static bool type_has_layout(Parser* p, TypeId t) {
   if (type_is_struct(p, t)) {
-    return type_info(p, t)->has_layout;
+    return type_info(p, t)->agg.idx != AGG_NONE;
   }
   if (type_is_array(p, t)) {
     return type_has_layout(p, type_info(p, t)->elem);
@@ -2025,7 +2028,7 @@ static u32 type_size(Parser* p, TypeId t) {
     return 8;
   }
   if (type_is_struct(p, t)) {
-    return type_info(p, t)->size;
+    return struct_agg(p, t)->size;
   }
   if (type_is_array(p, t)) {
     return type_info(p, t)->count * type_size(p, type_info(p, t)->elem);
@@ -2049,7 +2052,7 @@ static u32 type_size(Parser* p, TypeId t) {
 static u32 type_align(Parser* p, TypeId t) {
   ASSERT(type_has_layout(p, t));
   if (type_is_struct(p, t)) {
-    return type_info(p, t)->align;
+    return 1u << struct_agg(p, t)->align_log2;
   }
   if (type_is_array(p, t)) {
     return type_align(p, type_info(p, t)->elem);
@@ -2058,6 +2061,52 @@ static u32 type_align(Parser* p, TypeId t) {
     return 8;
   }
   return type_size(p, t);
+}
+
+// The type that a scalar is loaded and stored as.
+static IlType il_mem_type_of(Parser* p, TypeId t) {
+  if (t.idx == TY_F32) {
+    return IT_F32;
+  }
+  if (t.idx == TY_F64) {
+    return IT_F64;
+  }
+  bool is_unsigned = t.idx == TY_BOOL || type_is_unsigned(t);
+  switch (type_size(p, t)) {
+    case 1:
+      return is_unsigned ? IT_U8 : IT_I8;
+    case 2:
+      return is_unsigned ? IT_U16 : IT_I16;
+    case 4:
+      return IT_I32;
+    default:
+      ASSERT(type_size(p, t) == 8);
+      return IT_I64;
+  }
+}
+
+// Appends the scalars of t, which is at offset, with structs and arrays
+// flattened. t's size can be at most AGG_MAX_CLASSIFIED, so that leaves has
+// room even if every scalar is a byte.
+static void type_agg_leaves(Parser* p, TypeId t, u32 offset, AggLeaf* leaves, u32* num_leaves) {
+  if (type_is_struct(p, t)) {
+    const TypeInfo* info = type_info(p, t);
+    for (u32 i = 0; i < info->num_fields; ++i) {
+      const Field* f = &p->fields.v[info->first_field + i];
+      type_agg_leaves(p, f->type, offset + f->offset, leaves, num_leaves);
+    }
+  } else if (type_is_array(p, t)) {
+    TypeId elem = type_info(p, t)->elem;
+    u32 elem_size = type_size(p, elem);
+    for (u32 i = 0; i < type_info(p, t)->count; ++i) {
+      type_agg_leaves(p, elem, offset + i * elem_size, leaves, num_leaves);
+    }
+  } else if (t.idx == TY_STR) {
+    leaves[(*num_leaves)++] = (AggLeaf){offset, IT_I64};
+    leaves[(*num_leaves)++] = (AggLeaf){offset + 8, IT_I64};
+  } else {
+    leaves[(*num_leaves)++] = (AggLeaf){offset, il_mem_type_of(p, t)};
+  }
 }
 
 static const Field* struct_field(Parser* p, TypeId st, NameId name) {
@@ -2525,7 +2574,7 @@ static void primary(Parser* p, ExpDesc* e) {
         if (!f) {
           field_error(p, t, name, name_at);
         }
-        if (type_info(p, t)->has_layout) {
+        if (type_has_layout(p, t)) {
           e->type = ty_untyped_int;
           e->kind = EK_CONST;
           e->v.i = f->offset;
@@ -3218,10 +3267,14 @@ static void struct_body(Parser* p, TypeId st) {
   TypeInfo* info = type_info(p, st);
   info->first_field = first;
   info->num_fields = p->fields.num - first;
-  info->has_layout = known;
   if (known) {
-    info->size = align_up(size, align);
-    info->align = align;
+    size = align_up(size, align);
+    AggLeaf leaves[AGG_MAX_CLASSIFIED];
+    u32 num_leaves = 0;
+    if (size <= AGG_MAX_CLASSIFIED) {
+      type_agg_leaves(p, st, 0, leaves, &num_leaves);
+    }
+    info->agg = il_agg_add(p->ls.ctx, size, align, leaves, num_leaves);
   }
 }
 
@@ -3321,7 +3374,8 @@ static void toplevel_stat(Parser* p) {
       // The layout isn't known until the body ends, so the struct can only
       // refer to itself through pointers.
       TypeId st = {p->types.num};
-      *vec_push(p->ls.ctx, &p->types) = (TypeInfo){.kind = TYPE_STRUCT, .name = name};
+      *vec_push(p->ls.ctx, &p->types) =
+          (TypeInfo){.kind = TYPE_STRUCT, .name = name, .agg = {AGG_NONE}};
       TypeId bound = p->type_params ? ty_unknown : st;
       declare_definition(p, name, at, GK_TYPE | (bound.idx << GLOBAL_KIND_BITS));
       check(p, TK_COLON);

@@ -3797,6 +3797,19 @@ QBE's `isdark`, its union handling, and the SysV classes for `long double`
 and vectors (X87, SSEUP) aren't needed, since luv has no packed structs,
 unions, `long double` or vector types.
 
+Implemented (2026-11-22) as `il_agg_add` in il.c, which classifies from the
+struct's scalars flattened into `AggLeaf {offset, IlType}`. A struct's
+`TypeInfo` holds an `AggId`, which replaced its own size and alignment.
+Leaves are only collected for structs of up to 32 bytes.
+
+Win arm64 and Linux AAPCS64 need nothing more. Win arm64 differs only in
+variadic calls, where floats and HFAs go in GPRs. RISC-V's LP64D (and
+LoongArch's) would need a different kind of summary. An aggregate of at most
+16 bytes that flattens to one float, two floats, or one float and one
+integer is passed field by field in FPRs, or an FPR and a GPR (`{f32, i32}`
+is `fa0` and `a0`). That needs each of up to two leaves' class, width and
+offset. Since `il_agg_add` already gets the leaves, that's a local change.
+
 C-style unsafe unions and an equivalent of `__attribute__((packed))` are
 likely to be wanted eventually, though not soon. The summary record would
 need to grow for them:

@@ -301,3 +301,48 @@ void il_dump_data(const Ctx* ctx, u32 i, FILE* out) {
   }
   fputs("\"\n", out);
 }
+
+static bool il_type_is_float(IlType ty) {
+  return ty == IT_F32 || ty == IT_F64;
+}
+
+AggId il_agg_add(Ctx* ctx, u32 size, u32 align, const AggLeaf* leaves, u32 num_leaves) {
+  ASSERT(align != 0 && (align & (align - 1)) == 0 && align <= 8);
+  u8 abi = 0;
+  if (size <= AGG_MAX_CLASSIFIED) {
+    ASSERT(num_leaves <= size);
+    bool has_scalar[2] = {false, false};
+    bool has_int[2] = {false, false};
+    bool same_type = true;
+    for (u32 i = 0; i < num_leaves; ++i) {
+      ASSERT(leaves[i].offset < size);
+      same_type = same_type && leaves[i].type == leaves[0].type;
+      u32 eightbyte = leaves[i].offset / 8;
+      if (eightbyte < 2) {
+        has_scalar[eightbyte] = true;
+        has_int[eightbyte] = has_int[eightbyte] || !il_type_is_float(leaves[i].type);
+      }
+    }
+    if (size <= 16) {
+      if (has_scalar[0] && !has_int[0]) {
+        abi |= AGG_SSE0;
+      }
+      if (has_scalar[1] && !has_int[1]) {
+        abi |= AGG_SSE1;
+      }
+    }
+    if (same_type && num_leaves >= 1 && num_leaves <= 4) {
+      if (leaves[0].type == IT_F32) {
+        abi |= AGG_HFA_F32;
+      } else if (leaves[0].type == IT_F64) {
+        abi |= AGG_HFA_F64;
+      }
+    }
+  }
+  u8 align_log2 = 0;
+  while ((1u << align_log2) < align) {
+    ++align_log2;
+  }
+  *vec_push(ctx, &ctx->aggs) = (AggInfo){.size = size, .align_log2 = align_log2, .abi = abi};
+  return (AggId){ctx->aggs.num - 1};
+}

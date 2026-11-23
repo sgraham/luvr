@@ -1,5 +1,8 @@
 #pragma once
 
+typedef struct AggId AggId;
+typedef struct AggInfo AggInfo;
+typedef struct AggLeaf AggLeaf;
 typedef struct Ctx Ctx;
 typedef struct FileBuf FileBuf;
 typedef struct HashSlot HashSlot;
@@ -499,6 +502,9 @@ struct Ctx {
   VEC(u8) databytes;
   // The number of entries of data that have been printed as IL text.
   u32 data_printed;
+
+  // The layout of each struct type, indexed by AggId.
+  VEC(AggInfo) aggs;
 };
 
 bool ctx_init(Ctx* ctx);
@@ -890,6 +896,41 @@ struct IlData {
   u32 len;
 };
 
+// What each target's ABI needs to know to pass or return an aggregate. SysV
+// x64 reads the size and the SSE bits, arm64 the size and the HFA bits, and
+// Win64 only the size.
+typedef enum AggAbi {
+  // All of the scalars in the first eightbyte of an aggregate of at most 16
+  // bytes are floats. SysV passes such an eightbyte in an xmm register.
+  AGG_SSE0 = 1 << 0,
+  AGG_SSE1 = 1 << 1,  // Similarly, the second eightbyte.
+  // The aggregate is 1 to 4 scalars that are all f32 or all f64. arm64 passes
+  // each of them in its own v register.
+  AGG_HFA_F32 = 1 << 2,
+  AGG_HFA_F64 = 1 << 3,
+} AggAbi;
+
+struct AggInfo {
+  u32 size;
+  u8 align_log2;
+  u8 abi;  // AggAbi bits
+};
+
+// Index of an AggInfo in Ctx.aggs.
+struct AggId {
+  u32 idx;
+};
+
+// The largest aggregate that can have any AggAbi bits, which is an HFA of
+// four f64s. Larger aggregates are classified by their size alone.
+#define AGG_MAX_CLASSIFIED 32
+
+// A scalar in an aggregate, with nested aggregates and arrays flattened.
+struct AggLeaf {
+  u32 offset;
+  IlType type;  // as it's stored in memory
+};
+
 void il_init(IlFunc* f, Ctx* ctx);
 void il_free(IlFunc* f);
 
@@ -940,3 +981,11 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out);
 
 // Writes the text form of Ctx.data[i].
 void il_dump_data(const Ctx* ctx, u32 i, FILE* out);
+
+// Adds an aggregate that's made of the num_leaves scalars at leaves. The
+// leaves are only read if size <= AGG_MAX_CLASSIFIED.
+AggId il_agg_add(Ctx* ctx, u32 size, u32 align, const AggLeaf* leaves, u32 num_leaves);
+
+static inline const AggInfo* il_agg(const Ctx* ctx, AggId id) {
+  return &ctx->aggs.v[id.idx];
+}

@@ -288,6 +288,61 @@ static void test_il_data(void) {
   ctx_free(&ctx);
 }
 
+static void test_il_agg_add(void) {
+  // The checked cases in the design notes, and a few around the limits.
+  static const struct {
+    const char* what;
+    u32 size;
+    u32 align;
+    AggLeaf leaves[6];
+    u32 num_leaves;
+    u8 want_abi;
+  } cases[] = {
+      {"str", 16, 8, {{0, IT_I64}, {8, IT_I64}}, 2, 0},
+      {"f32, f32", 8, 4, {{0, IT_F32}, {4, IT_F32}}, 2, AGG_SSE0 | AGG_HFA_F32},
+      {"f32, f32, f32",
+       12,
+       4,
+       {{0, IT_F32}, {4, IT_F32}, {8, IT_F32}},
+       3,
+       AGG_SSE0 | AGG_SSE1 | AGG_HFA_F32},
+      {"f64, f64", 16, 8, {{0, IT_F64}, {8, IT_F64}}, 2, AGG_SSE0 | AGG_SSE1 | AGG_HFA_F64},
+      {"f64 x 4", 32, 8, {{0, IT_F64}, {8, IT_F64}, {16, IT_F64}, {24, IT_F64}}, 4, AGG_HFA_F64},
+      {"[4]f32",
+       16,
+       4,
+       {{0, IT_F32}, {4, IT_F32}, {8, IT_F32}, {12, IT_F32}},
+       4,
+       AGG_SSE0 | AGG_SSE1 | AGG_HFA_F32},
+      {"f32, i32", 8, 4, {{0, IT_F32}, {4, IT_I32}}, 2, 0},
+      {"f64, i64", 16, 8, {{0, IT_F64}, {8, IT_I64}}, 2, AGG_SSE0},
+      {"f32, f32, f64", 16, 8, {{0, IT_F32}, {4, IT_F32}, {8, IT_F64}}, 3, AGG_SSE0 | AGG_SSE1},
+      {"f64, f32", 16, 8, {{0, IT_F64}, {8, IT_F32}}, 2, AGG_SSE0 | AGG_SSE1},
+      {"i32, i32, i32", 12, 4, {{0, IT_I32}, {4, IT_I32}, {8, IT_I32}}, 3, 0},
+      {"u8, u8, u8", 3, 1, {{0, IT_U8}, {1, IT_U8}, {2, IT_U8}}, 3, 0},
+      {"i16, u8", 4, 2, {{0, IT_I16}, {2, IT_U8}}, 2, 0},
+      {"i64 x 3", 24, 8, {{0, IT_I64}, {8, IT_I64}, {16, IT_I64}}, 3, 0},
+      {"f32 x 5", 20, 4, {{0, IT_F32}, {4, IT_F32}, {8, IT_F32}, {12, IT_F32}, {16, IT_F32}}, 5, 0},
+      {"i32, f32, f64", 16, 8, {{0, IT_I32}, {4, IT_F32}, {8, IT_F64}}, 3, AGG_SSE1},
+      {"f64 x 4 (too large to read)", 40, 8, {{0, IT_F64}}, 1, 0},
+  };
+  Ctx ctx;
+  CHECK(ctx_init(&ctx));
+  for (size_t i = 0; i < COUNTOF(cases); ++i) {
+    AggId agg =
+        il_agg_add(&ctx, cases[i].size, cases[i].align, cases[i].leaves, cases[i].num_leaves);
+    const AggInfo* got = il_agg(&ctx, agg);
+    if (agg.idx != i || got->size != cases[i].size || 1u << got->align_log2 != cases[i].align ||
+        got->abi != cases[i].want_abi) {
+      printf("il_agg_add(%s) = #%u {size %u, align %u, abi %#x}, want #%zu {%u, %u, %#x}\n",
+             cases[i].what, agg.idx, got->size, 1u << got->align_log2, got->abi, i, cases[i].size,
+             cases[i].align, cases[i].want_abi);
+      ++failures;
+    }
+  }
+  ctx_free(&ctx);
+}
+
 int main(void) {
   test_path_dir_len();
   test_path_stem();
@@ -299,5 +354,6 @@ int main(void) {
   test_il_slots();
   test_il_call();
   test_il_data();
+  test_il_agg_add();
   return failures ? 1 : 0;
 }
