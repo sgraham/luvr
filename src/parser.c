@@ -154,7 +154,7 @@ struct Field {
 // to reduce unnecessarily large searches.
 struct NamedConst {
   TypeId type;
-  ConstValue v;
+  ConstValue cv;
 };
 
 // A top-level function. Its sym is FUNC_NO_SYM in the checking build, and
@@ -251,7 +251,7 @@ typedef enum Flow {
 // Where an expression's value is.
 typedef enum ExpKind {
   EK_REF,    // the result of an instruction or constant, in ExpDesc.ref
-  EK_CONST,  // in ExpDesc.v
+  EK_CONST,  // in ExpDesc.cv
   EK_LOCAL,  // in ExpDesc.slot, not loaded yet
   EK_ADDR,   // in memory at ExpDesc.base + ExpDesc.offset, not loaded yet
   EK_STR,    // a string literal, whose bytes are Ctx.data at ExpDesc.data
@@ -273,7 +273,7 @@ struct ExpDesc {
       u32 offset;
     };
   };
-  ConstValue v;
+  ConstValue cv;
 };
 
 static_assert(sizeof(ExpDesc) == 32, "unexpected ExpDesc size");
@@ -482,7 +482,7 @@ static void declare_global(Parser* p, NameId name, GlobalInfo info) {
 static NOINLINE void load_named_const(ExpDesc* e, const NamedConst* c) {
   e->type = c->type;
   e->kind = EK_CONST;
-  e->v = c->v;
+  e->cv = c->cv;
 }
 
 // Locals
@@ -1003,7 +1003,7 @@ static const char* float_str(Parser* p, double v) {
 }
 
 static const char* const_str(Parser* p, const ExpDesc* e) {
-  return type_is_float(e->type) ? float_str(p, e->v.f) : int_str(p, e->v.i);
+  return type_is_float(e->type) ? float_str(p, e->cv.f) : int_str(p, e->cv.i);
 }
 
 // Whether a value of type `from` can be used, without a cast, where `to` is
@@ -1041,14 +1041,14 @@ static bool const_exact_in_float(ConstInt v, TypeId t) {
 // round to infinity.
 static NOINLINE void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
   if (!type_is_integer(e->type)) {
-    float f = (float)e->v.f;
+    float f = (float)e->cv.f;
     if (t.u == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
-      error_at(p, at, "%s doesn't fit in f32.", float_str(p, e->v.f));
+      error_at(p, at, "%s doesn't fit in f32.", float_str(p, e->cv.f));
     }
-  } else if (type_is_integer(t) && !type_is_untyped(t) && !const_fits_in_type(e->v.i, t)) {
-    error_at(p, at, "%s doesn't fit in %s.", int_str(p, e->v.i), type_str(p, t));
-  } else if ((t.u == TY_F32 || t.u == TY_F64) && !const_exact_in_float(e->v.i, t)) {
-    error_at(p, at, "%s can't be represented exactly in %s.", int_str(p, e->v.i), type_str(p, t));
+  } else if (type_is_integer(t) && !type_is_untyped(t) && !const_fits_in_type(e->cv.i, t)) {
+    error_at(p, at, "%s doesn't fit in %s.", int_str(p, e->cv.i), type_str(p, t));
+  } else if ((t.u == TY_F32 || t.u == TY_F64) && !const_exact_in_float(e->cv.i, t)) {
+    error_at(p, at, "%s can't be represented exactly in %s.", int_str(p, e->cv.i), type_str(p, t));
   }
 }
 
@@ -1059,7 +1059,7 @@ static void check_const_conversion(Parser* p, TypeId to, const ExpDesc* e, u32 a
   if (e->kind != EK_CONST || !type_is_untyped(e->type)) {
     return;
   }
-  if (e->type.u != TY_UNTYPED_INT || (ConstUInt)e->v.i >= 128) {
+  if (e->type.u != TY_UNTYPED_INT || (ConstUInt)e->cv.i >= 128) {
     check_const_fits(p, e, to, at);
   }
 }
@@ -1078,13 +1078,13 @@ static u32 array_size(Parser* p) {
   if (e.kind != EK_CONST || !type_is_integer(e.type)) {
     error_at(p, at, "Array size must be a constant integer.");
   }
-  if (e.v.i < 0) {
+  if (e.cv.i < 0) {
     error_at(p, at, "Array size can't be negative.");
   }
-  if (e.v.i > UINT32_MAX) {
-    error_at(p, at, "Array size %s is too large.", int_str(p, e.v.i));
+  if (e.cv.i > UINT32_MAX) {
+    error_at(p, at, "Array size %s is too large.", int_str(p, e.cv.i));
   }
-  return (u32)e.v.i;
+  return (u32)e.cv.i;
 }
 
 // There's no syntax for function types, so functions can't be values. Out of
@@ -1177,9 +1177,9 @@ static const char* const overflow_error[] = {
 static bool const_is_zero(const ExpDesc* e) {
   ASSERT(e->kind == EK_CONST);
   if (type_is_integer(e->type)) {
-    return e->v.i == 0;
+    return e->cv.i == 0;
   }
-  return type_is_float(e->type) && e->v.f == 0;
+  return type_is_float(e->type) && e->cv.f == 0;
 }
 
 // A constant zero divisor is an error even when the dividend isn't constant.
@@ -1195,11 +1195,11 @@ static void check_shift_count(Parser* p, BinOpr op, TypeId t, const ExpDesc* rhs
   if ((op != OPR_SHL && op != OPR_SHR) || rhs->kind != EK_CONST || !type_is_integer(rhs->type)) {
     return;
   }
-  if (rhs->v.i < 0) {
-    error_at(p, at, "Shift count %s is negative.", int_str(p, rhs->v.i));
+  if (rhs->cv.i < 0) {
+    error_at(p, at, "Shift count %s is negative.", int_str(p, rhs->cv.i));
   }
-  if (type_is_integer(t) && !type_is_untyped(t) && rhs->v.i >= type_int_bits(t)) {
-    error_at(p, at, "Shift count %s is too large for %s.", int_str(p, rhs->v.i), type_str(p, t));
+  if (type_is_integer(t) && !type_is_untyped(t) && rhs->cv.i >= type_int_bits(t)) {
+    error_at(p, at, "Shift count %s is too large for %s.", int_str(p, rhs->cv.i), type_str(p, t));
   }
 }
 
@@ -1232,8 +1232,8 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
   double fr = 0;
   ConstInt ir = 0;
   if (type_is_float(t)) {
-    double a = type_is_float(e->type) ? e->v.f : (double)e->v.i;
-    double b = type_is_float(rhs->type) ? rhs->v.f : (double)rhs->v.i;
+    double a = type_is_float(e->type) ? e->cv.f : (double)e->cv.i;
+    double b = type_is_float(rhs->type) ? rhs->cv.f : (double)rhs->cv.i;
     switch (op) {
       case OPR_ADD:
         fr = a + b;
@@ -1256,8 +1256,8 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
     }
     overflow = isinf(fr);
   } else {
-    ConstInt a = e->v.i;
-    ConstInt b = rhs->v.i;
+    ConstInt a = e->cv.i;
+    ConstInt b = rhs->cv.i;
     switch (op) {
       case OPR_ADD:
         overflow = __builtin_add_overflow(a, b, &ir);
@@ -1321,9 +1321,9 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
     error_at(p, at, overflow_error[op], swap ? bs : as, swap ? as : bs);
   }
   if (type_is_float(t)) {
-    e->v.f = fr;
+    e->cv.f = fr;
   } else {
-    e->v.i = ir;
+    e->cv.i = ir;
   }
 }
 
@@ -1336,21 +1336,21 @@ static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
     double d;
     if (type_is_integer(e->type)) {
       // Every ConstInt is in range of f32.
-      d = t.u == TY_F32 ? (double)(float)e->v.i : (double)e->v.i;
+      d = t.u == TY_F32 ? (double)(float)e->cv.i : (double)e->cv.i;
     } else {
-      float f = (float)e->v.f;
+      float f = (float)e->cv.f;
       if (t.u == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
-        error_at(p, at, "%s doesn't fit in f32.", float_str(p, e->v.f));
+        error_at(p, at, "%s doesn't fit in f32.", float_str(p, e->cv.f));
       }
-      d = t.u == TY_F32 ? (double)f : e->v.f;
+      d = t.u == TY_F32 ? (double)f : e->cv.f;
     }
-    e->v.f = d;
+    e->cv.f = d;
     return;
   }
   if (type_is_float(e->type)) {
     // Doubles outside of ConstInt's range are all integral, so they only need
     // the range check.
-    double d = e->v.f;
+    double d = e->cv.f;
     bool in_range = d >= -0x1p127 && d < 0x1p127;
     if (in_range && (double)(ConstInt)d != d) {
       error_at(p, at, "%s isn't an integer.", float_str(p, d));
@@ -1358,11 +1358,11 @@ static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
     if (!in_range || !const_fits_in_type((ConstInt)d, t)) {
       error_at(p, at, "%s doesn't fit in %s.", float_str(p, d), type_str(p, t));
     }
-    e->v.i = (ConstInt)d;
+    e->cv.i = (ConstInt)d;
     return;
   }
-  if (!const_fits_in_type(e->v.i, t)) {
-    error_at(p, at, "%s doesn't fit in %s.", int_str(p, e->v.i), type_str(p, t));
+  if (!const_fits_in_type(e->cv.i, t)) {
+    error_at(p, at, "%s doesn't fit in %s.", int_str(p, e->cv.i), type_str(p, t));
   }
 }
 
@@ -1371,15 +1371,15 @@ static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
 static NOINLINE bool fold_compare(BinOpr op, const ExpDesc* a, const ExpDesc* b) {
   int c;
   if (a->type.u == TY_BOOL) {
-    c = (int)a->v.b - (int)b->v.b;
+    c = (int)a->cv.b - (int)b->cv.b;
   } else if (type_is_float(a->type) || type_is_float(b->type)) {
     // An integer here can only be an untyped constant, which is converted to
     // the float type, as in arithmetic.
-    double x = type_is_float(a->type) ? a->v.f : (double)a->v.i;
-    double y = type_is_float(b->type) ? b->v.f : (double)b->v.i;
+    double x = type_is_float(a->type) ? a->cv.f : (double)a->cv.i;
+    double y = type_is_float(b->type) ? b->cv.f : (double)b->cv.i;
     c = (x > y) - (x < y);
   } else {
-    c = (a->v.i > b->v.i) - (a->v.i < b->v.i);
+    c = (a->cv.i > b->cv.i) - (a->cv.i < b->cv.i);
   }
   switch (op) {
     case OPR_EQ:
@@ -1489,10 +1489,10 @@ static Ref emit_addr(Parser* p, const ExpDesc* e) {
 static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
   IlType ty = il_type_of(p, t, at);
   if (e->kind == EK_CONST && t.u == TY_BOOL) {
-    return il_const_int(&p->il, ty, e->v.b);
+    return il_const_int(&p->il, ty, e->cv.b);
   }
   if (e->kind == EK_CONST && type_is_integer(t)) {
-    return il_const_int(&p->il, ty, (u64)e->v.i);
+    return il_const_int(&p->il, ty, (u64)e->cv.i);
   }
   if (e->kind == EK_LOCAL) {
     Ref addr = il_slot_addr(&p->il, e->slot);
@@ -1658,21 +1658,21 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
     return;
   }
   if (type_is_float(t)) {
-    e->v.f = -e->v.f;
+    e->cv.f = -e->cv.f;
     return;
   }
   ConstInt r;
   if (!neg) {
     // Complementing a two's complement value of unlimited width gives
     // -x - 1, which is also right for signed types of any width.
-    r = type_is_unsigned(t) ? (((ConstInt)1 << type_int_bits(t)) - 1) ^ e->v.i : ~e->v.i;
-  } else if (__builtin_sub_overflow((ConstInt)0, e->v.i, &r)) {
+    r = type_is_unsigned(t) ? (((ConstInt)1 << type_int_bits(t)) - 1) ^ e->cv.i : ~e->cv.i;
+  } else if (__builtin_sub_overflow((ConstInt)0, e->cv.i, &r)) {
     error_at(p, at, "Constant overflows.");
   }
   if (!type_is_untyped(t) && !const_fits_in_type(r, t)) {
     error_at(p, at, "%s doesn't fit in %s.", int_str(p, r), type_str(p, t));
   }
-  e->v.i = r;
+  e->cv.i = r;
 }
 
 // subexpr -> (primary | unop subexpr) { binop subexpr }
@@ -1690,7 +1690,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       expect_bool(p, e, at, "'not'");
       e->shape = SH_VALUE;
       if (e->kind == EK_CONST && e->type.u == TY_BOOL) {
-        e->v.b = !e->v.b;
+        e->cv.b = !e->cv.b;
       } else if (EMIT && e->type.u == TY_BOOL) {
         // A bool is 0 or 1.
         Ref v = emit_to_ref(p, e, ty_bool, at);
@@ -1788,7 +1788,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
         check_const_operands(p, op, t, e, start, &rhs, rhs_at, at);
         bool foldable = t.u == TY_BOOL || type_is_integer(t) || type_is_float(t);
         if (e->kind == EK_CONST && rhs.kind == EK_CONST && foldable) {
-          e->v.b = fold_compare(op, e, &rhs);
+          e->cv.b = fold_compare(op, e, &rhs);
           folded = true;
         }
       }
@@ -1806,7 +1806,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
       // operand is enough to decide the value.
       if (logical && e->kind == EK_CONST && rhs.kind == EK_CONST && e->type.u == TY_BOOL &&
           rhs.type.u == TY_BOOL) {
-        e->v.b = op == OPR_AND ? e->v.b && rhs.v.b : e->v.b || rhs.v.b;
+        e->cv.b = op == OPR_AND ? e->cv.b && rhs.cv.b : e->cv.b || rhs.cv.b;
       } else if (EMIT && logical) {
         e->kind = EK_LOCAL;
         e->slot = join.slot;
@@ -2361,8 +2361,8 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
     }
     check_const_conversion(p, ty_i64, &first, first_at);
     const TypeInfo* info = type_info(p, e->type);
-    if (is_array && first.kind == EK_CONST && (first.v.i < 0 || first.v.i >= info->count)) {
-      error_at(p, first_at, "Index %s is out of range for %s.", int_str(p, first.v.i),
+    if (is_array && first.kind == EK_CONST && (first.cv.i < 0 || first.cv.i >= info->count)) {
+      error_at(p, first_at, "Index %s is out of range for %s.", int_str(p, first.cv.i),
                type_str(p, e->type));
     }
     result = is_pointer ? info->pointee : info->elem;
@@ -2499,7 +2499,7 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_INTLIT:
       e->type = literal_type(p);
       e->kind = EK_CONST;
-      e->v.i = p->ls.pos.t.v.i;
+      e->cv.i = p->ls.pos.t.v.i;
       if (!type_is_untyped(e->type)) {
         check_const_fits(p, e, e->type, at);
       }
@@ -2508,7 +2508,7 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_FLOATLIT:
       e->type = literal_type(p);
       e->kind = EK_CONST;
-      e->v.f = p->ls.pos.t.v.f;
+      e->cv.f = p->ls.pos.t.v.f;
       if (!type_is_untyped(e->type)) {
         check_const_fits(p, e, e->type, at);
       }
@@ -2528,14 +2528,14 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_FALSE:
       e->type = ty_bool;
       e->kind = EK_CONST;
-      e->v.b = T(p) == TK_TRUE;
+      e->cv.b = T(p) == TK_TRUE;
       next(p);
       break;
     case TK_NULL:
       next(p);
       e->type = ty_null;
       e->kind = EK_CONST;
-      e->v.i = 0;
+      e->cv.i = 0;
       break;
     case TK_STRING_BEGIN:
       interpolated_string(p);
@@ -2643,7 +2643,7 @@ static void primary(Parser* p, ExpDesc* e) {
       if (type_has_layout(p, t)) {
         e->type = ty_untyped_int;
         e->kind = EK_CONST;
-        e->v.i = is_size ? type_size(p, t) : type_align(p, t);
+        e->cv.i = is_size ? type_size(p, t) : type_align(p, t);
       } else {
         e->type = ty_i64;
         exp_unemitted(e);
@@ -2669,7 +2669,7 @@ static void primary(Parser* p, ExpDesc* e) {
         if (type_has_layout(p, t)) {
           e->type = ty_untyped_int;
           e->kind = EK_CONST;
-          e->v.i = f->offset;
+          e->cv.i = f->offset;
         }
       } else if (t.u != TY_UNKNOWN) {
         error_at(p, type_at, "offsetof expects a struct, not %s.", type_str(p, t));
@@ -2718,11 +2718,11 @@ static void declare_const(Parser* p,
   if (v->kind != EK_CONST) {
     error_at(p, value_at, "Expected a constant expression.");
   }
-  NamedConst c = {t, v->v};
+  NamedConst c = {t, v->cv};
   if (type_is_float(t) && type_is_integer(v->type)) {
-    c.v.f = (double)v->v.i;
+    c.cv.f = (double)v->cv.i;
   } else if (t.u == TY_F32) {
-    c.v.f = (float)v->v.f;
+    c.cv.f = (float)v->cv.f;
   }
   if (toplevel) {
     u32 idx = p->global_consts.num;
@@ -3314,9 +3314,9 @@ static void image_extend(Parser* p, u32 size) {
 // Every target is little-endian.
 static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, u32 at) {
   if (t.u == TY_BOOL) {
-    p->image.v[offset] = defval->v.b;
+    p->image.v[offset] = defval->cv.b;
   } else if (type_is_integer(t)) {
-    u64 bits = (u64)defval->v.i;
+    u64 bits = (u64)defval->cv.i;
     for (u32 i = 0; i < type_size(p, t); ++i) {
       p->image.v[offset + i] = (u8)(bits >> (8 * i));
     }
