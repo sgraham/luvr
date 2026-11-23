@@ -133,6 +133,11 @@ Ref il_call(IlFunc* f, IlType ty, Ref callee, const Ref* args, u32 n) {
   return call;
 }
 
+void il_copy(IlFunc* f, Ref dst, Ref src, AggId agg) {
+  il_emit(f, OP_COPY, IT_VOID, dst, src);
+  il_emit(f, OP_EXT, IT_VOID, agg.idx, 0);
+}
+
 u32 il_block_declare(IlFunc* f) {
   // Block numbers are stored in an operand.
   if (f->block_starts.num >= (1u << 24)) {
@@ -157,21 +162,25 @@ void il_branch(IlFunc* f, Ref cond, u32 b) {
   il_block_start(f, il_block_declare(f));
 }
 
-u32 il_slot_add(IlFunc* f, IlType ty, NameId name) {
+SlotId il_slot_add(IlFunc* f, IlType ty, NameId name) {
   // Slot numbers are stored in an operand.
   if (f->slots.num >= (1u << 24)) {
     il_error_too_large(f);
   }
   IlSlot* s = vec_push(f->ctx, &f->slots);
   *s = (IlSlot){.name = name, .type = ty, .agg = {AGG_NONE}};
-  return f->slots.num - 1;
+  return (SlotId){f->slots.num - 1};
 }
 
-u32 il_slot_add_agg(IlFunc* f, AggId agg, NameId name) {
+SlotId il_slot_add_agg(IlFunc* f, AggId agg, NameId name) {
   ASSERT(agg.idx != AGG_NONE);
-  u32 slot = il_slot_add(f, IT_AGG, name);
-  f->slots.v[slot].agg = agg;
+  SlotId slot = il_slot_add(f, IT_AGG, name);
+  f->slots.v[slot.idx].agg = agg;
   return slot;
+}
+
+Ref il_slot_addr(IlFunc* f, SlotId slot) {
+  return il_emit(f, OP_SLOT, IT_I64, slot.idx, 0);
 }
 
 void il_source_pos(IlFunc* f, u32 offset) {
@@ -244,7 +253,7 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
       fprintf(out, ":%u\n", ins_a(ins));
       continue;
     }
-    // An EXT's operands are printed on its CALL's line.
+    // An EXT's operands are printed on its CALL's or COPY's line.
     if (op == OP_EXT) {
       continue;
     }
@@ -266,6 +275,14 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
         il_dump_ref(f, j % 2 ? ins_b(ext) : ins_a(ext), out);
       }
       fputc('\n', out);
+      continue;
+    }
+    if (op == OP_COPY) {
+      fputc(' ', out);
+      il_dump_ref(f, ins_a(ins), out);
+      fputs(", ", out);
+      il_dump_ref(f, ins_b(ins), out);
+      fprintf(out, ", #%u\n", ins_a(f->ins.v[i + 1]));
       continue;
     }
     u32 operands[2] = {ins_a(ins), ins_b(ins)};

@@ -204,16 +204,16 @@ static void test_il_slots(void) {
   CHECK(ctx_init(&ctx));
   IlFunc f;
   il_init_test(&f, &ctx, IT_I64);
-  u32 sx = il_slot_add(&f, IT_I64, lex_intern_safe(&ctx, "x"));
+  SlotId sx = il_slot_add(&f, IT_I64, lex_intern_safe(&ctx, "x"));
   il_slot_add(&f, IT_I32, (NameId){IL_SLOT_UNNAMED});
   const char* src = "def int main():\n    int x = 5\n    pass\n    return x\n";
   il_block_start(&f, il_block_declare(&f));
   il_source_pos(&f, (u32)(strstr(src, "int x") - src));
-  Ref addr = il_emit(&f, OP_SLOT, IT_I64, sx, 0);
+  Ref addr = il_slot_addr(&f, sx);
   il_emit(&f, OP_STORE, IT_I64, il_const_int(&f, IT_I64, 5), addr);
   il_source_pos(&f, (u32)(strstr(src, "pass") - src));
   il_source_pos(&f, (u32)(strstr(src, "return") - src));
-  addr = il_emit(&f, OP_SLOT, IT_I64, sx, 0);
+  addr = il_slot_addr(&f, sx);
   Ref v = il_emit(&f, OP_LOAD, IT_I64, addr, 0);
   il_emit(&f, OP_RET, IT_I64, v, 0);
   expect_il_dump(&f, src,
@@ -355,19 +355,25 @@ static void test_il_agg_slot(void) {
   AggId agg = il_agg_add(&ctx, 16, 8, leaves, 2);
   AggLeaf float_leaves[] = {{0, IT_F64}, {8, IT_F64}};
   il_agg_add(&ctx, 16, 8, float_leaves, 2);
-  u32 slot = il_slot_add_agg(&f, agg, lex_intern_safe(&ctx, "s"));
+  SlotId slot = il_slot_add_agg(&f, agg, lex_intern_safe(&ctx, "s"));
+  SlotId temp = il_slot_add_agg(&f, agg, (NameId){IL_SLOT_UNNAMED});
   il_block_start(&f, il_block_declare(&f));
-  Ref addr = il_emit(&f, OP_SLOT, IT_I64, slot, 0);
+  Ref addr = il_slot_addr(&f, slot);
   il_emit(&f, OP_ZERO, IT_VOID, addr, agg.idx);
+  Ref temp_addr = il_slot_addr(&f, temp);
+  il_copy(&f, temp_addr, addr, agg);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);
   expect_il_dump(&f, "",
                  "agg #0 16 8\n"
                  "agg #1 16 8 sse0 sse1 hfa_f64\n"
                  "func @f\n"
                  "  slot $0 #0 s\n"
+                 "  slot $1 #0\n"
                  ":0\n"
                  "  %1 = SLOT $0\n"
                  "  ZERO %1, #0\n"
+                 "  %3 = SLOT $1\n"
+                 "  COPY %3, %1, #0\n"
                  "  RET\n",
                  "test_il_agg_slot");
   il_free(&f);

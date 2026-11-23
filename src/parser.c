@@ -171,8 +171,8 @@ struct Local {
   LocalKind kind;
   // Only when EMIT. A parameter is a value, so it doesn't need a slot.
   union {
-    u32 slot;  // LK_VAR
-    Ref ref;   // LK_PARAM
+    SlotId slot;  // LK_VAR
+    Ref ref;      // LK_PARAM
   };
   // The Name's binding before this was declared. It's restored when the
   // function ends.
@@ -259,11 +259,11 @@ struct ExpDesc {
   u8 shape;  // Shape
   u8 kind;   // ExpKind
   union {
-    u32 slot;  // EK_LOCAL
-    Ref ref;   // EK_REF
-    u32 data;  // EK_STR
-    u32 sym;   // EK_FUNC
-    struct {   // EK_ADDR
+    SlotId slot;  // EK_LOCAL
+    Ref ref;      // EK_REF
+    u32 data;     // EK_STR
+    u32 sym;      // EK_FUNC
+    struct {      // EK_ADDR
       Ref base;
       u32 offset;
     };
@@ -1492,7 +1492,7 @@ static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
     return il_const_int(&p->il, ty, (u64)e->v.i);
   }
   if (e->kind == EK_LOCAL) {
-    Ref addr = il_emit(&p->il, OP_SLOT, IT_I64, e->slot, 0);
+    Ref addr = il_slot_addr(&p->il, e->slot);
     return il_emit(&p->il, OP_LOAD, ty, addr, 0);
   }
   if (e->kind == EK_ADDR) {
@@ -1504,15 +1504,42 @@ static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
   error_at(p, at, "This expression isn't supported yet.");
 }
 
-static void emit_store_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e, u32 at) {
+// Returns the address of the aggregate that e is.
+static Ref emit_agg_addr(Parser* p, const ExpDesc* e, u32 at) {
+  if (e->kind == EK_LOCAL) {
+    return il_slot_addr(&p->il, e->slot);
+  }
+  if (e->kind == EK_ADDR) {
+    return emit_addr(p, e);
+  }
+  error_at(p, at, "This expression isn't supported yet.");
+}
+
+static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e, u32 at) {
+  if (type_is_struct(p, dst->type)) {
+    Ref src = emit_agg_addr(p, e, at);
+    il_copy(&p->il, emit_addr(p, dst), src, type_info(p, dst->type)->agg);
+    return;
+  }
   Ref v = emit_to_ref(p, e, dst->type, at);
   il_emit(&p->il, OP_STORE, il_mem_type_of(p, dst->type), v, emit_addr(p, dst));
 }
 
-static void emit_store_local(Parser* p, const Local* l, const ExpDesc* e, u32 at) {
-  Ref addr = il_emit(&p->il, OP_SLOT, IT_I64, l->slot, 0);
+static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, u32 at) {
+  Ref addr = il_slot_addr(&p->il, l->slot);
+  if (type_is_struct(p, l->type)) {
+    il_copy(&p->il, addr, emit_agg_addr(p, e, at), type_info(p, l->type)->agg);
+    return;
+  }
   Ref v = emit_to_ref(p, e, l->type, at);
   il_emit(&p->il, OP_STORE, il_type_of(p, l->type, at), v, addr);
+}
+
+static SlotId emit_local_slot(Parser* p, TypeId t, NameId name, u32 at) {
+  if (type_is_struct(p, t) && type_has_layout(p, t)) {
+    return il_slot_add_agg(&p->il, type_info(p, t)->agg, name);
+  }
+  return il_slot_add(&p->il, il_type_of(p, t, at), name);
 }
 
 static void emit_print(Parser* p, const ExpDesc* e, u32 at) {
@@ -1573,7 +1600,7 @@ static void emit_infix(Parser* p, ExpDesc* e, u32 at) {
 // The value of an 'and' or 'or' is stored to a temporary slot on each path,
 // and loaded after the paths join.
 struct LogicalJoin {
-  u32 slot;
+  SlotId slot;
   u32 end;
 };
 
@@ -1583,7 +1610,7 @@ static void emit_logical_begin(Parser* p, BinOpr op, const ExpDesc* e, u32 at, L
   Ref left = emit_to_ref(p, e, ty_bool, at);
   join->slot = il_slot_add(&p->il, IT_I32, (NameId){IL_SLOT_UNNAMED});
   join->end = il_block_declare(&p->il);
-  il_emit(&p->il, OP_STORE, IT_I32, left, il_emit(&p->il, OP_SLOT, IT_I64, join->slot, 0));
+  il_emit(&p->il, OP_STORE, IT_I32, left, il_slot_addr(&p->il, join->slot));
   if (op == OPR_AND) {
     il_branch(&p->il, left, join->end);
   } else {
@@ -1596,7 +1623,7 @@ static void emit_logical_begin(Parser* p, BinOpr op, const ExpDesc* e, u32 at, L
 
 static void emit_logical_end(Parser* p, const ExpDesc* rhs, u32 at, const LogicalJoin* join) {
   Ref right = emit_to_ref(p, rhs, ty_bool, at);
-  il_emit(&p->il, OP_STORE, IT_I32, right, il_emit(&p->il, OP_SLOT, IT_I64, join->slot, 0));
+  il_emit(&p->il, OP_STORE, IT_I32, right, il_slot_addr(&p->il, join->slot));
   il_block_start(&p->il, join->end);
 }
 
@@ -2199,13 +2226,26 @@ static u32 call_args(Parser* p, TypeId callee, Ref* args) {
 // struct_args -> '(' [struct_arg {',' struct_arg}] ')'
 // struct_arg  -> ['.' name '='] expr
 //
-// The arguments of a literal of struct st are checked against its fields.
+// e is the struct type, and becomes the literal. The arguments are checked
+// against the struct's fields.
 // They're given in order, a designator moves to its field, and later
 // arguments continue from there. Fields that aren't given get their defaults.
 // Literals of generic structs aren't checked yet.
-static void struct_args(Parser* p, TypeId st) {
+static void struct_args(Parser* p, ExpDesc* e) {
   u32 at = p->ls.pos.t.offset;
+  TypeId st = e->type;
   bool has_fields = type_is_struct(p, st);
+  // The literal is built in a temporary, because most uses of it, such as an
+  // argument or a field of another literal, have nowhere else to build it.
+  Ref temp = 0;
+  if (EMIT) {
+    if (!has_fields || !type_has_layout(p, st)) {
+      error_at(p, at, "This struct literal isn't supported yet.");
+    }
+    AggId agg = type_info(p, st)->agg;
+    temp = il_slot_addr(&p->il, il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED}));
+    il_emit(&p->il, OP_ZERO, IT_VOID, temp, agg.idx);
+  }
   u32 num_fields = has_fields ? type_info(p, st)->num_fields : 0;
   u32 first_field = has_fields ? type_info(p, st)->first_field : 0;
   u32 field = 0;  // the field that the next positional argument gives
@@ -2251,16 +2291,20 @@ static void struct_args(Parser* p, TypeId st) {
         ++field;
       }
       u32 arg_at = p->ls.pos.t.offset;
-      ExpDesc e;
-      subexpr(p, -1, &e);
-      check_not_void(p, &e, arg_at);
-      if (f && !assignable(p, e.type, f->type)) {
+      ExpDesc arg;
+      subexpr(p, -1, &arg);
+      check_not_void(p, &arg, arg_at);
+      if (f && !assignable(p, arg.type, f->type)) {
         const Name* n = name_of(p, f->name);
         error_at(p, arg_at, "Argument %u is %s, but field '%.*s' is %s.", num_args,
-                 type_str(p, e.type), (int)n->len, (const char*)n->str, type_str(p, f->type));
+                 type_str(p, arg.type), (int)n->len, (const char*)n->str, type_str(p, f->type));
       }
       if (f) {
-        check_const_conversion(p, f->type, &e, arg_at);
+        check_const_conversion(p, f->type, &arg, arg_at);
+      }
+      if (EMIT) {
+        ExpDesc dst = {.type = f->type, .kind = EK_ADDR, .base = temp, .offset = f->offset};
+        emit_assign_to_addr(p, &dst, &arg, arg_at);
       }
       if (!optional(p, TK_COMMA)) {
         break;
@@ -2268,6 +2312,14 @@ static void struct_args(Parser* p, TypeId st) {
     }
   }
   check_match(p, TK_RPAREN, TK_LPAREN, at);
+  e->shape = SH_STRUCT_LITERAL;
+  if (EMIT) {
+    e->kind = EK_ADDR;
+    e->base = temp;
+    e->offset = 0;
+  } else {
+    exp_unemitted(e);
+  }
 }
 
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice). e is the
@@ -2344,7 +2396,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         if (EMIT && f && type_is_struct(p, e->type) && e->kind == EK_LOCAL) {
           // A field of a struct local is in the local's slot, so the slot's
           // address is the base.
-          Ref slot_addr = il_emit(&p->il, OP_SLOT, IT_I64, e->slot, 0);
+          Ref slot_addr = il_slot_addr(&p->il, e->slot);
           e->kind = EK_ADDR;
           e->base = slot_addr;
           e->offset = f->offset;
@@ -2367,14 +2419,12 @@ static void postfix(Parser* p, ExpDesc* e) {
         break;
       case TK_LPAREN: {
         u32 at = p->ls.pos.t.offset;
+        if (e->shape == SH_TYPE) {
+          struct_args(p, e);
+          break;
+        }
         if (EMIT && e->kind != EK_FUNC) {
           error_at(p, at, "This call isn't supported yet.");
-        }
-        if (e->shape == SH_TYPE) {
-          struct_args(p, e->type);
-          e->shape = SH_STRUCT_LITERAL;
-          exp_unemitted(e);
-          break;
         }
         TypeId callee = e->type;
 #if EMIT
@@ -2707,18 +2757,16 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
     declare_if_new(p, name, at, t);
     if (EMIT) {
       Local* l = lookup_in_func(p, name);
-      if (!has_value && type_is_struct(p, t) && type_has_layout(p, t)) {
-        AggId agg = type_info(p, t)->agg;
-        l->slot = il_slot_add_agg(&p->il, agg, name);
-        Ref addr = il_emit(&p->il, OP_SLOT, IT_I64, l->slot, 0);
-        il_emit(&p->il, OP_ZERO, IT_VOID, addr, agg.idx);
+      l->slot = emit_local_slot(p, t, name, at);
+      if (!has_value && type_is_struct(p, t)) {
+        Ref addr = il_slot_addr(&p->il, l->slot);
+        il_emit(&p->il, OP_ZERO, IT_VOID, addr, type_info(p, t)->agg.idx);
         return;
       }
-      l->slot = il_slot_add(&p->il, il_type_of(p, t, at), name);
       if (!has_value) {
         v = (ExpDesc){.type = t, .kind = EK_CONST};
       }
-      emit_store_local(p, l, &v, value_at);
+      emit_assign_to_local(p, l, &v, value_at);
     }
   }
 }
@@ -2834,15 +2882,15 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
             loc = declare_local(p, name, at, LK_VAR);
             loc->type = t;
             if (EMIT) {
-              loc->slot = il_slot_add(&p->il, il_type_of(p, t, at), name);
+              loc->slot = emit_local_slot(p, t, name, at);
             }
           }
           if (EMIT) {
-            emit_store_local(p, loc, &v, value_at);
+            emit_assign_to_local(p, loc, &v, value_at);
           }
         }
       } else if (EMIT && stores_field) {
-        emit_store_addr(p, &exp, &v, value_at);
+        emit_assign_to_addr(p, &exp, &v, value_at);
       }
       return;
     }

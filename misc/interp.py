@@ -268,6 +268,11 @@ def run(prog, f, args):
             size = prog.aggs[ins.operands[1].val].size
             mem.bytes[addr:addr + size] = bytes(size)
             continue
+        if ins.op == "COPY":
+            dst, src = (value_of(values, prog, o) for o in ins.operands[:2])
+            size = prog.aggs[ins.operands[2].val].size
+            mem.bytes[dst:dst + size] = mem.bytes[src:src + size]
+            continue
         if ins.op in ARITH:
             a, b = (value_of(values, prog, o) for o in ins.operands)
             values[ins.result] = wrap(ins.ty, ARITH[ins.op](a, b))

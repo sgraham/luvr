@@ -17,6 +17,7 @@ typedef struct Module Module;
 typedef struct Name Name;
 typedef struct NameId NameId;
 typedef struct NameMap NameMap;
+typedef struct SlotId SlotId;
 typedef struct StrRef StrRef;
 typedef struct Token Token;
 
@@ -777,6 +778,8 @@ typedef enum IlOperand {
 } IlOperand;
 
 // X(name, a, b, has_result), where a and b are IlOperands without OPND_.
+// EXTs hold the operands that don't fit in the instruction before them: a
+// CALL's arguments, or a COPY's AggId in a.
 #define IL_OPS(X)              \
   X(ADD, REF, REF, true)       \
   X(SUB, REF, REF, true)       \
@@ -799,6 +802,7 @@ typedef enum IlOperand {
   X(LOAD, REF, NONE, true)     \
   X(STORE, REF, REF, false)    \
   X(ZERO, REF, AGG, false)     \
+  X(COPY, REF, REF, false)     \
   X(BLOCK, BLOCK, NONE, false) \
   X(JMP, BLOCK, NONE, false)   \
   X(BR, REF, BLOCK, false)     \
@@ -862,6 +866,11 @@ static inline Ref ins_b(Ins i) {
 
 // Index of an AggInfo in Ctx.aggs.
 struct AggId {
+  u32 idx;
+};
+
+// An index in IlFunc.slots.
+struct SlotId {
   u32 idx;
 };
 
@@ -967,6 +976,9 @@ u32 il_data_add(Ctx* ctx, const u8* s, u32 n);
 // if the call has no result.
 Ref il_call(IlFunc* f, IlType ty, Ref callee, const Ref* args, u32 n);
 
+// Emits a COPY of the aggregate at src to dst, followed by an EXT with agg.
+void il_copy(IlFunc* f, Ref dst, Ref src, AggId agg);
+
 // Returns a new block, which can be jumped to before it's started.
 u32 il_block_declare(IlFunc* f);
 
@@ -979,11 +991,13 @@ void il_jump(IlFunc* f, u32 b);
 // because a branch is always the last instruction of its block.
 void il_branch(IlFunc* f, Ref cond, u32 b);
 
-// Returns a new slot holding a value of type ty. SLOT gives its address,
-// which LOAD and STORE use.
-u32 il_slot_add(IlFunc* f, IlType ty, NameId name);
+// Returns a new slot holding a value of type ty. il_slot_addr() gives its
+// address, which LOAD and STORE use.
+SlotId il_slot_add(IlFunc* f, IlType ty, NameId name);
 
-u32 il_slot_add_agg(IlFunc* f, AggId agg, NameId name);
+SlotId il_slot_add_agg(IlFunc* f, AggId agg, NameId name);
+
+Ref il_slot_addr(IlFunc* f, SlotId slot);
 
 // Records that a statement at offset in the source starts at the next
 // instruction.

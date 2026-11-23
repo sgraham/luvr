@@ -1,0 +1,55 @@
+# RET: 3
+# OUT: 3
+# OUT: 30
+# OUT: 0
+# OUT: false
+# OUT: -2
+# OUT: 7
+# OUT: false
+# OUT: 2
+# OUT: 1
+# OUT: 9
+# OUT: false
+# OUT: 4
+# OUT: true
+struct Inner:
+    i16 a
+    bool b
+
+struct Outer:
+    u8 tag
+    Inner inner
+    int n
+
+struct Pair:
+    int x
+    int y
+
+def int main():
+    Outer o = Outer(1, Inner(-2, true), 3)
+    # A copy doesn't change when the original does.
+    Outer p = o
+    o.n = 30
+    print p.n
+    print o.n
+    q = Outer(.n=5)
+    print q.tag
+    print q.inner.b
+    q = p
+    print q.inner.a
+    Inner i = Inner(7)
+    q.inner = i
+    print q.inner.a
+    print q.inner.b
+    # The literal reads the fields that it replaces.
+    pair = Pair(1, 2)
+    pair = Pair(pair.y, pair.x)
+    print pair.x
+    print pair.y
+    o.inner = Inner(.a=9)
+    print o.inner.a
+    print o.inner.b
+    r = Outer(.inner=Inner(.b=true, .a=4))
+    print r.inner.a
+    print r.inner.b
+    return p.n
