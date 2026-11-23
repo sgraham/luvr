@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:15:    print len(x)
+# CERR: {ssss}                    ^ error: len expects an array, str, or list, not int.
+def int main():
+    int x = 3
+    print len(x)
+    return 0

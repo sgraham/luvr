@@ -173,6 +173,7 @@ bool lex_intern_init(Ctx* ctx) {
     u32 idx = intern(ctx, (const u8*)builtins[i], len, hash_ident_safe(builtins[i], len), TK_NAME);
     ctx->names.items[idx].is_builtin = true;
   }
+  ctx->name_len = lex_intern_safe(ctx, "len");
   return true;
 }
 

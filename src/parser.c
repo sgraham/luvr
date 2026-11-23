@@ -125,7 +125,7 @@ struct TypeInfo {
       u32 num_params;
     };
     TypeId pointee;  // TYPE_PTR
-    struct {  // TYPE_STRUCT and TYPE_ARRAY (because of shared .agg/.image)
+    struct {         // TYPE_STRUCT and TYPE_ARRAY (because of shared .agg/.image)
       // A struct's agg.u is AGG_NONE if its layout isn't known (see
       // type_has_layout()). An array's is added by type_agg() when it's
       // first needed.
@@ -2589,8 +2589,37 @@ static TypeId literal_type(Parser* p) {
   return (TypeId){TY_I8 + (suf - SUF_I8)};
 }
 
+// len_call -> 'len' '(' expr ')'
+//
+// The length is an int. A fixed-size array's length is a constant, but its
+// operand is still evaluated. len is a builtin rather than a call of
+// __len__ because fixed-size arrays can't have methods, and their length
+// has to be a constant so that it can be used as an array size.
+static void len_call(Parser* p, ExpDesc* e) {
+  SrcLoc at = p->ls.pos.t.loc;
+  next(p);  // '('
+  SrcLoc arg_at = p->ls.pos.t.loc;
+  ExpDesc arg;
+  subexpr(p, -1, &arg);
+  check_match(p, TK_RPAREN, TK_LPAREN, at);
+  TypeId t = arg.type;
+  // A struct can have a __len__ method, but methods aren't typed yet.
+  if (type_is_integer(t) || type_is_float(t) || t.u == TY_BOOL || t.u == TY_NULL ||
+      type_is_pointer(p, t)) {
+    error_at(p, arg_at, "len expects an array, str, or list, not %s.", type_str(p, t));
+  }
+  e->shape = SH_VALUE;
+  e->type = ty_i64;
+  if (type_is_array(p, t)) {
+    e->kind = EK_CONST;
+    e->cv.i = type_info(p, t)->count;
+  } else {
+    exp_unemitted(e);
+  }
+}
+
 // primary -> literal | string | name | TypeName | '(' expr ')'
-//          | list | dict | sizeof | alignof | offsetof | cast
+//          | list | dict | sizeof | alignof | offsetof | cast | len_call
 //          followed by postfix
 static void primary(Parser* p, ExpDesc* e) {
   SrcLoc at = p->ls.pos.t.loc;
@@ -2676,6 +2705,10 @@ static void primary(Parser* p, ExpDesc* e) {
       }
       bool defined = n->binding || n->is_builtin || kind != GK_NONE;
       next(p);
+      if (!n->binding && kind == GK_NONE && name.u == p->ls.ctx->name_len.u && T(p) == TK_LPAREN) {
+        len_call(p, e);
+        break;
+      }
       // A name followed by '=' is an assignment target, which declares the name
       // if it's new.
       if (!defined && T(p) != TK_EQ) {

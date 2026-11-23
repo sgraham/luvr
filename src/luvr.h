@@ -487,6 +487,9 @@ struct Ctx {
   char err_scratch[1024];
   u32 err_scratch_used;
 
+  // The builtin len, which the parser types itself.
+  NameId name_len;
+
   // Intern table. A slot's tag is from the hash of the name, and its val is
   // the index in names.
   HashTable name_table;
