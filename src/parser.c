@@ -2555,15 +2555,38 @@ static void postfix(Parser* p, ExpDesc* e) {
           error_at(p, at, "This call isn't supported yet.");
         }
         TypeId callee = e->type;
+        TypeId ret = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
+        bool returns_agg = type_is_aggregate(p, ret) && type_has_layout(p, ret);
 #if EMIT
-        Ref args[MAX_CALL_ARGS];
+        // One more for a RESULTAGG.
+        Ref args[MAX_CALL_ARGS + 1];
 #else
         Ref* args = NULL;
 #endif
-        u32 num_args = call_args(p, callee, args);
+        Ref* arg_refs = args;
+        Ref result = 0;
+        if (EMIT && returns_agg) {
+          // An aggregate result is written to a new temporary, and the
+          // call's value is the temporary, as for a struct literal. The
+          // RESULTAGG of its address goes before the arguments. It's emitted
+          // before them, which doesn't matter because the callee only writes
+          // to it when it returns.
+          AggId agg = type_agg(p, ret);
+          SlotId temp = il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED});
+          result = il_slot_addr(&p->il, temp);
+          args[0] = il_emit(&p->il, OP_RESULTAGG, IT_I64, result, agg.u);
+          arg_refs = &args[1];
+        }
+        u32 num_args = call_args(p, callee, arg_refs);
         e->shape = SH_CALL;
-        e->type = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
-        if (EMIT) {
+        e->type = ret;
+        if (EMIT && returns_agg) {
+          Ref sym = il_const_sym(&p->il, e->sym);
+          il_call(&p->il, IT_VOID, sym, args, num_args + 1);
+          e->kind = EK_ADDR;
+          e->base = result;
+          e->offset = 0;
+        } else if (EMIT) {
           Ref sym = il_const_sym(&p->il, e->sym);
           e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, args, num_args);
           e->kind = EK_REF;
@@ -3119,7 +3142,12 @@ static void simple_stat(Parser* p) {
                    type_str(p, p->ret_type));
         }
         check_const_conversion(p, p->ret_type, &e, at);
-        if (EMIT) {
+        if (EMIT && p->il.ret == IT_AGG) {
+          // The caller's RESULTAGG isn't visible here until the ABI step
+          // makes it a hidden pointer or the result registers, so the RET
+          // has the address of the value.
+          il_emit(&p->il, OP_RET, IT_AGG, emit_agg_addr(p, &e, at), 0);
+        } else if (EMIT) {
           il_emit(&p->il, OP_RET, p->il.ret, emit_to_ref(p, &e, p->ret_type, at), 0);
         }
       }
@@ -3354,7 +3382,12 @@ static void funcdef(Parser* p, bool is_method) {
     if (p->func_depth > 1) {
       error_at(p, name_at, "Nested functions aren't supported yet.");
     }
-    il_reset(&p->il, name, il_type_of(p, p->ret_type, name_at));
+    if (type_is_aggregate(p, p->ret_type) && type_has_layout(p, p->ret_type)) {
+      il_reset(&p->il, name, IT_AGG);
+      p->il.ret_agg = type_agg(p, p->ret_type);
+    } else {
+      il_reset(&p->il, name, il_type_of(p, p->ret_type, name_at));
+    }
     il_block_start(&p->il, il_block_declare(&p->il));
     // Nothing in the body has been parsed yet, so the function's only locals
     // are its parameters.

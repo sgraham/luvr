@@ -3851,13 +3851,22 @@ This refines D26 ("Aggregates are memory").
   destination slot, since the destination can be a field (`a.inner = b`)
   or a pointer (`*p = s`). `COPY` is much rarer than scalar operations,
   so the `EXT` costs little.
-- `ARGAGG addr, agg` is an aggregate argument. `PARAMAGG n` is the address
-  of aggregate parameter `n`. A call that returns an aggregate gets the
-  destination's address as an argument, and its descriptor names the
-  `AggInfo`. D26 doesn't say how a function returns an aggregate. The
-  proposal is `RET addr` in a function whose `IlFunc` records an aggregate
-  result. The ABI step turns it into a copy through the hidden pointer, or
-  loads into the result registers.
+- `ARGAGG addr, agg` is an aggregate argument. `PARAMAGG n, agg` is the
+  address of aggregate parameter `n`, which is the callee's own copy.
+  Aggregate parameters are immutable like other parameters, so their
+  fields and elements can't be assigned or have their address taken.
+- Decided (2026-11-23): a call that returns an aggregate has
+  `RESULTAGG dst, agg` as its first argument, where `dst` is a new
+  temporary slot in the caller, and the call's value is that slot. A
+  function that returns an aggregate is `func #N @name` (`IlFunc.ret` is
+  `IT_AGG`, with `ret_agg`), and returns with `RET addr`, the address of
+  the value. The ABI step turns `RESULTAGG` into the hidden pointer, or
+  into stores of the result registers after the call, and `RET addr` into
+  a copy through the hidden pointer, or loads into the result registers.
+  QBE instead has a typed call (`%r =:t call`) whose result is a pointer to
+  memory that its ABI pass allocates. That was rejected so that all memory
+  is a slot before the ABI step, and so that `dst` could later be the final
+  destination when nothing aliases it.
 - Captured values (D12) need nothing extra. A nested function that
   captures gets a pointer to a block of its captured values as a scalar
   first parameter (D26). A captured aggregate is copied into that block

@@ -790,9 +790,21 @@ typedef enum IlOperand {
 
 // X(name, a, b, has_result), where a and b are IlOperands without OPND_.
 // EXTs hold the operands that don't fit in the instruction before them: a
-// CALL's arguments, or a COPY's AggId in a. An aggregate is passed by value
-// as a CALL argument that's an ARGAGG of its address, and the callee gets
-// the address of its own copy from PARAMAGG.
+// CALL's arguments, or a COPY's AggId in a.
+//
+// Aggregates are always addresses, and passing or returning one by value is
+// marked so that the ABI step can lower it for each target:
+// - An argument is an ARGAGG of its address. The callee gets the address of
+//   its own copy from PARAMAGG, so it can't see later changes to the
+//   original.
+// - A call that returns an aggregate has a RESULTAGG of the memory to write
+//   the result to as its first argument. It isn't one of the callee's
+//   parameters. Depending on the target and the aggregate, it becomes a
+//   hidden pointer argument, or stores of the result registers after the
+//   call.
+// - A function that returns an aggregate has IlFunc.ret IT_AGG, and its RET
+//   has the address of the value to return. That becomes a copy through the
+//   hidden pointer, or loads into the result registers.
 #define IL_OPS(X)              \
   X(ADD, REF, REF, true)       \
   X(SUB, REF, REF, true)       \
@@ -823,6 +835,7 @@ typedef enum IlOperand {
   X(PARAM, NUM, NONE, true)    \
   X(PARAMAGG, NUM, AGG, true)  \
   X(ARGAGG, REF, AGG, true)    \
+  X(RESULTAGG, REF, AGG, true) \
   X(CALL, REF, NUM, true)      \
   X(EXT, REF, REF, false)
 
@@ -921,7 +934,8 @@ struct IlFunc {
   Ctx* ctx;
   NameId name;
   IlType ret;
-  VEC(Ins) ins;  // ins.items[i] is the instruction at REF_INS | i
+  AggId ret_agg;  // what's returned if ret is IT_AGG, else AGG_NONE
+  VEC(Ins) ins;   // ins.items[i] is the instruction at REF_INS | i
   // The constant at i + 1 is consts.items[i], and its type is const_types.items[i].
   VEC(u64) consts;
   VEC(u8) const_types;  // IlType

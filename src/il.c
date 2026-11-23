@@ -55,6 +55,7 @@ void il_free(IlFunc* f) {
 void il_reset(IlFunc* f, NameId name, IlType ret) {
   f->name = name;
   f->ret = ret;
+  f->ret_agg = (AggId){AGG_NONE};
   f->ins.num = 0;
   f->consts.num = 0;
   f->const_types.num = 0;
@@ -224,7 +225,9 @@ static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
 
 void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   fputs("func ", out);
-  if (f->ret != IT_VOID) {
+  if (f->ret == IT_AGG) {
+    fprintf(out, "#%u ", f->ret_agg.u);
+  } else if (f->ret != IT_VOID) {
     fprintf(out, "%s ", il_type_names[f->ret]);
   }
   const Name* name = lex_name(f->ctx, f->name);
@@ -263,8 +266,10 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
       fprintf(out, "%%%u = ", i);
     }
     fputs(il_op_names[op], out);
-    // These are always i64 addresses, so their type would only be clutter.
-    bool is_addr = op == OP_SLOT || op == OP_PARAMAGG || op == OP_ARGAGG;
+    // These are always i64 addresses, so their type would only be clutter. A
+    // RET of an aggregate is an address too, and the func line says which.
+    bool is_addr =
+        op == OP_SLOT || op == OP_PARAMAGG || op == OP_ARGAGG || op == OP_RESULTAGG || ty == IT_AGG;
     if (ty != IT_VOID && !is_addr) {
       fprintf(out, " %s", il_type_names[ty]);
     }

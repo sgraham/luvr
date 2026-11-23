@@ -48,6 +48,13 @@ class Program:
     mem: Memory
 
 
+# The value of a RESULTAGG. It's an address like any other, but the CALL that
+# it's the first argument of has to tell it apart from a pointer argument.
+@dataclass
+class ResultDst:
+    addr: int
+
+
 @dataclass
 class Agg:
     size: int
@@ -162,7 +169,8 @@ def parse(text):
                 _, name, size, align, *_ = line.split()
                 aggs[int(name[1:])] = Agg(int(size), int(align))
             elif line.startswith("func "):
-                # func i64 @main, or func @f when it returns nothing.
+                # func i64 @main, func #1 @f when it returns agg #1, or func @f
+                # when it returns nothing.
                 words = line.split()
                 ret = words[1] if len(words) == 3 else None
                 f = Func(words[-1][1:], ret)
@@ -245,7 +253,9 @@ RUNTIME = {
 }
 
 
-def run(prog, f, args):
+# result_dst is the address that a function returning an aggregate copies its
+# result to, from the caller's RESULTAGG.
+def run(prog, f, args, result_dst):
     values = {}
     mem = prog.mem
     frame_base = mem.top
@@ -256,6 +266,9 @@ def run(prog, f, args):
         pc += 1
         if ins.op in ("PARAM", "PARAMAGG"):
             values[ins.result] = args[ins.operands[0].val]
+            continue
+        if ins.op == "RESULTAGG":
+            values[ins.result] = ResultDst(value_of(values, prog, ins.operands[0]))
             continue
         if ins.op == "ARGAGG":
             # The callee gets its own copy, made when the argument is
@@ -308,8 +321,11 @@ def run(prog, f, args):
         if ins.op == "CALL":
             callee = ins.operands[0]
             args = [value_of(values, prog, o) for o in ins.operands[1:]]
+            dst = None
+            if args and isinstance(args[0], ResultDst):
+                dst = args.pop(0).addr
             if callee.kind == "sym" and callee.val in prog.funcs:
-                r = run(prog, prog.funcs[callee.val], args)
+                r = run(prog, prog.funcs[callee.val], args, dst)
             elif callee.kind == "sym" and callee.val in RUNTIME:
                 r = RUNTIME[callee.val](mem, *args)
             else:
@@ -324,6 +340,17 @@ def run(prog, f, args):
             if value_of(values, prog, ins.operands[0]) == 0:
                 pc = f.blocks[ins.operands[1].val]
             continue
+        if ins.op == "RET" and f.ret is not None and f.ret.startswith("#"):
+            # The callee doesn't know where the caller wants the result,
+            # because RESULTAGG isn't one of its parameters. So the RET is of
+            # wherever the callee built it, which is often a local or a
+            # temporary in its own frame, and it's copied to the caller's
+            # destination here, before that frame is freed.
+            src = value_of(values, prog, ins.operands[0])
+            size = prog.aggs[int(f.ret[1:])].size
+            mem.bytes[result_dst:result_dst + size] = mem.bytes[src:src + size]
+            mem.top = frame_base
+            return None
         if ins.op == "RET":
             mem.top = frame_base
             return value_of(values, prog, ins.operands[0]) if ins.operands else None
@@ -337,7 +364,7 @@ def main():
         prog = parse(text)
         if "main" not in prog.funcs:
             raise Error("no main")
-        ret = run(prog, prog.funcs["main"], [])
+        ret = run(prog, prog.funcs["main"], [], None)
     except Error as e:
         sys.exit(f"interp: {e}")
     sys.exit((ret or 0) & 0xFF)

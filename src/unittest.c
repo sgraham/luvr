@@ -395,6 +395,35 @@ static void test_il_agg_slot(void) {
   ctx_free(&ctx);
 }
 
+static void test_il_agg_result(void) {
+  Ctx ctx;
+  CHECK(ctx_init(&ctx));
+  IlFunc f;
+  il_init_test(&f, &ctx, IT_AGG);
+  AggLeaf leaves[] = {{0, IT_I64}, {8, IT_I64}};
+  f.ret_agg = il_agg_add(&ctx, 16, 8, leaves, 2);
+  u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
+  SlotId temp = il_slot_add_agg(&f, f.ret_agg, (NameId){IL_SLOT_UNNAMED});
+  il_block_start(&f, il_block_declare(&f));
+  Ref addr = il_slot_addr(&f, temp);
+  Ref args[] = {il_emit(&f, OP_RESULTAGG, IT_I64, addr, f.ret_agg.u),
+                il_const_int(&f, IT_I64, 3)};
+  il_call(&f, IT_VOID, il_const_sym(&f, sym), args, 2);
+  il_emit(&f, OP_RET, IT_AGG, addr, 0);
+  expect_il_dump(&f, "",
+                 "agg #0 16 8\n"
+                 "func #0 @f\n"
+                 "  slot $0 #0\n"
+                 ":0\n"
+                 "  %1 = SLOT $0\n"
+                 "  %2 = RESULTAGG %1, #0\n"
+                 "  CALL @g, %2, 3\n"
+                 "  RET %1\n",
+                 "test_il_agg_result");
+  il_free(&f);
+  ctx_free(&ctx);
+}
+
 int main(void) {
   test_path_dir_len();
   test_path_stem();
@@ -408,5 +437,6 @@ int main(void) {
   test_il_data();
   test_il_agg_add();
   test_il_agg_slot();
+  test_il_agg_result();
   return failures ? 1 : 0;
 }
