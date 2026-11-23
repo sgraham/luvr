@@ -406,8 +406,7 @@ static void test_il_agg_result(void) {
   SlotId temp = il_slot_add_agg(&f, f.ret_agg, (NameId){IL_SLOT_UNNAMED});
   il_block_start(&f, il_block_declare(&f));
   Ref addr = il_slot_addr(&f, temp);
-  Ref args[] = {il_emit(&f, OP_RESULTAGG, IT_I64, addr, f.ret_agg.u),
-                il_const_int(&f, IT_I64, 3)};
+  Ref args[] = {il_emit(&f, OP_RESULTAGG, IT_I64, addr, f.ret_agg.u), il_const_int(&f, IT_I64, 3)};
   il_call(&f, IT_VOID, il_const_sym(&f, sym), args, 2);
   il_emit(&f, OP_RET, IT_AGG, addr, 0);
   expect_il_dump(&f, "",

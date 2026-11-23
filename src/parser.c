@@ -1583,7 +1583,8 @@ static Ref emit_extend_if_necessary(Parser* p, Ref v, TypeId t) {
   return il_emit(&p->il, type_is_unsigned(t) ? OP_ZEXT32 : OP_SEXT32, IT_I64, v, 0);
 }
 
-static void emit_print(Parser* p, const ExpDesc* e, SrcLoc at) {
+// Prints e without ending the line.
+static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
   TypeId t = type_concrete(e->type);
   RuntimeSym sym;
   switch ((FixedType)t.u) {
@@ -1624,7 +1625,23 @@ static void emit_print(Parser* p, const ExpDesc* e, SrcLoc at) {
     args[0] = emit_extend_if_necessary(p, args[0], t);
   }
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), args, nargs);
+}
+
+static void emit_print_end(Parser* p) {
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_end), NULL, 0);
+}
+
+// Prints the literal part of the current STRING_BEGIN, STRING_MID or
+// STRING_END token, if it isn't empty.
+static void emit_print_str_piece(Parser* p) {
+  u32 len;
+  const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
+  if (len == 0) {
+    return;
+  }
+  Ref args[] = {il_const_data(&p->il, il_data_add(p->ls.ctx, s, len, 1)),
+                il_const_int(&p->il, IT_I64, len)};
+  il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_str), args, 2);
 }
 
 // Called after a binary operator and before its right operand, so that the
@@ -1909,6 +1926,35 @@ static void interpolated_string(Parser* p) {
       error_expected(p, "')' to end the string interpolation");
     }
   }
+}
+
+// 'print' of an interpolated string, which prints each piece in turn rather
+// than building the string, so that nothing has to be allocated. The pieces
+// are printed as they're parsed, so the string has to be the whole
+// expression.
+static void print_interpolated(Parser* p) {
+  emit_print_str_piece(p);
+  next(p);  // STRING_BEGIN
+  for (;;) {
+    SrcLoc at = p->ls.pos.t.loc;
+    ExpDesc e;
+    subexpr(p, -1, &e);
+    check_not_void(p, &e, at);
+    emit_print_value(p, &e, at);
+    if (T(p) != TK_STRING_MID && T(p) != TK_STRING_END) {
+      error_expected(p, "')' to end the string interpolation");
+    }
+    emit_print_str_piece(p);
+    bool is_end = T(p) == TK_STRING_END;
+    next(p);
+    if (is_end) {
+      break;
+    }
+  }
+  if (T(p) != TK_NEWLINE && !block_follow(T(p))) {
+    error_at(p, p->ls.pos.t.loc, "This expression isn't supported yet.");
+  }
+  emit_print_end(p);
 }
 
 // Globals
@@ -3160,12 +3206,17 @@ static void simple_stat(Parser* p) {
       return;
     case TK_PRINT: {
       next(p);
+      if (EMIT && T(p) == TK_STRING_BEGIN) {
+        print_interpolated(p);
+        return;
+      }
       SrcLoc at = p->ls.pos.t.loc;
       ExpDesc e;
       subexpr(p, -1, &e);
       check_not_void(p, &e, at);
       if (EMIT) {
-        emit_print(p, &e, at);
+        emit_print_value(p, &e, at);
+        emit_print_end(p);
       }
       return;
     }
