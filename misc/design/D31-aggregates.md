@@ -2,7 +2,7 @@
 
 Written 2026-11-20, for review before any code. It covers structs and
 fixed-size arrays as values: their layout, what each target ABI needs to
-know about them, how they appear in D26's IL, how they can still end up in
+know about them, how they appear in [D26](D26-il.md)'s IL, how they can still end up in
 registers, and how the parser emits them. `str` is the first consumer.
 `range` needs an iteration protocol, and so method calls, first, and both
 are out of scope here.
@@ -14,7 +14,7 @@ aren't recorded, and `sizeof` of a struct takes the non-constant path. The
 first step is struct typing in the checking build: fields and their types,
 field access, struct literals checked against fields, and the layout below,
 which makes `sizeof` and `alignof` of every struct an untyped constant
-(D28).
+([D28](D28-constants.md)).
 
 ## Layout
 
@@ -26,22 +26,22 @@ Fields are never reordered.
 - Scalars are naturally aligned. `bool` is 1 byte and pointers are 8.
 - `[N]T` is `N * sizeof(T)` bytes with `T`'s alignment.
 - `str` is `{*u8 data; int len}`: 16 bytes, aligned to 8.
-- A field of struct type needs the full definition (D11), and a struct
+- A field of struct type needs the full definition ([D11](D11-forward-refs.md)), and a struct
   that contains itself by value is an error at its definition.
 - A struct with no fields is an error (open question 3).
 - Decided (2026-11-20): field defaults (`int x = 5` in a struct body) must
-  be constant expressions, like global initializers (D28). A struct with
+  be constant expressions, like global initializers ([D28](D28-constants.md)). A struct with
   defaults then has a constant image, which goes in the data table, and
   creating one is a copy of that image instead of a `ZERO`. A struct
   without defaults is zeroed.
-- Each generic instantiation (D21) gets its own layout, computed when it's
+- Each generic instantiation ([D21](D21-generics.md)) gets its own layout, computed when it's
   instantiated.
 - Nothing in luv is aligned to more than 8, and there's no syntax to ask
   for more. There are no packed structs, bitfields or unions for now
   (unions and packed structs are likely later, see "The summary record").
 
 Since every struct already has C's layout, a struct needs no mark to be
-passed to C. This replaces the tentative `foreign struct` from D26. That
+passed to C. This replaces the tentative `foreign struct` from [D26](D26-il.md). That
 mark's other job, rejecting `int` fields in structs passed to C, is left to
 a lint.
 
@@ -272,7 +272,7 @@ What the documents say:
   nothing about results. clang's callees extend them (checked), so a luv
   caller shouldn't rely on it without a better source.
 
-The IL keeps narrow integers extended in an `i32` (D30), so luv always
+The IL keeps narrow integers extended in an `i32` ([D30](D30-emission.md)), so luv always
 passes and returns extended values. A narrow parameter or result coming
 from C needs a `SEXT`/`ZEXT` except where the table says the other side
 did it.
@@ -359,7 +359,7 @@ signature is an error.
 
 ## Aggregates in the IL
 
-This refines D26 ("Aggregates are memory").
+This refines [D26](D26-il.md) ("Aggregates are memory").
 
 - A module's `AggInfo`s are in a table on `Ctx`, and the IL refers to them
   by index. A struct's `TypeInfo` holds its index.
@@ -394,9 +394,9 @@ This refines D26 ("Aggregates are memory").
   memory that its ABI pass allocates. That was rejected so that all memory
   is a slot before the ABI step, and so that `dst` could later be the final
   destination when nothing aliases it.
-- Captured values (D12) need nothing extra. A nested function that
+- Captured values ([D12](D12-nested-functions.md)) need nothing extra. A nested function that
   captures gets a pointer to a block of its captured values as a scalar
-  first parameter (D26). A captured aggregate is copied into that block
+  first parameter ([D26](D26-il.md)). A captured aggregate is copied into that block
   when the nested function is defined, and reading it, or a field of it,
   is an address at a constant offset from that pointer, like any other
   `EK_ADDR`. `ARGAGG` and `PARAMAGG` are only for parameters and
@@ -588,7 +588,7 @@ used again, like a call result or a literal.
 
 ## Promoting aggregate slots
 
-D26 has aggregate slots escaped from the start, so they're never promoted.
+[D26](D26-il.md) has aggregate slots escaped from the start, so they're never promoted.
 With that rule, every `str` local stays in memory, and every read of
 `s.len` is a load.
 
@@ -646,7 +646,7 @@ body) turn out to matter.
 - Building a literal straight into its destination could be added for
   declarations, but splitting may make it unnecessary: a `COPY` between two
   unescaped slots becomes scalar moves, which promotion removes.
-- Temporary slots are never reused within a function (D30). Later, slot
+- Temporary slots are never reused within a function ([D30](D30-emission.md)). Later, slot
   coalescing can reuse them for slots that stay in memory.
 
 ## The interpreter
@@ -660,7 +660,7 @@ layout, copies and field access.
 
 ## Checking the classifiers before there's a backend
 
-D25's test, which passes many struct shapes across a C boundary in both
+[D25](D25-backend.md)'s test, which passes many struct shapes across a C boundary in both
 directions and compares the bytes, needs a code generator. Most mistakes
 are in classification, though, and that can be checked sooner. A script
 can generate C structs, run `clang -target <triple> -S -emit-llvm`, and
@@ -729,6 +729,6 @@ aggregate slots come with the backend.
    compiler. luv callers always extend (they already do), and luv callees
    extend too, at the cost of a `movsx`/`movzx` per narrow parameter (and
    per narrow result returned from C). When it's convenient, the callee's
-   extension can go only in D26's second entry point, which every
+   extension can go only in [D26](D26-il.md)'s second entry point, which every
    function that C can call already has, so that calls between luv
    functions skip it.

@@ -31,7 +31,7 @@ The alternatives considered:
 
 `len` and indexes are `int`. They're signed, so `len(xs) - 1` on an empty
 list is -1, not 2⁶⁴-1. `sizeof`, `alignof` and `offsetof` are untyped
-constants (D28), so they can be used as any integer type. (Revised
+constants ([D28](D28-constants.md)), so they can be used as any integer type. (Revised
 2026-11-21: `offsetof` was `int`. As a constant, its arithmetic is exact
 and can't wrap, and it's used alongside sizes and passed to C as `u64`.)
 
@@ -43,7 +43,7 @@ there's something to do with it. SIMD types like a 4-wide float vector or a
 
 `codept` stays as it is for now. It's meant to be a code point type that's
 distinct from the integers, like Go's `rune`, and is mostly unused until
-strings are settled (D23).
+strings are settled ([D23](D23-arrays-lists.md)).
 
 There's no `void` type in luv code. A function without a return type
 returns nothing, and an untyped pointer is `*u8`. The parser's `TY_VOID` is
@@ -94,7 +94,7 @@ tentative choice is to mark C-compatible structs at their declaration
 `foreign` signatures, and reject `int` fields and unmarked struct fields
 in marked structs. Every check is then local to one declaration, and the
 mark is also where C layout is promised. Nothing is done for now. It may
-be left to a lint tool instead. D31 proposes no mark, since every struct
+be left to a lint tool instead. [D31](D31-aggregates.md) proposes no mark, since every struct
 has C layout.
 
 ## Untyped constants
@@ -184,7 +184,7 @@ Everything else is an error, including:
 - Structs, arrays, lists and dicts, since reinterpreting a layout isn't
   what `cast` is for.
 - `str` to or from anything, for now. `*u8` from a `str` for foreign calls
-  depends on how strings are represented (D23).
+  depends on how strings are represented ([D23](D23-arrays-lists.md)).
 
 A float that's out of range for the integer type, or NaN, gives an
 unspecified value, but isn't undefined behaviour. Saturating, as in Rust,
@@ -214,7 +214,7 @@ Steps 1, 2, 3 and 5 are done, and step 4 only for `sizeof`, `alignof` and
   aren't typed yet. It should get `int` from its declaration once builtins
   are in a prelude and calls have signatures.
 - Indexes. Pointers and fixed-size arrays are typed and their indexes are
-  checked (2026-11-21, D31 step 1). Lists and dicts are still `ty_unknown`,
+  checked (2026-11-21, [D31](D31-aggregates.md) step 1). Lists and dicts are still `ty_unknown`,
   and a dict key isn't an integer, so those indexes can't be checked until
   their container types exist.
 - Range checks on constants: `u8 x = 300`, `u32 x = -1`, and overflow of

@@ -1,6 +1,6 @@
 # D5 ★ Declaration vs. expression at statement start
 
-Statement-start FIRST sets, assuming D4(a):
+Statement-start FIRST sets, assuming [D4](D04-types-vs-values.md)(a):
 
 | First token | Can be | Decision |
 |---|---|---|
@@ -41,11 +41,11 @@ Declaration form sub-decisions:
   returns an anonymous struct, a backend detail.
   - LL(1): signature `def T {',' T} NAME '('`: after a type, `,` means more
     types, `NAME` is the function name. Multi-assignment is Lua's recursive
-    `assignment` (`,` after the first target). Declaring follows D6: new
+    `assignment` (`,` after the first target). Declaring follows [D6](D06-assignment-declares.md): new
     names on the left are declared with types from the signature. No
     typed multi-declaration (consistent with D5a).
   - **Not** `def (int, bool) f(`: at statement start, `def (` would clash
-    with function-type declarations `def(int) int cb = ...` (D18). Unless
+    with function-type declarations `def(int) int cb = ...` ([D18](D18-future-syntax.md)). Unless
     function types use a different keyword (`fn(int) int`), keep the
     unparenthesized list.
   - `_` becomes a reserved blank name for discarding (`n, _ = parse(s)`).

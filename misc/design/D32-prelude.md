@@ -1,25 +1,27 @@
 # D32 Prelude (proposal)
 
-Written 2026-11-23, for review before any code. The first need is `str`. As
-a builtin type with a fixed layout (D31), each place that handles
-aggregates needs a `TY_STR` case alongside structs and arrays: layout,
-size, alignment, leaves, and its AggInfo. Defining `str` as an ordinary
-luv struct removes those cases and gives `s.data` and `s.len` as fields.
-The same place is where methods on builtin types and common functions go
-later, which the builtins list in lex.c (len, max, range) is a stopgap for.
+Written 2026-11-23, for review before any code. Revised 2026-11-23 after the
+first review. The first need is `str`. As a builtin type with a fixed layout
+([D31](D31-aggregates.md)), each place that handles aggregates needs a
+`TY_STR` case alongside structs and arrays: layout, size, alignment, leaves,
+and its AggInfo. Defining `str` as an ordinary luv struct removes those
+cases. The same place is where methods on builtin types and common functions
+go later, which the builtins list in lex.c (len, max, range) is a stopgap
+for.
 
-D22a already says that builtin types get their methods from a prelude module
-that's implicitly imported everywhere, written in ordinary luv, and that
-`List` and `Dict` become ordinary structs in it. D23 refers to prelude
-functions such as `Arena.current()`. This is how that prelude is loaded, and
-what goes in it first.
+[D22a](D22-methods.md) already says that builtin types get their methods
+from a prelude module that's implicitly imported everywhere, written in
+ordinary luv, and that `List` and `Dict` become ordinary structs in it.
+[D23](D23-arrays-lists.md) refers to prelude functions such as
+`Arena.current()`. This is how that prelude is loaded, and what goes in it
+first.
 
 ## What it is
 
-- `src/prelude.luv`, an ordinary luv source file. The build turns it into
-  a C array with `LEX_PADDING` zero bytes after it. That could be done by
-  gen_ninja.py writing a header, or by C23 `#embed` if every compiler
-  that's used supports it. Errors in it are reported as `<prelude>`.
+- `src/prelude.luv`, an ordinary luv source file. gen_ninja.py writes a
+  header with it as a C array followed by `LEX_PADDING` zero bytes. C23
+  `#embed` isn't used, so that recent compilers aren't required. Errors in
+  it are reported as `<prelude>`.
 - It's parsed as module 0, before the root module, by the same Parser
   that parses imports. TypeIds, symbols and AggIds are shared by every
   module, so its definitions are usable everywhere without copying.
@@ -31,9 +33,16 @@ At first it only contains:
 
 ```
 struct str:
-    *u8 data
-    int len
+    *u8 _data
+    int _len
 ```
+
+The fields are only for the prelude's own methods. User code passes the
+`str` itself, and uses `len(s)` for the length. The leading `_` marks them
+as internal. A later rule could make `_` fields accessible only from the
+struct's own module. That's one check at field access (the name's first
+byte and the struct's module), and code in C is unaffected since it only
+depends on the layout. Whether to enforce it is left for later.
 
 Later:
 
@@ -41,12 +50,26 @@ Later:
   and something like `__str__` for `print`. Methods can only be defined in
   their receiver type's module, so `str`'s methods have to be in the
   prelude anyway.
-- `range` and `max`, and `len`'s use of `__len__` for everything but
-  fixed-size arrays (whose length stays a constant from the builtin).
+- `range`, over `int` only, so it isn't generic. It needs the iteration
+  protocol first.
+- `len`'s use of `__len__` for everything but fixed-size arrays (whose
+  length stays a constant from the builtin).
+
+`max` and `min` can't be written in the prelude as free functions, since
+there are no free generic functions ([D21](D21-generics.md)). Untyped
+constants don't change that. They let the `1` in `max(x, 1)` take `x`'s
+type, but `max` still has to accept every numeric type. So `max` and `min`
+stay builtins like `len`, or become methods on each numeric type in the
+prelude (`x.max(1)`, where the untyped `1` takes the parameter's type).
 - Generic containers (`List{T}`), once generic structs are instantiated
-  (D21).
+  ([D21](D21-generics.md)).
 - The runtime's functions (`luv_print_i64` and so on) as `foreign`
   declarations, replacing the `RUNTIME_SYMS` X-macro.
+
+Everything in the prelude is visible in every module, can't be imported
+selectively, and shows up in every IL dump (see below). Only what has to
+be there goes in it, such as methods on builtin types. Anything that can be
+in an ordinary module should be.
 
 ## Builtin types keep their fixed TypeIds
 
@@ -64,18 +87,26 @@ new type. So:
   0 is `TYPE_FUNC` now. `type_is_struct` checks the kind rather than
   `type_is_created`.
 - `str` is a keyword, so the prelude is allowed to write `struct str:`
-  (only while parsing the prelude), which binds to `TY_STR`. Any other
-  builtin that gets a luv definition later can do the same.
+  (only while parsing the prelude), which binds to `TY_STR`. In the
+  `TK_STRUCT` case of the parser, that's accepting `TK_STR` in module 0,
+  filling in the existing entry instead of pushing one, and skipping
+  `declare_definition`, since a keyword is never looked up. `str` is the
+  only keyword type that's a struct. `List` and `Dict` are TypeNames, so
+  they're declared normally.
 
-The alternative is to add the prelude's `str` as a new TypeId and keep
-it in `Parser.ty_str`. That needs every `TY_STR` and `ty_str` use (18 now)
-changed to a load, in some checking-build paths.
+Making `str` not a keyword would mean renaming it `Str` to fit the naming
+rules of [D4](D04-types-vs-values.md), which isn't worth it to avoid a
+special case of a few lines.
+
+The alternative to the fixed TypeId is to add the prelude's `str` as a new
+TypeId and keep it in `Parser.ty_str`. That needs every `TY_STR` and
+`ty_str` use (18 now) changed to a load, in some checking-build paths.
 
 ## Finding prelude names
 
 Types that are keywords (`str`, `int`) don't need a lookup, and methods
-are found on their type, not by name. That leaves free names like `range`,
-`max` and `List`. The options are:
+are found on their type, not by name. That leaves free names like `range`
+and `List`. The options are:
 
 1. A second lookup in the prelude's `Module.globals` after the module's
    own globals miss. It's only on a miss, but every use of a prelude name
@@ -83,39 +114,77 @@ are found on their type, not by name. That leaves free names like `range`,
 2. A field on `Name` with the prelude's `GlobalInfo` for that name,
    replacing `Name.is_builtin`. Names are interned per `Ctx`, so it's the
    same in every module, and finding it is one load with no extra hash.
+   But `Name` is 24 bytes with one byte of padding, and a `u32` field
+   makes it 32.
 3. Copying the prelude's globals into each module's `globals`. That's a
    cost per module, and it isn't needed.
+4. A dense array indexed by NameId. NameIds are allocated in the order
+   names are first interned, and the prelude is lexed before any other
+   source, so every name the prelude defines has a smaller NameId than any
+   name that appears first in user code. After the prelude is parsed,
+   `ctx->names.num` is recorded as `prelude_name_end`, and
+   `GlobalInfo prelude_globals[prelude_name_end]` holds each prelude
+   global's info, with 0 for the rest (keywords, and names that are only
+   locals or fields in the prelude). The lookup is
+   `name.u < prelude_name_end ? prelude_globals[name.u] : 0`.
 
-Proposal: 2. The order is locals, then the module's globals, then the
-prelude, so a prelude name can be shadowed by a module's own definition,
-as Go allows for its predeclared names and Python for builtins. Keywords
+Proposal: 4. It has no hash, no field on `Name`, and `Name.is_builtin`
+goes away. The array is a few hundred `u32`s. It depends on the prelude
+being the first source that's interned, which has to be written down where
+the prelude is loaded and where `prelude_name_end` is declared. Names that
+the compiler interns itself before the prelude (keywords, `name_len`) are
+also below `prelude_name_end`, which is harmless. An ASSERT that no other
+module has been loaded when the prelude starts checks the order.
+
+The order is locals, then the module's globals, then the prelude. Keywords
 stay reserved.
+
+### Shadowing
+
+A prelude name or a builtin can be shadowed by a local, a parameter or a
+module's own global, silently. Otherwise adding anything to the prelude could break
+existing programs, and every prelude change would be a breaking change.
+Go allows it for its predeclared names for the same reason, and Python for
+builtins. The realistic cases are locals and parameters named `len`, `max`,
+`min`, `range` or `sum`, and a user's own `List`, and whatever names are
+added later.
+
+Because assignment declares ([D6](D06-assignment-declares.md)), a name
+that's found only in the prelude or as a builtin doesn't count as defined
+when it's the target of `=`. `max = 5` declares a local `max`, as it does
+now, instead of being an assignment to the builtin. In that scope, `max(a, b)`
+is then an error, as in Python.
 
 ## Open questions
 
 - Allocating operations. `a + b` on `str` and interpolated strings outside
-  `print` make new strings, and under D23 option B those go in the current
-  arena, a dynamically scoped special variable that `Arena.current()`
-  reads. What's still open is how the generated code reaches it: a
-  thread-local that the runtime owns, or an implicit context parameter
-  passed to every function (as in Jai and Odin), whose struct the prelude
-  would define. That decides how `__add__` on `str` and its IL are
-  written, so it's worth settling before the first allocating operation.
-- Whether shadowing a prelude name should be allowed silently, warned
-  about, or be an error.
-- How the source is embedded: a generated header, or `#embed`.
+  `print` make new strings, and under [D23](D23-arrays-lists.md) option B
+  those go in the current arena, a dynamically scoped special variable that
+  `Arena.current()` reads. What's still open is how the generated code
+  reaches it: a thread-local that the runtime owns, or an implicit context
+  parameter passed to every function (as in Jai and Odin), whose struct the
+  prelude would define. That decides how `__add__` on `str` and its IL are
+  written. It's deferred until the prelude and `struct str` work, and is
+  settled before the first allocating operation.
+
+## Decided in review
+
+- Shadowing prelude names is allowed silently (above).
+- The source is embedded with a header generated by gen_ninja.py, not
+  `#embed`.
 - The prelude's structs get their AggInfo when the definition ends, so
-  every IL dump starts with their `agg` lines. That's harmless, but the
-  lines could be printed when they're first used instead.
+  every IL dump starts with their `agg` lines. They're left in. Each one
+  is a reminder that the prelude has a cost.
 
 ## Steps
 
 1. Loading the prelude, with nothing useful in it yet: embedding, module 0,
-   lookup through `Name`, `<prelude>` in errors, and a bench.
+   lookup through `prelude_globals`, `<prelude>` in errors, and a bench.
 2. `struct str` in the prelude bound to `TY_STR`, and the `str` cases in
    the layout functions removed.
 3. `str` values as aggregates on top of that, redoing the change that was
-   shelved for this. Most of its `str` special cases go away. What's left is string literals, which become a
-   value with two stores into a temporary, and `print` of a `str`.
+   shelved for this. Most of its `str` special cases go away. What's left
+   is string literals, which become a value with two stores into a
+   temporary, and `print` of a `str`.
 4. Later: typed methods (`__len__`, `__eq__`, dispatch for `print`), then
    generic containers and the runtime's `foreign` declarations.

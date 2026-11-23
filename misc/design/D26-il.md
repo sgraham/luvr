@@ -65,7 +65,7 @@ local.
 
 Considered 2026-11-15. Disallowing `&x` on scalar and pointer locals would
 make it possible to build SSA while parsing, since that's the only way a
-local's escape is found late. Captures are by value (D12), so they don't
+local's escape is found late. Captures are by value ([D12](D12-nested-functions.md)), so they don't
 add another. Not done, for these reasons:
 
 - It doesn't make the backend one pass. The backward code generation pass
@@ -82,7 +82,7 @@ add another. Not done, for these reasons:
   `and`, `or` and comprehension accumulators itself.
 - The language cost is mostly C interop: `strtol(s, &end, 10)`,
   `sqlite3_open(path, &db)` and other out-parameters, of which `**T` is
-  very common. D5b also currently names `*int out` as the way to return a
+  very common. [D5b](D05-decl-vs-expr.md) also currently names `*int out` as the way to return a
   second value. The workaround would be a `[1]int` or a one-field struct.
 - The folding, CSE and phi lookup move into the parser. They don't go
   away. What's saved is the walk, the second buffer, and the local `LOAD`,
@@ -382,7 +382,7 @@ aggregates go by hidden pointer, which are split across registers. The
 type records it reads (size, alignment, fields) are the ones typing
 creates. The IL only refers to them by index.
 
-A nested function that captures (D12) takes a pointer to its captured
+A nested function that captures ([D12](D12-nested-functions.md)) takes a pointer to its captured
 values as an extra first argument. That's part of its type, so a call to it
 through a function value passes it too.
 
@@ -391,7 +391,7 @@ through a function value passes it too.
 One callee-saved register is reserved in all luv code for a pointer to the
 thread's luv context: `r15` on x64 and `x28` on aarch64 (provisional
 choices, both callee-saved in every ABI we target). `CTX` is the
-instruction whose value is that register. The current arena (D23) is a
+instruction whose value is that register. The current arena ([D23](D23-arrays-lists.md)) is a
 field of the context, so finding it is one load, and `with Arena()` and
 `into a:` store that field and restore it on the way out.
 
@@ -426,7 +426,7 @@ aarch64.
 A side table of (reference, source offset) pairs, with an entry each time
 the front end starts a statement. The SSA pass carries it across. That's
 enough for line tables and for reporting where a fault happened, whatever
-form debug info takes later (D25). The slot table keeps each named local's
+form debug info takes later ([D25](D25-backend.md)). The slot table keeps each named local's
 name, so the code generator can report where it lives.
 
 ## The dump
@@ -434,19 +434,19 @@ name, so the code generator can report where it lives.
 A text form of both stages, one instruction per line, with references
 printed as `%n` for instructions and the value itself for constants.
 The first use is as test output for expression typing: a test's expected
-IL sits beside its expected program output. D30 gives the format, which
+IL sits beside its expected program output. [D30](D30-emission.md) gives the format, which
 `misc/interp.py` reads.
 
 ## What's likely to change
 
 1. The operation list, especially conversions and how operand width is
    expressed for compares.
-2. Whether strings and lists (D23) are ordinary memory operations or get
+2. Whether strings and lists ([D23](D23-arrays-lists.md)) are ordinary memory operations or get
    operations of their own, for bounds checks for example.
 3. Whether the SSA pass should rewrite in place, with a forwarding array,
    instead of copying to a second buffer. To be measured.
 4. How `check` and other statements with runtime support are expressed.
-   Probably as calls into the runtime, as `print` is (D23, "For the
+   Probably as calls into the runtime, as `print` is ([D23](D23-arrays-lists.md), "For the
    vertical slice").
 5. Overflow and division behaviour. The IL operations wrap, and anything
    stricter would be added operations or explicit checks.

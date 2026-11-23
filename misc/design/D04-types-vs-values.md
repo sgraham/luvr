@@ -6,7 +6,7 @@ it by **classifying identifiers lexically** (`categorizer.in.c:8-10`):
 
 - `varname` = starts lowercase → `IDENT_VAR`
 - `typename` = CamelCase / single capital → `IDENT_TYPE`. A single capital
-  is always a generic type parameter, never a struct name (D21).
+  is always a generic type parameter, never a struct name ([D21](D21-generics.md)).
 - `constname` = `ALL_CAPS` → `IDENT_CONST`
 - builtin types (`int`, `i32`, `str`, `bool`, ...) are keywords.
 
@@ -33,7 +33,7 @@ Options:
 2. **Drop `IDENT_IMPORT` lexing.** luv60 looks up every lowercase identifier
    in the import dict in the lexer (`token.c:21`). That's a hash probe per
    identifier for a decision the parser can make when it reaches `NAME '.'`
-   (see D5). Removing it makes the lexer context-free.
+   (see [D5](D05-decl-vs-expr.md)). Removing it makes the lexer context-free.
 
 The convention is the price of LL(1) C-style declarations. It's worth stating
 in the language docs as a rule, not a style suggestion.

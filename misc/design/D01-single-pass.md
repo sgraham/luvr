@@ -2,8 +2,8 @@
 
 Lua 4 parses and emits bytecode in one pass. luv60 also works in one pass
 (parse → type check → IR). Some luv features don't fit one pass well:
-comprehensions (D10), forward references (D11), and capture-by-value
-analysis (D12).
+comprehensions ([D10](D10-comprehensions.md)), forward references ([D11](D11-forward-refs.md)), and capture-by-value
+analysis ([D12](D12-nested-functions.md)).
 
 - **(a) Strict single pass, Lua style.** Fastest, with no AST allocation.
   But every construct has to be ordered so names and types are known when
@@ -13,7 +13,7 @@ analysis (D12).
   read per node. It frees the syntax from emission order and makes
   comprehensions, hoisting and incremental work (luv goal #2) easier.
 - **(c) Hybrid.** Single pass, with escape hatches: a top-level skim pass
-  (D11) and token-range replay for the few constructs that bind late (D10).
+  ([D11](D11-forward-refs.md)) and token-range replay for the few constructs that bind late ([D10](D10-comprehensions.md)).
 
 **Recommendation: (c).** Keep the Lua shape, and add two narrow escape
 hatches with clear boundaries rather than a general AST. Revisit if the
@@ -34,7 +34,7 @@ worthwhile if:
 - D1 moves to (b) or incremental work needs a persistent structure. Then a
   token array is the natural thing for nodes to refer to, and Carbon-style
   8-byte packing is worth copying exactly.
-- D10 uses skim and rewind. Instead of lexing the bracket twice, the skim
+- [D10](D10-comprehensions.md) uses skim and rewind. Instead of lexing the bracket twice, the skim
   can record tokens into a small scratch buffer of 8-byte packed tokens and
   replay them. That's local and bounded, so it's an implementation detail
   rather than an architecture change.

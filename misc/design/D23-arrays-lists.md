@@ -10,7 +10,7 @@ The questions:
   [3]i32.", `array_no_append.luv`). An owning list needs a declared type
   (`[]int nums = [1, 2, 3]`). The user wrestled with this in luv60 without a
   satisfying answer.
-- What a slice `a[i:j]` (D8) is: a copy, or a view into `a`. In luv60 it
+- What a slice `a[i:j]` ([D8](D08-expressions.md)) is: a copy, or a view into `a`. In luv60 it
   was a view of some kind. `list_slice_append.luv` expects `nums[2:]` of a
   `[]int` to fail a runtime check on `append`.
 - What a comprehension produces, and from what. `[x*2 for x in xs]` over an
@@ -31,13 +31,13 @@ What's agreed so far:
   because of literals and comprehensions. It knows `List{T}`'s layout and
   builds literals and comprehensions directly, and preallocates when the
   length is known. The methods (`append`, growth, dunders) are luv code in
-  the prelude (D22a). `Dict` literals probably call a prelude insert
+  the prelude ([D22a](D22-methods.md)). `Dict` literals probably call a prelude insert
   function rather than the compiler knowing the hash table.
 - `[]T` and `{K}V` are transparent synonyms for `*List{T}` and
   `*Dict{K, V}`, where `List` and `Dict` are ordinary prelude structs (see
   "Values and references" below). The compiler knows about them only to
   make code less noisy. Diagnostics print the short form. This replaces the
-  inclination in D21 to replace them with verbose synonyms.
+  inclination in [D21](D21-generics.md) to replace them with verbose synonyms.
 - Fixed arrays `[N]T` stay primitive value types.
 
 ## Option A (explored 2026-11-12): regions, a current pool and scratch space
@@ -48,7 +48,7 @@ through. Nothing in it is decided. It started from Goose
 of its own bump-allocated stack, so it grows in place and never moves, and
 frees by resetting the stack when a scope exits. Goose assigns stacks and
 checks lifetimes with whole-program analysis. That doesn't fit a single-pass,
-per-file compiler (D1), so this option replaces both analyses with things that
+per-file compiler ([D1](D01-single-pass.md)), so this option replaces both analyses with things that
 can be done at runtime or checked inside one function.
 
 **Regions.** A region is a large reservation of address space (Goose uses
@@ -115,9 +115,9 @@ into p:                    # makes an existing pool current, doesn't free it
 
 `with Pool()` owns its pool and `into p` borrows one. A plain `with p:` can't
 tell its `__exit__` whether to free, so borrowing needs its own statement.
-`in` is already membership and part of `for`, hence `into`. D3a's one-line
+`in` is already membership and part of `for`, hence `into`. [D3a](D03-layout-tokens.md)'s one-line
 suites cover single statements (`into p: xs = load(f)`), and function-level
-scope (D6) keeps `xs` visible after the block. Explicit placement methods
+scope ([D6](D06-assignment-declares.md)) keeps `xs` visible after the block. Explicit placement methods
 (`p.new(...)`, `p.list{T}()`) were considered and aren't wanted.
 
 **Checking lifetimes inside one function.** Every view and pointer
@@ -139,7 +139,7 @@ like an implicit parameter.
 - A call that returns a view is treated as returning something rooted in all
   of its view arguments, like Rust's lifetime elision but with no syntax for
   exceptions. No function body needs to be seen, only signatures, which the
-  D11 skim provides for forward references.
+  [D11](D11-forward-refs.md) skim provides for forward references.
 - Slices keep their own length, and lists never move, so a slice of a list
   that later shrinks reads stale values of the right type, not freed memory.
 
@@ -228,7 +228,7 @@ into a:                # makes an existing arena current
 - The current arena is a per-thread, dynamically scoped variable, as in
   option A, and starts as an arena that lives until exit. `with Arena()`
   takes an arena from the free list and releases it at the end of the block.
-  `into a:` borrows one. D3a's one-line suites give a per-statement form
+  `into a:` borrows one. [D3a](D03-layout-tokens.md)'s one-line suites give a per-statement form
   (`into a: xs = load(f)`).
 - Returning a value needs nothing. A callee allocates into its caller's
   arena unless it opens its own, so what it returns already lives there.
@@ -345,7 +345,7 @@ copy.**
   change or move. So a `str` is always safe to copy, and slicing a string
   can give a view, because a view of immutable bytes can't be told apart
   from a copy. Literals without escapes stay zero-copy slices of the source
-  (D13).
+  ([D13](D13-literals.md)).
 - A string builder (`StrBuilder`, or `[]u8`) is the growable form, and
   finishing it gives a `str` without copying, because its bytes are already
   in the arena.
@@ -403,15 +403,15 @@ copy.**
 | `*T` | an explicit pointer | a pointer |
 
 - `s = Stuff(...)` is a value in the frame, or inline in whatever contains
-  it, like C's `Stuff s = {...}`. This follows from compound literals (D7,
-  D9) and from luv having `*T` and `&`.
+  it, like C's `Stuff s = {...}`. This follows from compound literals ([D7](D07-keywords.md),
+  [D9](D09-calls.md)) and from luv having `*T` and `&`.
 - `List{T}` is an ordinary value struct in the prelude (`{data, len, cap}`),
   written the way a user would write `MyList{T}`. The reference behavior
   comes from the synonym, so `*MyList{int}` behaves exactly like `[]int`,
   and a plain `List{int}` value behaves exactly like a plain `MyList{int}`.
   Copying a plain `List{int}` value aliases its storage, as Go slices do,
   but only for someone who chose the value form.
-- `.` auto-dereferences (D22), so `xs.append(4)` works on a `[]int`, and
+- `.` auto-dereferences ([D22](D22-methods.md)), so `xs.append(4)` works on a `[]int`, and
   methods are defined `on List{T}`.
 - A single object is allocated with `&Stuff(.a=1)`: the value goes into the
   current arena, and the result is a pointer to it. A list literal
@@ -426,7 +426,7 @@ copy.**
   list would avoid that, but a method can't replace a null `self` with a new
   list, so `xs.append()` on a null `xs` would still need the declaration to
   allocate. Making it work would mean a method on `*[]int` that can replace
-  its `self`, which D22's rule against methods on pointers rules out, and
+  its `self`, which [D22](D22-methods.md)'s rule against methods on pointers rules out, and
   that's probably not worth reopening. It probably belongs with a general
   decision about zero values.
 

@@ -32,8 +32,8 @@ the same ground. Options:
   in a scratch buffer, and `next()` gets one branch
   (`if (replay < replay_end) t = *replay++; else t = lex();`), the same
   shape and cost as Lua 4's lookahead check. Also needs only one parser.
-  Prefer it only if a token buffer exists anyway (D1 comparison).
-- **(c) Element expression into a mini-AST.** Only needed if D1 → (b).
+  Prefer it only if a token buffer exists anyway ([D1](D01-single-pass.md) comparison).
+- **(c) Element expression into a mini-AST.** Only needed if [D1](D01-single-pass.md) → (b).
 - **(d) Python order, but type the comprehension variable in the syntax**
   (`[x*3 for int x in nums]`). Doesn't solve it: the element expression is
   still parsed before the binding is seen.

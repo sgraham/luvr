@@ -1,9 +1,9 @@
 # D30 Emission for the vertical slice (proposal)
 
 Written 2026-11-16, for review before any code. It covers how the parser
-produces D26's raw IL for the slice: int, bool and str literals, locals,
+produces [D26](D26-il.md)'s raw IL for the slice: int, bool and str literals, locals,
 arithmetic and comparisons, `if`, `for` over `range`, `print`, functions
-with parameters, calls and `return`. D26 is the IL itself. This is the
+with parameters, calls and `return`. [D26](D26-il.md) is the IL itself. This is the
 interface between `ExpDesc` and the IL buffer, in the style of Lua's
 `lcode.c`.
 
@@ -32,11 +32,11 @@ when the SSA pass is written.
 ## What runs
 
 - The slice is run by `misc/interp.py`, a Python interpreter that reads
-  `luv il` output. It's scaffolding for developing emission. D25's "no
+  `luv il` output. It's scaffolding for developing emission. [D25](D25-backend.md)'s "no
   interpreter" still stands, and making it a separate script makes that
   obvious. Python is used because it reads the text dump easily and the
   build script already requires it.
-- The runtime's print functions (D23) are written in the script for now.
+- The runtime's print functions ([D23](D23-arrays-lists.md)) are written in the script for now.
   The C runtime is written when there's native code to link it into.
 - The dump is the interface between the two, so it has to be easy to read
   back. It's also what's used to diagnose the front end later, so it has to
@@ -58,7 +58,7 @@ when the SSA pass is written.
   doesn't emit at all, so every test still parses and type checks there.
 - Each function gets a symbol, and calls refer to it with a `KSYM`
   constant. Symbols are in a table on `Ctx` because modules share it. Calls
-  are define-before-use until the D11 skim exists, so a symbol always
+  are define-before-use until the [D11](D11-forward-refs.md) skim exists, so a symbol always
   exists before a call refers to it. The symbol is found through a
   separate table indexed from `GlobalInfo`, like `global_consts`, rather
   than from the function's `TypeInfo`, because function `TypeId`s will be
@@ -107,13 +107,13 @@ ones later.
 ## Locals and parameters
 
 - A local is a slot. `Local` gets the slot index, set when it's declared.
-  Locals are function scoped (D6), so a slot is never reused within a
+  Locals are function scoped ([D6](D06-assignment-declares.md)), so a slot is never reused within a
   function.
-- A parameter is a value, not a slot (D26, "Slots"). `PARAM n` is emitted
+- A parameter is a value, not a slot ([D26](D26-il.md), "Slots"). `PARAM n` is emitted
   at the start of the entry block, and the parameter's `Local` holds its
   `Ref`. Reading the parameter gives an `EK_REF`.
 - A `str` local is two slots, and a `str` parameter is two `PARAM`s, until
-  structs exist (D23, "For the vertical slice").
+  structs exist ([D23](D23-arrays-lists.md), "For the vertical slice").
 
 ## Blocks and jumps
 
@@ -157,7 +157,7 @@ Statements:
 - `return` is `RET` or `RET v`. A void function that falls off the end gets
   a `RET`.
 - `and` and `or` store each operand to a temporary slot on its own path and
-  load it after the join (D26). A condition is then a bool value and a
+  load it after the join ([D26](D26-il.md)). A condition is then a bool value and a
   `BR`. Lua instead keeps a condition's jumps unresolved in two lists, one
   for where to go when it's true and one for false, so `if a and b:` is two
   branches straight to the else block without making a bool. That can come
@@ -190,7 +190,7 @@ give: `BR a, :else` and `BR b, :else`.
 
 - It needs predecessor lists and phis, which the SSA pass builds anyway,
   and a way to change a branch's target in place, which is one operand.
-- Every edge that's changed goes to a later block, so the D26 invariants
+- Every edge that's changed goes to a later block, so the [D26](D26-il.md) invariants
   (source order, predecessors before their block) still hold.
 - The shape can be recognized when the forward walk reaches `:J`, so it
   doesn't need to be a pass of its own.
@@ -213,7 +213,7 @@ give: `BR a, :else` and `BR b, :else`.
   and its `EXT` slots. The refs are kept in a fixed array on the C stack
   while the arguments are parsed, with a limit on the argument count. A
   `str` argument is two refs.
-- `print` uses D23's runtime calls, one per kind, then `luv_print_end`. An
+- `print` uses [D23](D23-arrays-lists.md)'s runtime calls, one per kind, then `luv_print_end`. An
   interpolated string in `print` is one call per piece. The runtime
   functions are symbols too, created when the `Ctx` is set up.
 - String literal bytes go into a table of data on `Ctx`. A constant of
@@ -287,7 +287,7 @@ func i64 @main
   `EXT` slots aren't printed.
 - A comment is a whole line starting with `;`, so the reader can skip
   them without looking inside other lines. Comments give the text of each statement's source line, with its indentation, from
-  the source position table (D26), and above an instruction with float
+  the source position table ([D26](D26-il.md)), and above an instruction with float
   constants, their values in decimal (`; 0x1.8p+0 = 1.5`). Line numbers
   aren't printed, because the lexer only keeps offsets, and finding a line
   number means counting newlines from the start of the file.
@@ -302,7 +302,7 @@ func i64 @main
 Globals, `mod.func` calls, nested functions, structs, lists, dicts,
 comprehensions, `with`, `check`, `cast` of non-constants beyond numeric
 conversions, pointers, `foreign` calls, and `str` results from functions.
-Comprehensions need extra care later, since D10's rewind re-lexes the
+Comprehensions need extra care later, since [D10](D10-comprehensions.md)'s rewind re-lexes the
 element expression.
 
 ## Steps

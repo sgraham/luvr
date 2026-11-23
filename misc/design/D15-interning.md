@@ -24,7 +24,7 @@
   format forces it. `MAXVARSLH`/`MAXPARAMS` cap C-stack recursion in
   multiple assignment, which we don't have.
   - Our scoping makes the scan unusually good: scope is the whole function
-    (D6) and captures are by value (D12), so a lookup searches only "this
+    ([D6](D06-assignment-declares.md)) and captures are by value ([D12](D12-nested-functions.md)), so a lookup searches only "this
     function's locals, then globals", never walking enclosing functions.
     The scan stays in a small hot array, while `Name.binding` costs a
     load from the `Name` entry (often still in cache, since the lexer just

@@ -19,7 +19,7 @@ Proposed priority table (low → high), mostly Python's:
 | 8 | `<< >>` | |
 | 9 | `+ -` | |
 | 10 | `* / %` | |
-| 11 | unary `- ~ &` (address-of) | `cast T(x)` is a primary, not an operator (D7) |
+| 11 | unary `- ~ &` (address-of) | `cast T(x)` is a primary, not an operator ([D7](D07-keywords.md)) |
 | 12 | postfix `. [] ()` | |
 
 LL(1) details:
@@ -39,6 +39,6 @@ LL(1) details:
 - **Augmented assignment** (`+= -= *= /= %= |= &= ^= <<= >>=`): needed,
   since `dumbbench.luv` uses `x += i`. Lexer tokens, statement level only,
   so they aren't expression operators.
-- **Assignment is not an expression.** That keeps `=` free for D9's keyword
+- **Assignment is not an expression.** That keeps `=` free for [D9](D09-calls.md)'s keyword
   arguments.
-- **Integer literal suffixes** (`123i32`, `0u64`) are lexical (D13).
+- **Integer literal suffixes** (`123i32`, `0u64`) are lexical ([D13](D13-literals.md)).

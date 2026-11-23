@@ -41,7 +41,7 @@ typedef struct LexState {
 } LexState;
 ```
 
-Token size: only one or two tokens are ever alive (D1 comparison), so size
+Token size: only one or two tokens are ever alive ([D1](D01-single-pass.md) comparison), so size
 doesn't matter as storage, only as the cost of handing a token to the
 parser. ABIs: SysV x86-64 and AAPCS64 return structs up to 16 bytes in two
 registers. **Windows x64 returns only 1/2/4/8-byte structs in `RAX`**, and
@@ -50,7 +50,7 @@ registers. **Windows x64 returns only 1/2/4/8-byte structs in `RAX`**, and
 barely matters. **Plan:** start with (A) in place (no side tables, no 2²⁴
 limits). The step 1 bench also tries (B) returned by value
 (`Token lex(LexState*)`) on macOS and Windows. Switch if it wins, or if a
-token buffer ever appears (D10 replay, a future AST). Keep the token behind
+token buffer ever appears ([D10](D10-comprehensions.md) replay, a future AST). Keep the token behind
 a few accessors (`tok_kind`, `tok_name`, `tok_int`, ...) so switching is a
 local change.
 
@@ -82,7 +82,7 @@ inlining, LTO or a unity build), and **~160 ms (≈43%) is interning**.
 Pre-sizing the table didn't help (it was slower), so the cost isn't
 rehashing. It's roughly one cache/TLB miss per new name in a table that
 grows to 32 MB. dumbbench is close to the worst case: a fresh random
-16-char name every 8 lines. That's the number to attack in the D15
+16-char name every 8 lines. That's the number to attack in the [D15](D15-interning.md)
 benchmarks (ideas: prefetch the slot as soon as the hash is known and finish
 the probe later, smaller slots, or a per-file first-level table).
 
@@ -107,14 +107,14 @@ side-table-large split, done at the bytecode level instead of in the token.
 - Punctuation: one `switch` case per first char, with a peek at `p[1]` for
   `== != <= >= << >> += -= *= /= %= |= &= ^= <<= >>=`. Padding means no
   bounds check.
-- `[0-9]`: number (D13).
-- `"`: string (D13). On `\(`, return `STRING_BEGIN` and push
+- `[0-9]`: number ([D13](D13-literals.md)).
+- `"`: string ([D13](D13-literals.md)). On `\(`, return `STRING_BEGIN` and push
   `bracket_depth`. On a `)` that brings `bracket_depth` back to
   `interp_stack[interp_sp-1]`, pop it and resume the string reader, returning
   `STRING_MID`/`STRING_END` instead of `)`.
 - Identifier start (class table): scan while `class[*p] & IDENT`, folding the
   hash and the `has_upper`/`has_lower` bits as it goes. Intern. If the interned
   `Name` is reserved, return its keyword kind. Otherwise return `TK_TYPENAME`
-  or `TK_NAME` from the case bits (D4 rule: `_*[A-Z]` or `_*[A-Z]…[a-z]…` →
+  or `TK_NAME` from the case bits ([D4](D04-types-vs-values.md) rule: `_*[A-Z]` or `_*[A-Z]…[a-z]…` →
   TYPENAME; `ALL_CAPS` and lowercase → NAME).
 - `'\0'` at `p < end`: error (embedded NUL). At end: dedents, then `TK_EOS`.

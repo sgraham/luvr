@@ -77,7 +77,7 @@ is untyped, as in Go's `const BLAH = 3`, and `u8 x = BLAH` works.
 That makes `xx = 3` and `XX = 3` different. `xx` is a variable, which has
 storage and so needs a type, and gets `int`. `XX` is a value without
 storage, which gets its type where it's used. Case already carries meaning
-(D4), and with no implicit numeric conversions (D27), untyped constants are
+([D4](D04-types-vs-values.md)), and with no implicit numeric conversions ([D27](D27-numeric-types.md)), untyped constants are
 what keeps casts from spreading. `BUF_SIZE = 4096` can be compared with a
 `u32` length and used as an `i32` bound.
 
@@ -118,14 +118,14 @@ Each step is driven by the todo tests named.
 4. `/` and `%`. The `*_div_zero` and `*_mod_zero` tests.
 5. Shifts, and `|`, `&` and `^`, which can't overflow. The
    `*_shl_overflow` tests.
-6. Casts of constants, which are range checked (D27), and comparisons,
+6. Casts of constants, which are range checked ([D27](D27-numeric-types.md)), and comparisons,
    `not`, `and` and `or` on constants.
 7. Named constants: a constant expression required for an ALL_CAPS
    initializer, the value stored and produced by uses of the name,
    `sizeof` and `alignof` of builtin types as constants, and the size of
    `[BLAH]int`. `const_invalid_function_call.luv` and a rewritten
    `const_no_cast_eval_yet.luv`. Forward references to constants wait for
-   the D11 skim.
+   the [D11](D11-forward-refs.md) skim.
 
 Strings as constants, and `sizeof` of structs, which needs their layout,
 come later.

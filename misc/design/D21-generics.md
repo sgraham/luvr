@@ -6,7 +6,7 @@ specialization. Each distinct instantiation is monomorphized once, on first
 use. The body is parsed once at the definition without emitting anything, so
 syntax errors are reported at the definition. Each instantiation then rewinds
 the lexer to the body and re-parses it with the type parameters bound, using
-the same rewind as D10.
+the same rewind as [D10](D10-comprehensions.md).
 
 **When instantiation happens (2026-11-12, not implemented).** Re-parsing a
 body where it's first used, in the middle of another function, would see
@@ -38,7 +38,7 @@ records. Within one module, deferring is enough: globals can't be
 redefined, and a name defined after the generic but before the
 instantiation was already reported as undefined by the definition parse.
 
-Resolved by D24 (2026-11-13): an instantiation is parsed by the same Parser,
+Resolved by [D24](D24-modules.md) (2026-11-13): an instantiation is parsed by the same Parser,
 re-pointed at the defining module, so it sees that module's globals.
 
 **Decided (2026-11-08, provisional): `{}`.** The user expects to revisit it
@@ -91,7 +91,7 @@ letter is always a type parameter. Struct names need at least two letters
   never needs to know about generics. Generic code is also easy to spot
   when reading. The cost is losing descriptive parameter names (`Elem`,
   `Key`), which would be checked as real types instead.
-- The lexer classifies a name once per distinct identifier (D4), so telling
+- The lexer classifies a name once per distinct identifier ([D4](D04-types-vs-values.md)), so telling
   `T` from `Tree` costs nothing at each use.
 - Single capitals are currently `TK_TYPENAME`, not constants, so no constant
   spellings are lost. No test here or in luv60 has a single-letter struct.
@@ -126,7 +126,7 @@ arguments come from.
   cross-module problem is still open. It matters early, because the most
   used generic methods are in the prelude (`[]T` is `*List{T}`).
 - Lost: functions with no natural receiver. `max`/`min` can be builtins,
-  or methods on the builtin types in the prelude (`a.min(b)`, D22a).
+  or methods on the builtin types in the prelude (`a.min(b)`, [D22a](D22-methods.md)).
   `sort(xs)` becomes `xs.sort()`, `make{T}(n)` becomes `List{T}.new(n)`,
   and comprehensions cover most of `map`/`filter`. `swap{T}(*T, *T)` and
   helpers that span two generic types (`zip` over `List{A}` and `List{B}`)
@@ -149,7 +149,7 @@ mask and call-site inference are superseded by the 2026-11-13 revision):
 - `foreign` functions can't be generic.
 - Type arguments can't be given twice (`List{int}{str}`), and can't follow
   a call or other value (`f(){int}`).
-- No trailing comma (D19a) and no empty `{}`.
+- No trailing comma ([D19a](D19-formatter-syntax.md)) and no empty `{}`.
 - Default at call sites: type arguments are inferred from the arguments.
   Literals take their type from the other arguments (`max(x, 1)`).
   Different concrete types (`u32` and `u64`) are an error, fixed by `cast`,
@@ -183,12 +183,12 @@ replace both `[]T` and `{K}V` with more verbose generic synonyms (e.g.
 `Slice{T}`, `Dict{K, V}`), which would remove the overlap. Superseded
 (2026-11-12): `[]T` and `{K}V` are kept as synonyms for `*List{T}` and
 `*Dict{K, V}`, pointers to ordinary prelude structs, so user code rarely
-needs to nest them inside `{}`. See D23.
+needs to nest them inside `{}`. See [D23](D23-arrays-lists.md).
 
 Options explored:
 
 - **`<>`** (`List<int>`, `struct Pair<A, B>`, `def T max<T>`). Usually
-  rejected because `<` is ambiguous with less-than, but D4 fixes most of
+  rejected because `<` is ambiguous with less-than, but [D4](D04-types-vs-values.md) fixes most of
   it. In type position there's no ambiguity. In expression position, `<`
   after `SH_TYPE` is currently always an error (types can't be compared), so
   it can open type arguments. `Color.RED < x` and `MAX < x` stay
@@ -211,7 +211,7 @@ Options explored:
     So `<>` means inference only, with non-inferable cases as static methods
     (`List<int>.new()`), or Rust-like `max.<int>(a, b)` (LL(1) since `.` `<`
     is otherwise unused, but ugly).
-- **`[]`** (`List[int]`, `max[int](a, b)`), the earlier D18 plan. LL(1)
+- **`[]`** (`List[int]`, `max[int](a, b)`), the earlier [D18](D18-future-syntax.md) plan. LL(1)
   everywhere: after `SH_TYPE`, `[` is currently an error, and for function
   calls the decision is made inside the brackets with the `sizeof_operand`
   first-token rule, with no precedence issue. Rejected for looks:

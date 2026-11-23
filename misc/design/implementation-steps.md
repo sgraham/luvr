@@ -27,15 +27,15 @@ Each step is measurable on its own.
      (hyperfine). The parser itself adds about 1 ns per token, but it does
      no name binding yet, while Lua's stubbed build still registers locals
      and builds constant tables.
-   - **Status 2026-11-08:** D21 `{}` generics added to the parser
+   - **Status 2026-11-08:** [D21](D21-generics.md) `{}` generics added to the parser
      (type arguments, `struct`/`def` type parameters, explicit call-site
      arguments). The luv60 results are unchanged (150/164, the same 14
      unconverted files).
-3. **`expdesc` + name binding (D5, D6, D9, D15).** Real symbol resolution
+3. **`expdesc` + name binding ([D5](D05-decl-vs-expr.md), [D6](D06-assignment-declares.md), [D9](D09-calls.md), [D15](D15-interning.md)).** Real symbol resolution
    through `Name.binding`, declaration vs. expression dispatch, keyword args.
    Re-bench to see the cost of resolution, and compare against a Lua-style
-   fixed locals table with a linear scan (see D15).
-4. **Forward references (D11, lazy skim).** Add tests that call functions
+   fixed locals table with a linear scan (see [D15](D15-interning.md)).
+4. **Forward references ([D11](D11-forward-refs.md), lazy skim).** Add tests that call functions
    defined later, use mutual recursion, and have a malformed later header
    referenced earlier (must report the header's error, not "undefined").
    Coverage of the skim path:
@@ -46,9 +46,9 @@ Each step is measurable on its own.
      globals/constants are skipped or expected to fail.
    Confirm dumbbench time is unchanged (it never misses), and time the
    forced-skim path separately.
-5. **Comprehensions (D10)**, using whichever option is picked.
+5. **Comprehensions ([D10](D10-comprehensions.md))**, using whichever option is picked.
 6. **Profile and tune:** `perf`/Instruments on the step 2–4 drivers. Try the
-   `newline_before` flag variant (D3), hash choice (D15), and removing the
+   `newline_before` flag variant ([D3](D03-layout-tokens.md)), hash choice ([D15](D15-interning.md)), and removing the
    lookahead slot.
    - **Measured 2026-11-13** (desktop, `parsecheck`): where the hot lexer
      state lands in a cache line changes the whole parse by 5–8%. `LexPos`
@@ -61,9 +61,9 @@ Each step is measurable on its own.
      mixed results. This depends on allocations made before `parse_file()`,
      so it's fragile, and not worth tuning until there's more code.
    - Inlining into the recursive `primary()`/`subexpr()` shows up too.
-     Adding the D10 skim made dumbbench, which has no list literals, 1–2%
+     Adding the [D10](D10-comprehensions.md) skim made dumbbench, which has no list literals, 1–2%
      slower, and making `list_literal()` noinline undid that.
-   - The D10 skim and rewind cost about 7% on a generated file that's
+   - The [D10](D10-comprehensions.md) skim and rewind cost about 7% on a generated file that's
      nothing but small list literals, compared to before they existed.
    - To check later: `Parser.locals` is a large array (`MAX_LOCALS`
      entries) between `ls` and the rest of the parser's fields, which may
@@ -71,7 +71,7 @@ Each step is measurable on its own.
      Get hardware counters (L1 misses, split loads) on the desktop, which
      needs `perf_event_paranoid` lowered. Try LTO and PGO, and noinline on
      cold parser paths.
-   - To check later: there's only one active Parser (D24), so it could be a
+   - To check later: there's only one active Parser ([D24](D24-modules.md)), so it could be a
      file static in `parser.c` instead of a `Parser*` passed to every
      function. Its fields would then be at fixed addresses, which frees a
      register and might let the compiler fold addresses, and the static
@@ -81,7 +81,7 @@ Each step is measurable on its own.
      notably faster before deciding.
 7. **Real code generator** behind the interface: luv60's IR, sqbe, or a
    bytecode interpreter in the spirit of `rewrite.txt`'s reference
-   implementation. See D25.
+   implementation. See [D25](D25-backend.md).
 
 Proposed layout in `~/luvr`:
 

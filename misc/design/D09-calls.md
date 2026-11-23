@@ -16,7 +16,7 @@ Lua 4, this is exactly the one place that uses `lookahead()`
 **Recommendation: (b)**, which helps remove the lookahead slot entirely.
 
 **Decided instead: (c) C-style designators**, `Stuff(.a=44, true)`. An
-expression can't start with `.` (D13 bans `.5`), so `'.' NAME '='` in
+expression can't start with `.` ([D13](D13-literals.md) bans `.5`), so `'.' NAME '='` in
 argument position is LL(1) from its first token. Compared with (b): no
 deferred name resolution inside argument lists (with (b), `Stuff(a=44)`
 can't look up `a` until it sees `=`), and `f(x=1)`-for-`f(x==1)` typos
@@ -26,7 +26,7 @@ and the README examples.
 Other decisions here:
 
 - **Compound literal = call on a type.** `TYPENAME '(' args ')'`.
-  **Decided (via D7):** no `T(x)` conversion syntax. Conversions are always
+  **Decided (via [D7](D07-keywords.md)):** no `T(x)` conversion syntax. Conversions are always
   `cast T(x)`, and bare `Name(...)` is only a compound literal.
 - **Argument evaluation order** and promotion (`int_promotion_in_call.luv`)
   are semantic and outside the parser's scope.

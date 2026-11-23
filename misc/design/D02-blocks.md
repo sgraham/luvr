@@ -12,4 +12,4 @@
   once per line, and newlines get scanned anyway.
 
 **Recommendation: (a).** It's cheap and it's the luv look. The token protocol
-is in D3.
+is in [D3](D03-layout-tokens.md).

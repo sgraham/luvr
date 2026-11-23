@@ -16,13 +16,13 @@ modules.
 module that's already in the dict only binds the name (or `as` alias) to it,
 and nothing is parsed again. Otherwise the module is loaded and parsed
 completely before the importer continues past its import list. Imports come
-first in a file (D17), so at that point the importer has no locals, and no
+first in a file ([D17](D17-toplevel-grammar.md)), so at that point the importer has no locals, and no
 globals other than the module names it has already imported. Importing a
 module that's still being loaded is an import cycle, and an error.
 
 Files are read through a callback on Ctx that returns a buffer followed by
 `LEX_PADDING` zero bytes, or fails ("Couldn't open import, looking for
-'test/errors/nopes.luv'."). The library itself has no stdio (D16).
+'test/errors/nopes.luv'."). The library itself has no stdio ([D16](D16-errors.md)).
 `parsecheck` supplies a callback built from its `load_file()`.
 
 **Module and Parser.** A `Module` lasts as long as the Ctx. It has the
@@ -55,8 +55,8 @@ struct Module {
 **One active Parser.** `parse_file()` allocates a single Parser, and it's
 used for the main file, every imported module, and every instantiation.
 Each of those starts at a point where the Parser's state is empty apart
-from the lexer and its Module: imports come first in a file (D17), and
-instantiations are queued to the end of a top-level item (D21). So there's
+from the lexer and its Module: imports come first in a file ([D17](D17-toplevel-grammar.md)), and
+instantiations are queued to the end of a top-level item ([D21](D21-generics.md)). So there's
 no locals, `func_depth` and `type_params` are 0, and the lexer isn't inside
 an interpolation. Switching to another module (or another place in the same
 one) saves the Module pointer, the `FileBuf` and `LexPos`, points them at
@@ -88,7 +88,7 @@ cache doesn't change anything else, so it's fine to start without it. The
 table's own performance (swisstable or other layouts) probably needs a
 separate investigation once it exists.
 
-**Generic instantiation across modules (D21).** A body is instantiated by
+**Generic instantiation across modules ([D21](D21-generics.md)).** A body is instantiated by
 switching the Parser to the module that defines it, with the lexer at the
 body's offset. Names in the body resolve against that module's globals, so
 its private helpers work, and a name that both modules define binds to the

@@ -16,10 +16,10 @@ recommendation near the end reflect those answers. Not yet marked decided.
 - luvr is plain C and is meant to end up as one header. A backend that
   needs C++, Rust, a generator step, or a copyleft licence works against
   that.
-- The front end is single pass with no AST (D1). Code is produced in
+- The front end is single pass with no AST ([D1](D01-single-pass.md)). Code is produced in
   source order through an `expdesc` that's discharged late, behind a
   `luaK_*`-style interface. Functions are complete units, and generic
-  instantiations are queued until the current top-level item ends (D21).
+  instantiations are queued until the current top-level item ends ([D21](D21-generics.md)).
   So a function at a time is the natural unit to hand to a backend.
 
 Language features that the backend has to deal with, and that most small
@@ -27,13 +27,13 @@ backends don't do for us:
 
 - `foreign` functions and structs passed by value mean the C ABI rules for
   aggregates are needed for every target, including C calling back into luv.
-- The current arena (D23) is a per-thread, dynamically scoped variable. Real
+- The current arena ([D23](D23-arrays-lists.md)) is a per-thread, dynamically scoped variable. Real
   TLS is different in every object format and is fiddly in a JIT. A pinned
   register or a hidden context argument avoids all of that.
 - Constants that are evaluated at compile time already exist
   (`const_for_array_size.luv`). Anything beyond literal folding needs an
   evaluator inside the compiler.
-- Nested functions capture by value (D12), so there are no closures to
+- Nested functions capture by value ([D12](D12-nested-functions.md)), so there are no closures to
   allocate. That's only a hidden argument.
 
 A budget, to make "fast" concrete: 1M lines/s on `dumbbench.luv` is about
@@ -431,7 +431,7 @@ named local lives.
 ## Recommendation (revised 2026-11-14)
 
 1. **A linear SSA IL per function**, with folding and CSE as it's built.
-   D26 has the design, and explains why SSA is made by one pass at the end
+   [D26](D26-il.md) has the design, and explains why SSA is made by one pass at the end
    of each function and not while parsing. Expression typing produces this. A text
    dump of it is the first testable output.
 2. **One backend of our own: ABI lowering, then a backward pass that
@@ -439,7 +439,7 @@ named local lives.
    into sections with relocation records.
 3. **A JIT as the only consumer to begin with.** The library compiles and
    runs in process. Foreign symbols are resolved by the host, through a
-   callback on Ctx in the same style as D24's file loader, with `dlsym` and
+   callback on Ctx in the same style as [D24](D24-modules.md)'s file loader, with `dlsym` and
    `GetProcAddress` as the default. C code is linked into the host program
    by the user. Order of bring-up: aarch64 macOS (the laptop), x64 Linux
    (the desktop), then x64 Windows, which adds only Win64 and unwind tables
@@ -474,9 +474,9 @@ What this gives up:
 
 ## Still open
 
-1. The exact IL. See D26 (provisional).
-2. Whether the current arena (D23) is a pinned register or a hidden
-   argument. D26 proposes a pinned register that holds the context, with
+1. The exact IL. See [D26](D26-il.md) (provisional).
+2. Whether the current arena ([D23](D23-arrays-lists.md)) is a pinned register or a hidden
+   argument. [D26](D26-il.md) proposes a pinned register that holds the context, with
    the arena as a field of it.
 3. How good the fast tier's code needs to be for interactive use, which
    decides how early the optimizing passes are wanted.

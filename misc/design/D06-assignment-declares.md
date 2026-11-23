@@ -28,4 +28,4 @@ Options:
 Keep (c) in mind if typos start biting. With function-level scope, the Lua
 `block()` → `removelocalvars` step (`lparser.c`, `block`) becomes a no-op
 inside a function. Lua's `actloc` stack only gets pushed per function and per
-comprehension (D10).
+comprehension ([D10](D10-comprehensions.md)).

@@ -22,7 +22,7 @@ Decided (2026-11-08):
   Type-specific operations like `decode_utf8` are free functions.
 - **No methods on pointers** (`on *T`), because `.` auto-dereferences, so
   `p.f()` would be ambiguous. No methods on `[N]T` (would need a value
-  parameter, D21) or `typeof(...)`.
+  parameter, [D21](D21-generics.md)) or `typeof(...)`.
 - **Methods can only be defined in the receiver type's own module** (option
   (c) below). `on mod.Thing` is a syntax error. Dunder methods are
   therefore also only defined with the type, so a module can't change how
@@ -36,7 +36,7 @@ Decided (2026-11-08):
 - **Static methods**: a method whose first parameter isn't a bare name has no
   `self`. `on List{T} def List{T} new(int cap)` is called as
   `List{int}.new(4)`. This is how a function that would have been a free
-  generic function is written (D21, 2026-11-13).
+  generic function is written ([D21](D21-generics.md), 2026-11-13).
 - **Operators** on structs map to dunder methods (`<` to `__lt__`) through
   the same lookup. That's a spelling for `<` on that type, not overloading.
 - **Errors inside instantiations** must stay readable. Report the error in
@@ -67,7 +67,7 @@ ordinary luv code. What's special is only that it's the home module of the
 builtin types, plus whatever intrinsics or `foreign` declarations it needs
 for primitive operations. Other library modules can't add methods to `str`
 either, and provide free functions instead. If `[]T` and `{K}V` are later
-replaced by generic structs (`List{T}`, `Dict{K, V}`, see D21), those become
+replaced by generic structs (`List{T}`, `Dict{K, V}`, see [D21](D21-generics.md)), those become
 ordinary structs defined in the prelude, and only true primitives (`int`,
 `str`, ...) are left needing the special case.
 
