@@ -132,6 +132,9 @@ struct TypeInfo {
       // agg.u is AGG_NONE if the layout isn't known (see type_has_layout()).
       // The fields' offsets are only set if it's known.
       AggId agg;
+      // The struct's initial value, or DATA_NONE if it's all zeros. Only set
+      // when EMIT.
+      DataId image;
     };
     struct {  // TYPE_ARRAY
       TypeId elem;
@@ -212,6 +215,8 @@ struct Parser {
   VEC(TypeInfo) types;  // by TypeId, with unused entries for the FixedTypes
   VEC(TypeId) param_types;
   VEC(Field) fields;
+  // The image of the struct whose body is being parsed. Only used when EMIT.
+  VEC(u8) image;
   // Each [N]T, by a hash of N and T. The slot's val is the TypeId.
   HashTable array_types;
   u32 num_locals;
@@ -261,7 +266,7 @@ struct ExpDesc {
   union {
     SlotId slot;  // EK_LOCAL
     Ref ref;      // EK_REF
-    u32 data;     // EK_STR
+    DataId data;  // EK_STR
     u32 sym;      // EK_FUNC
     struct {      // EK_ADDR
       Ref base;
@@ -1533,6 +1538,16 @@ static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, u3
   il_emit(&p->il, OP_STORE, il_type_of(p, l->type, at), v, addr);
 }
 
+// Gives the struct of type st at addr its initial value.
+static void emit_struct_init(Parser* p, Ref addr, TypeId st) {
+  const TypeInfo* info = type_info(p, st);
+  if (info->image.u == DATA_NONE) {
+    il_emit(&p->il, OP_ZERO, IT_VOID, addr, info->agg.u);
+  } else {
+    il_copy(&p->il, addr, il_const_data(&p->il, info->image), info->agg);
+  }
+}
+
 static SlotId emit_local_slot(Parser* p, TypeId t, NameId name, u32 at) {
   if (type_is_struct(p, t) && type_has_layout(p, t)) {
     return il_slot_add_agg(&p->il, type_info(p, t)->agg, name);
@@ -1572,7 +1587,7 @@ static void emit_print(Parser* p, const ExpDesc* e, u32 at) {
       error_at(p, at, "This expression isn't supported yet.");
     }
     args[0] = il_const_data(&p->il, e->data);
-    args[1] = il_const_int(&p->il, IT_I64, p->ls.ctx->data.v[e->data].len);
+    args[1] = il_const_int(&p->il, IT_I64, p->ls.ctx->data.v[e->data.u].len);
     nargs = 2;
   } else {
     args[0] = emit_to_ref(p, e, t, at);
@@ -2241,7 +2256,7 @@ static void struct_args(Parser* p, ExpDesc* e) {
     }
     AggId agg = type_info(p, st)->agg;
     temp = il_slot_addr(&p->il, il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED}));
-    il_emit(&p->il, OP_ZERO, IT_VOID, temp, agg.u);
+    emit_struct_init(p, temp, st);
   }
   u32 num_fields = has_fields ? type_info(p, st)->num_fields : 0;
   u32 first_field = has_fields ? type_info(p, st)->first_field : 0;
@@ -2505,7 +2520,7 @@ static void primary(Parser* p, ExpDesc* e) {
         u32 len;
         const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
         e->kind = EK_STR;
-        e->data = il_data_add(p->ls.ctx, s, len);
+        e->data = il_data_add(p->ls.ctx, s, len, 1);
       }
       next(p);
       break;
@@ -2756,8 +2771,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
       Local* l = lookup_in_func(p, name);
       l->slot = emit_local_slot(p, t, name, at);
       if (!has_value && type_is_struct(p, t)) {
-        Ref addr = il_slot_addr(&p->il, l->slot);
-        il_emit(&p->il, OP_ZERO, IT_VOID, addr, type_info(p, t)->agg.u);
+        emit_struct_init(p, il_slot_addr(&p->il, l->slot), t);
         return;
       }
       if (!has_value) {
@@ -3289,6 +3303,50 @@ static Flow stat(Parser* p) {
 
 // Top level
 
+// Grows p->image to size bytes with zeros.
+static void image_extend(Parser* p, u32 size) {
+  vec_reserve(p->ls.ctx, &p->image, size - p->image.num);
+  memset(&p->image.v[p->image.num], 0, size - p->image.num);
+  p->image.num = size;
+}
+
+// Writes defval, the default of a field of type t, at offset in p->image.
+// Every target is little-endian.
+static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, u32 at) {
+  if (t.u == TY_BOOL) {
+    p->image.v[offset] = defval->v.b;
+  } else if (type_is_integer(t)) {
+    u64 bits = (u64)defval->v.i;
+    for (u32 i = 0; i < type_size(p, t); ++i) {
+      p->image.v[offset + i] = (u8)(bits >> (8 * i));
+    }
+  } else if (!type_is_pointer(p, t)) {
+    error_at(p, at, "This field default isn't supported yet.");
+  }
+}
+
+// Copies the images of any structs in a field of type t to offset in
+// p->image. Returns whether there were any.
+static bool image_add_field(Parser* p, TypeId t, u32 offset) {
+  if (type_is_array(p, t)) {
+    const TypeInfo* info = type_info(p, t);
+    if (info->count == 0 || !image_add_field(p, info->elem, offset)) {
+      return false;
+    }
+    u32 elem_size = type_size(p, info->elem);
+    for (u32 i = 1; i < info->count; ++i) {
+      memcpy(&p->image.v[offset + i * elem_size], &p->image.v[offset], elem_size);
+    }
+    return true;
+  }
+  if (!type_is_struct(p, t) || type_info(p, t)->image.u == DATA_NONE) {
+    return false;
+  }
+  const IlData* d = &p->ls.ctx->data.v[type_info(p, t)->image.u];
+  memcpy(&p->image.v[offset], &p->ls.ctx->databytes.v[d->off], d->len);
+  return true;
+}
+
 // struct_body -> INDENT field {field} DEDENT
 // field       -> type name ['=' expr] end
 //
@@ -3304,6 +3362,8 @@ static void struct_body(Parser* p, TypeId st) {
   u32 size = 0;
   u32 align = 1;
   bool known = true;
+  bool has_image = false;
+  p->image.num = 0;
   for (;;) {
     u32 type_at = p->ls.pos.t.offset;
     TypeId t = type(p);
@@ -3325,6 +3385,18 @@ static void struct_body(Parser* p, TypeId st) {
                  (const char*)n->str);
       }
     }
+    known = known && type_has_layout(p, t);
+    u32 offset = 0;
+    if (known) {
+      u32 field_align = type_align(p, t);
+      offset = align_up(size, field_align);
+      size = offset + type_size(p, t);
+      align = field_align > align ? field_align : align;
+      if (EMIT) {
+        image_extend(p, size);
+        has_image |= image_add_field(p, t, offset);
+      }
+    }
     if (optional(p, TK_EQ)) {
       u32 value_at = p->ls.pos.t.offset;
       ExpDesc v;
@@ -3333,17 +3405,10 @@ static void struct_body(Parser* p, TypeId st) {
       if (v.kind != EK_CONST) {
         error_at(p, value_at, "Expected a constant expression.");
       }
-      if (EMIT) {
-        error_at(p, value_at, "Field defaults aren't supported yet.");
+      if (EMIT && known) {
+        image_add_const(p, t, &v, offset, value_at);
+        has_image = true;
       }
-    }
-    known = known && type_has_layout(p, t);
-    u32 offset = 0;
-    if (known) {
-      u32 field_align = type_align(p, t);
-      offset = align_up(size, field_align);
-      size = offset + type_size(p, t);
-      align = field_align > align ? field_align : align;
     }
     *vec_push(p->ls.ctx, &p->fields) = (Field){name, t, offset};
     end_of_stat(p);
@@ -3363,6 +3428,10 @@ static void struct_body(Parser* p, TypeId st) {
       type_agg_leaves(p, st, 0, leaves, &num_leaves);
     }
     info->agg = il_agg_add(p->ls.ctx, size, align, leaves, num_leaves);
+    if (EMIT && has_image) {
+      image_extend(p, size);
+      info->image = il_data_add(p->ls.ctx, p->image.v, size, align);
+    }
   }
 }
 
@@ -3463,7 +3532,7 @@ static void toplevel_stat(Parser* p) {
       // refer to itself through pointers.
       TypeId st = {p->types.num};
       *vec_push(p->ls.ctx, &p->types) =
-          (TypeInfo){.kind = TYPE_STRUCT, .name = name, .agg = {AGG_NONE}};
+          (TypeInfo){.kind = TYPE_STRUCT, .name = name, .agg = {AGG_NONE}, .image = {DATA_NONE}};
       TypeId bound = p->type_params ? ty_unknown : st;
       declare_definition(p, name, at, GK_TYPE | (bound.u << GLOBAL_KIND_BITS));
       check(p, TK_COLON);
@@ -3674,6 +3743,7 @@ static void parse_end(Parser* p) {
   free(p->types.v);
   free(p->param_types.v);
   free(p->fields.v);
+  free(p->image.v);
   hashtable_free(&p->array_types);
   free(p);
 }

@@ -5,6 +5,7 @@ typedef struct AggInfo AggInfo;
 typedef struct AggLeaf AggLeaf;
 typedef struct BlockId BlockId;
 typedef struct Ctx Ctx;
+typedef struct DataId DataId;
 typedef struct FileBuf FileBuf;
 typedef struct HashSlot HashSlot;
 typedef struct HashTable HashTable;
@@ -880,6 +881,11 @@ struct BlockId {
   u32 u;
 };
 
+// An index in Ctx.data.
+struct DataId {
+  u32 u;
+};
+
 #define AGG_NONE UINT32_MAX
 
 // A piece of the function's frame, which holds a local.
@@ -926,7 +932,11 @@ struct IlFunc {
 struct IlData {
   u32 off;  // into Ctx.databytes
   u32 len;
+  u32 align;
 };
+
+// A DataId.u for no data.
+#define DATA_NONE UINT32_MAX
 
 // What each target's ABI needs to know to pass or return an aggregate. SysV
 // x64 reads the size and the SSE bits, arm64 the size and the HFA bits, and
@@ -972,11 +982,11 @@ Ref il_const_int(IlFunc* f, IlType ty, u64 v);
 
 Ref il_const_sym(IlFunc* f, u32 sym);
 
-// data is an index in Ctx.data.
-Ref il_const_data(IlFunc* f, u32 data);
+Ref il_const_data(IlFunc* f, DataId data);
 
-// Returns the index in Ctx.data of a copy of the n bytes at s.
-u32 il_data_add(Ctx* ctx, const u8* s, u32 n);
+// Returns a copy of the n bytes at s, which will be
+// placed at a multiple of align.
+DataId il_data_add(Ctx* ctx, const u8* s, u32 n, u32 align);
 
 // Emits a CALL followed by an EXT for each two of the n args. ty is IT_VOID
 // if the call has no result.

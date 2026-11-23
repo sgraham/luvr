@@ -1,0 +1,49 @@
+# OUT: -2
+# OUT: 65535
+# OUT: -5000000000
+# OUT: 7
+# OUT: true
+# OUT: 3
+# OUT: -2
+# OUT: 0
+# OUT: 7
+# OUT: 1
+# OUT: 7
+# OUT: -2
+# OUT: 4
+# OUT: 3
+struct Inner:
+    i8 small = -2
+    u16 wide = 65535
+    int big = -5000000000
+
+struct Outer:
+    int n = 7
+    Inner inner
+    bool flag = true
+    *int p = null
+    i32 last = 3
+
+def int main():
+    Outer o
+    print o.inner.small
+    print o.inner.wide
+    print o.inner.big
+    print o.n
+    print o.flag
+    print o.last
+
+    o2 = Outer(.inner=Inner(.wide=0))
+    print o2.inner.small
+    print o2.inner.wide
+    print o2.n
+
+    Inner i = Inner(1)
+    print i.small
+    o.inner = i
+    print o.n
+    o3 = Outer(4)
+    print o3.inner.small
+    print o3.n
+    print o3.last
+    return 0

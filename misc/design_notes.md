@@ -3400,6 +3400,8 @@ func i64 @main
 - Top level lines are `data` and `func`. Inside a function, `slot` lines
   come first, then a label line `:n` for each block, followed by its
   instructions.
+- A `data` line is `data @.datN [align N] "bytes"`. The alignment is only
+  printed when it's more than 1, as for a struct's default image.
 - An instruction is `[%n =] OP [type] operand, operand, ...`. The type is
   left out when it's `void`, and for `SLOT`, which is always an `i64`
   address. Types are a fixed set of words that no operand can look like.

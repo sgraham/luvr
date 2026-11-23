@@ -109,20 +109,21 @@ Ref il_const_sym(IlFunc* f, u32 sym) {
   return il_const(f, IT_SYM, sym);
 }
 
-Ref il_const_data(IlFunc* f, u32 data) {
-  return il_const(f, IT_DATA, data);
+Ref il_const_data(IlFunc* f, DataId data) {
+  return il_const(f, IT_DATA, data.u);
 }
 
-u32 il_data_add(Ctx* ctx, const u8* s, u32 n) {
+DataId il_data_add(Ctx* ctx, const u8* s, u32 n, u32 align) {
   IlData* d = vec_push(ctx, &ctx->data);
   d->off = ctx->databytes.num;
   d->len = n;
+  d->align = align;
   if (n != 0) {
     vec_reserve(ctx, &ctx->databytes, n);
-    memcpy(ctx->databytes.v + ctx->databytes.num, s, n);
+    memcpy(&ctx->databytes.v[ctx->databytes.num], s, n);
     ctx->databytes.num += n;
   }
-  return ctx->data.num - 1;
+  return (DataId){ctx->data.num - 1};
 }
 
 Ref il_call(IlFunc* f, IlType ty, Ref callee, const Ref* args, u32 n) {
@@ -314,7 +315,11 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
 
 void il_dump_data(const Ctx* ctx, u32 i, FILE* out) {
   const IlData* d = &ctx->data.v[i];
-  fprintf(out, "data @.dat%u \"", i);
+  fprintf(out, "data @.dat%u ", i);
+  if (d->align > 1) {
+    fprintf(out, "align %u ", d->align);
+  }
+  fputc('"', out);
   for (u32 j = 0; j < d->len; ++j) {
     u8 c = ctx->databytes.v[d->off + j];
     if (c == '"' || c == '\\') {

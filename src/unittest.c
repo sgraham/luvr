@@ -270,9 +270,11 @@ static void test_il_data(void) {
   IlFunc f;
   il_init_test(&f, &ctx, IT_VOID);
   u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
-  u32 hi = il_data_add(&ctx, (const u8*)"hi", 2);
-  u32 escaped = il_data_add(&ctx, (const u8*)"\"\\\n\t\x00\x7f\xff~ ", 9);
-  il_data_add(&ctx, NULL, 0);
+  DataId hi = il_data_add(&ctx, (const u8*)"hi", 2, 1);
+  DataId escaped = il_data_add(&ctx, (const u8*)"\"\\\n\t\x00\x7f\xff~ ", 9, 1);
+  il_data_add(&ctx, NULL, 0, 1);
+  static const u8 image[] = {1, 0, 0, 0, 0, 0, 0, 0};
+  il_data_add(&ctx, image, 8, 8);
   il_block_start(&f, il_block_declare(&f));
   Ref args[] = {il_const_data(&f, escaped), il_const_int(&f, IT_I64, 9), il_const_data(&f, hi),
                 il_const_int(&f, IT_I64, 2)};
@@ -282,6 +284,7 @@ static void test_il_data(void) {
                  "data @.dat0 \"hi\"\n"
                  "data @.dat1 \"\\\"\\\\\\n\\t\\x00\\x7f\\xff~ \"\n"
                  "data @.dat2 \"\"\n"
+                 "data @.dat3 align 8 \"\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\"\n"
                  "func @f\n"
                  ":0\n"
                  "  CALL @g, @.dat1, 9, @.dat0, 2\n"
