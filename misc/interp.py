@@ -14,6 +14,9 @@ from dataclasses import dataclass
 
 TYPES = {"i8", "u8", "i16", "u16", "i32", "i64", "f32", "f64"}
 
+# Sizes of the integer types in memory. Loads of the narrow ones give i32s.
+INT_SIZES = {"i8": 1, "u8": 1, "i16": 2, "u16": 2, "i32": 4, "i64": 8}
+
 # The first character of an operand says what it is, except for integer
 # constants.
 OPERAND_KINDS = {"%": "ins", ":": "block", "$": "slot", "@": "sym"}
@@ -29,10 +32,19 @@ class Operand:
     val: int | str  # the n of %n, :n or $n, an integer constant, or a symbol name
 
 
+# All of the program's memory: data, then the frames of the calls that are
+# running. Address 0 is never used, so that it can be null.
+@dataclass
+class Memory:
+    bytes: bytearray
+    top: int  # the first unused address
+
+
 @dataclass
 class Program:
     funcs: dict  # Funcs by symbol name
-    data: dict  # bytes by symbol name
+    data: dict  # Addresses in mem by symbol name
+    mem: Memory
 
 
 @dataclass
@@ -89,9 +101,34 @@ def parse_ins(line):
     return Ins(result, op, ty, operands)
 
 
+def alloc(mem, size, align):
+    addr = (mem.top + align - 1) & -align
+    mem.top = addr + size
+    if mem.top > len(mem.bytes):
+        mem.bytes.extend(bytes(mem.top - len(mem.bytes)))
+    return addr
+
+
+def load(mem, addr, ty):
+    if ty not in INT_SIZES:
+        raise Error(f"LOAD {ty} isn't supported yet")
+    n = INT_SIZES[ty]
+    return int.from_bytes(mem.bytes[addr:addr + n], "little", signed=ty[0] == "i")
+
+
+# Values are kept in the signed range of their type, except after ZEXT32, so
+# only the low bits are stored.
+def store(mem, addr, ty, v):
+    if ty not in INT_SIZES:
+        raise Error(f"STORE {ty} isn't supported yet")
+    n = INT_SIZES[ty]
+    mem.bytes[addr:addr + n] = (v & ((1 << (8 * n)) - 1)).to_bytes(n, "little")
+
+
 def parse(text):
     funcs = {}
     data = {}
+    mem = Memory(bytearray(), 8)
     f = None
     for lineno, raw in enumerate(text.split("\n"), 1):
         line = raw.strip()
@@ -102,7 +139,10 @@ def parse(text):
                 # data @.dat0 "bytes"
                 _, name, s = line.split(None, 2)
                 # The escapes are a subset of a Python bytes literal's.
-                data[name[1:]] = ast.literal_eval("b" + s)
+                b = ast.literal_eval("b" + s)
+                addr = alloc(mem, len(b), 1)
+                mem.bytes[addr:addr + len(b)] = b
+                data[name[1:]] = addr
             elif line.startswith("func "):
                 # func i64 @main, or func @f when it returns nothing.
                 words = line.split()
@@ -121,10 +161,9 @@ def parse(text):
                 f.ins.append(parse_ins(line))
         except (Error, ValueError, IndexError, SyntaxError) as e:
             raise Error(f"line {lineno}: {e}: {raw}")
-    return Program(funcs, data)
+    return Program(funcs, data, mem)
 
 
-# A data symbol's address is its bytes, since nothing indexes into them yet.
 def value_of(values, prog, operand):
     if operand.kind == "int":
         return operand.val
@@ -167,25 +206,26 @@ COMPARE = {
 UNSIGNED_COMPARE = {"ULT": "LT", "ULE": "LE", "UGT": "GT", "UGE": "GE"}
 
 
-def print_str(data, n):
+def print_str(mem, addr, n):
     sys.stdout.flush()
-    sys.stdout.buffer.write(data[:n])
+    sys.stdout.buffer.write(mem.bytes[addr:addr + n])
 
 
-# The runtime's functions, by symbol name.
+# The runtime's functions, by symbol name. Each is passed the Memory first.
 RUNTIME = {
-    "luv_print_i64": lambda v: sys.stdout.write(str(v)),
-    "luv_print_u64": lambda v: sys.stdout.write(str(v & ((1 << 64) - 1))),
-    "luv_print_bool": lambda v: sys.stdout.write("true" if v else "false"),
+    "luv_print_i64": lambda mem, v: sys.stdout.write(str(v)),
+    "luv_print_u64": lambda mem, v: sys.stdout.write(str(v & ((1 << 64) - 1))),
+    "luv_print_bool": lambda mem, v: sys.stdout.write("true" if v else "false"),
     "luv_print_str": print_str,
-    "luv_print_end": lambda: sys.stdout.write("\n"),
+    "luv_print_end": lambda mem: sys.stdout.write("\n"),
 }
 
 
 def run(prog, f, args):
     values = {}
-    # A slot's address is its number.
-    frame = [None] * len(f.slots)
+    mem = prog.mem
+    frame_base = mem.top
+    slot_addrs = [alloc(mem, INT_SIZES[s.ty], INT_SIZES[s.ty]) for s in f.slots]
     pc = 0
     while pc < len(f.ins):
         ins = f.ins[pc]
@@ -194,16 +234,14 @@ def run(prog, f, args):
             values[ins.result] = args[ins.operands[0].val]
             continue
         if ins.op == "SLOT":
-            values[ins.result] = ins.operands[0].val
+            values[ins.result] = slot_addrs[ins.operands[0].val]
             continue
         if ins.op == "LOAD":
-            v = frame[value_of(values, prog, ins.operands[0])]
-            if v is None:
-                raise Error(f"{f.name}: LOAD from a slot that hasn't been stored to")
-            values[ins.result] = v
+            values[ins.result] = load(mem, value_of(values, prog, ins.operands[0]), ins.ty)
             continue
         if ins.op == "STORE":
-            frame[value_of(values, prog, ins.operands[1])] = value_of(values, prog, ins.operands[0])
+            addr = value_of(values, prog, ins.operands[1])
+            store(mem, addr, ins.ty, value_of(values, prog, ins.operands[0]))
             continue
         if ins.op in ARITH:
             a, b = (value_of(values, prog, o) for o in ins.operands)
@@ -230,7 +268,7 @@ def run(prog, f, args):
             if callee.kind == "sym" and callee.val in prog.funcs:
                 r = run(prog, prog.funcs[callee.val], args)
             elif callee.kind == "sym" and callee.val in RUNTIME:
-                r = RUNTIME[callee.val](*args)
+                r = RUNTIME[callee.val](mem, *args)
             else:
                 raise Error(f"{f.name}: can't call {callee.val}")
             if ins.result is not None:
@@ -244,6 +282,7 @@ def run(prog, f, args):
                 pc = f.blocks[ins.operands[1].val]
             continue
         if ins.op == "RET":
+            mem.top = frame_base
             return value_of(values, prog, ins.operands[0]) if ins.operands else None
         raise Error(f"{f.name}: {ins.op} isn't supported yet")
     raise Error(f"{f.name}: ran off the end")
