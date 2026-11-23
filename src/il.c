@@ -37,7 +37,7 @@ void il_init(IlFunc* f, Ctx* ctx) {
   memset(f, 0, sizeof(*f));
   f->ctx = ctx;
   if (!hashtable_init(&f->const_map, 64)) {
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+    ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
   }
 }
 
@@ -65,7 +65,7 @@ void il_reset(IlFunc* f, NameId name, IlType ret) {
 }
 
 static NORETURN void il_error_too_large(IlFunc* f) {
-  ctx_error(f->ctx, NULL, NULL, 0, "Function too large.");
+  ctx_error(f->ctx, NULL, NULL, (SrcLoc){0}, "Function too large.");
 }
 
 Ref il_emit(IlFunc* f, IlOp op, IlType ty, Ref a, Ref b) {
@@ -184,19 +184,19 @@ Ref il_slot_addr(IlFunc* f, SlotId slot) {
   return il_emit(f, OP_SLOT, IT_I64, slot.u, 0);
 }
 
-void il_source_pos(IlFunc* f, u32 offset) {
+void il_source_pos(IlFunc* f, SrcLoc loc) {
   IlSourcePos* p = vec_push(f->ctx, &f->source_pos);
   p->ins = f->ins.num;
-  p->offset = offset;
+  p->loc = loc;
 }
 
-// Writes the line of src that contains offset.
-static void il_dump_source_line(const u8* src, u32 offset, FILE* out) {
-  const u8* start = src + offset;
+// Writes the line of src that contains loc.
+static void il_dump_source_line(const u8* src, SrcLoc loc, FILE* out) {
+  const u8* start = src + loc.u;
   while (start > src && start[-1] != '\n') {
     --start;
   }
-  const u8* end = src + offset;
+  const u8* end = src + loc.u;
   while (*end != '\n' && *end != 0) {
     ++end;
   }
@@ -245,7 +245,7 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   u32 pos = 0;
   for (u32 i = 0; i < f->ins.num; ++i) {
     for (; pos < f->source_pos.num && f->source_pos.items[pos].ins == i; ++pos) {
-      il_dump_source_line(src, f->source_pos.items[pos].offset, out);
+      il_dump_source_line(src, f->source_pos.items[pos].loc, out);
     }
     Ins ins = f->ins.items[i];
     IlOp op = ins_op(ins);
@@ -309,7 +309,7 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   }
   // Statements at the end that emitted nothing.
   for (; pos < f->source_pos.num; ++pos) {
-    il_dump_source_line(src, f->source_pos.items[pos].offset, out);
+    il_dump_source_line(src, f->source_pos.items[pos].loc, out);
   }
 }
 

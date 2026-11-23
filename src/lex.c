@@ -38,8 +38,12 @@ const char* tok_kind_name(TokenKind kind) {
   return (kind >= 0 && kind < TK_NUM_KINDS) ? token_names[kind] : "<?>";
 }
 
+static inline SrcLoc lex_loc(const LexState* ls, const u8* at) {
+  return (SrcLoc){(u32)(at - ls->src.buf)};
+}
+
 #define lex_error(ls, at, ...) \
-  ctx_error((ls)->ctx, (ls)->src.filename, (ls)->src.buf, (u32)((at) - (ls)->src.buf), __VA_ARGS__)
+  ctx_error((ls)->ctx, (ls)->src.filename, (ls)->src.buf, lex_loc((ls), (at)), __VA_ARGS__)
 
 // Interning. The table is intentionally simple so that it's a baseline to
 // benchmark alternatives against.
@@ -206,7 +210,7 @@ const u8* lex_str(const LexState* ls, const Token* t, u32* len) {
     return ls->ctx->strbytes.items + r->off;
   }
   *len = t->v.len;
-  return ls->src.buf + t->offset + 1;
+  return ls->src.buf + t->loc.u + 1;
 }
 
 // Layout. Each logical line boundary is a NEWLINE if the indent is unchanged,
@@ -243,7 +247,7 @@ static const u8* next_content_line(LexState* ls, const u8* p, const u8** bol) {
 }
 
 static void lex_eof(LexState* ls, Token* t) {
-  t->offset = (u32)(ls->src.end - ls->src.buf);
+  t->loc = lex_loc(ls, ls->src.end);
   ls->pos.p = ls->src.end;
   if (ls->pos.indent) {
     ls->pos.pending_dedents = ls->pos.indent - 1;
@@ -276,18 +280,18 @@ static void lex_layout(LexState* ls, Token* t, const u8* nl) {
   ls->pos.p = q;
   if (level == ls->pos.indent) {
     t->kind = TK_NEWLINE;
-    t->offset = (u32)(nl - ls->src.buf);
+    t->loc = lex_loc(ls, nl);
   } else if (level == ls->pos.indent + 1u) {
     ls->pos.indent = level;
     t->kind = TK_INDENT;
-    t->offset = (u32)(q - ls->src.buf);
+    t->loc = lex_loc(ls, q);
   } else if (level > ls->pos.indent) {
     lex_error(ls, q, "Unexpected indent of more than one level.");
   } else {
     ls->pos.pending_dedents = ls->pos.indent - level - 1;
     ls->pos.indent = level;
     t->kind = TK_DEDENT;
-    t->offset = (u32)(q - ls->src.buf);
+    t->loc = lex_loc(ls, q);
   }
 }
 
@@ -336,7 +340,7 @@ static const u8* lex_number(LexState* ls, Token* t, const u8* p) {
   u64 v = 0;
   bool overflow = false;
   bool is_float = false;
-  t->offset = (u32)(p - ls->src.buf);
+  t->loc = lex_loc(ls, p);
 
   if (p[0] == '0' && (p[1] == 'x' || p[1] == 'o' || p[1] == 'b')) {
     u32 base = p[1] == 'x' ? 16 : p[1] == 'o' ? 8 : 2;
@@ -542,7 +546,7 @@ static const u8* lex_string(LexState* ls, Token* t, const u8* delim, bool cont) 
   const u8* run = s;  // start of not-yet-copied bytes (escaped mode)
   bool escaped = false;
   u32 bstart = 0;
-  t->offset = (u32)(delim - ls->src.buf);
+  t->loc = lex_loc(ls, delim);
   for (;;) {
     u8 c = *q;
     if (c == '"' || (c == '\\' && q[1] == '(')) {
@@ -592,7 +596,7 @@ void lex_init(LexState* ls, Ctx* ctx, const FileBuf* src) {
   ls->ctx = ctx;
   ls->src = *src;
   if ((size_t)(src->end - src->buf) >= 0xfffffff0u) {
-    ctx_error(ctx, src->filename, NULL, 0, "File is larger than the 4 GB limit.");
+    ctx_error(ctx, src->filename, NULL, (SrcLoc){0}, "File is larger than the 4 GB limit.");
   }
   const u8* bol;
   const u8* q = next_content_line(ls, src->buf, &bol);
@@ -602,12 +606,12 @@ void lex_init(LexState* ls, Ctx* ctx, const FileBuf* src) {
   ls->pos.p = q;
 }
 
-#define TOK(k, n)                       \
-  do {                                  \
-    t->kind = (k);                      \
-    t->offset = (u32)(p - ls->src.buf); \
-    ls->pos.p = p + (n);                \
-    return;                             \
+#define TOK(k, n)            \
+  do {                       \
+    t->kind = (k);           \
+    t->loc = lex_loc(ls, p); \
+    ls->pos.p = p + (n);     \
+    return;                  \
   } while (0)
 
 #define OPEN(k)              \
@@ -803,7 +807,7 @@ void lex_next(LexState* ls) {
           u32 len = (u32)(p - s);
           u32 idx = intern(ls->ctx, s, len, hash_ident(s, len), 0);
           t->kind = ls->ctx->names.items[idx].kind;
-          t->offset = (u32)(s - ls->src.buf);
+          t->loc = lex_loc(ls, s);
           t->v.name = (NameId){idx};
           ls->pos.p = p;
           return;
@@ -842,7 +846,7 @@ bool lex_same_pos_for_testing(const LexState* ls, const LexPos* a, const LexPos*
   }
   const Token* ta = &a->t;
   const Token* tb = &b->t;
-  if (ta->kind != tb->kind || ta->flags != tb->flags || ta->offset != tb->offset) {
+  if (ta->kind != tb->kind || ta->flags != tb->flags || ta->loc.u != tb->loc.u) {
     return false;
   }
   // Only the union member that the kind uses is compared, because the rest is

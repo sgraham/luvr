@@ -66,7 +66,7 @@ const char* ctx_err_str(Ctx* ctx, const char* fmt, ...) {
   return s;
 }
 
-void ctx_error(Ctx* ctx, const char* file, const u8* buf, u32 offset, const char* fmt, ...) {
+void ctx_error(Ctx* ctx, const char* file, const u8* buf, SrcLoc loc, const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   vsnprintf(ctx->err_msg, sizeof(ctx->err_msg), fmt, ap);
@@ -74,21 +74,21 @@ void ctx_error(Ctx* ctx, const char* file, const u8* buf, u32 offset, const char
   ctx->err_scratch_used = 0;
   ctx->err_file = file;
   ctx->err_buf = buf;
-  ctx->err_offset = offset;
+  ctx->err_loc = loc;
   longjmp(*ctx->on_error, 1);
 }
 
-static void src_location(const u8* buf, u32 offset, u32* line, u32* col) {
+static void src_location(const u8* buf, SrcLoc loc, u32* line, u32* col) {
   u32 ln = 1;
   const u8* bol = buf;
-  for (const u8* p = buf; p < buf + offset; ++p) {
+  for (const u8* p = buf; p < buf + loc.u; ++p) {
     if (*p == '\n') {
       ++ln;
       bol = p + 1;
     }
   }
   *line = ln;
-  *col = (u32)(buf + offset - bol) + 1;
+  *col = (u32)(buf + loc.u - bol) + 1;
 }
 
 void ctx_error_location(const Ctx* ctx, u32* line, u32* col) {
@@ -96,22 +96,22 @@ void ctx_error_location(const Ctx* ctx, u32* line, u32* col) {
     *line = *col = 0;
     return;
   }
-  src_location(ctx->err_buf, ctx->err_offset, line, col);
+  src_location(ctx->err_buf, ctx->err_loc, line, col);
 }
 
 void ctx_error_unclosed(const LexState* ls,
                         TokenKind what,
                         TokenKind who,
-                        u32 who_offset,
+                        SrcLoc who_loc,
                         const char* found) {
   u32 who_line, cur_line, col;
-  src_location(ls->src.buf, who_offset, &who_line, &col);
-  src_location(ls->src.buf, ls->pos.t.offset, &cur_line, &col);
+  src_location(ls->src.buf, who_loc, &who_line, &col);
+  src_location(ls->src.buf, ls->pos.t.loc, &cur_line, &col);
   if (who_line == cur_line) {
-    ctx_error(ls->ctx, ls->src.filename, ls->src.buf, ls->pos.t.offset, "Expected '%s', found %s.",
+    ctx_error(ls->ctx, ls->src.filename, ls->src.buf, ls->pos.t.loc, "Expected '%s', found %s.",
               tok_kind_name(what), found);
   }
-  ctx_error(ls->ctx, ls->src.filename, ls->src.buf, ls->pos.t.offset,
+  ctx_error(ls->ctx, ls->src.filename, ls->src.buf, ls->pos.t.loc,
             "Expected '%s' (to close '%s' at line %u), found %s.", tok_kind_name(what),
             tok_kind_name(who), who_line, found);
 }
@@ -140,7 +140,7 @@ static void hashtable_grow(Ctx* ctx, HashTable* t) {
   // empty.
   HashSlot* grown = (HashSlot*)calloc((size_t)mask + 2, sizeof(HashSlot));
   if (!grown) {
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+    ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
   }
   for (u32 j = 0; j <= t->mask; ++j) {
     HashSlot s = t->slots[j];
@@ -181,13 +181,13 @@ void* vec_grow_(Ctx* ctx, void* v, u32* cap, size_t need, size_t elem_size) {
   }
   if (c > UINT32_MAX) {
     if (need > UINT32_MAX) {
-      ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+      ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
     }
     c = UINT32_MAX;
   }
   v = realloc(v, c * elem_size);
   if (!v) {
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+    ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
   }
   *cap = (u32)c;
   return v;

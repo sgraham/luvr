@@ -199,6 +199,11 @@ static void test_il_blocks(void) {
   ctx_free(&ctx);
 }
 
+// The location in src of the first occurrence of text.
+static SrcLoc src_loc_of(const char* src, const char* text) {
+  return (SrcLoc){(u32)(strstr(src, text) - src)};
+}
+
 static void test_il_slots(void) {
   Ctx ctx;
   CHECK(ctx_init(&ctx));
@@ -208,11 +213,11 @@ static void test_il_slots(void) {
   il_slot_add(&f, IT_I32, (NameId){IL_SLOT_UNNAMED});
   const char* src = "def int main():\n    int x = 5\n    pass\n    return x\n";
   il_block_start(&f, il_block_declare(&f));
-  il_source_pos(&f, (u32)(strstr(src, "int x") - src));
+  il_source_pos(&f, src_loc_of(src, "int x"));
   Ref addr = il_slot_addr(&f, sx);
   il_emit(&f, OP_STORE, IT_I64, il_const_int(&f, IT_I64, 5), addr);
-  il_source_pos(&f, (u32)(strstr(src, "pass") - src));
-  il_source_pos(&f, (u32)(strstr(src, "return") - src));
+  il_source_pos(&f, src_loc_of(src, "pass"));
+  il_source_pos(&f, src_loc_of(src, "return"));
   addr = il_slot_addr(&f, sx);
   Ref v = il_emit(&f, OP_LOAD, IT_I64, addr, 0);
   il_emit(&f, OP_RET, IT_I64, v, 0);

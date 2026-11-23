@@ -73,7 +73,7 @@ static bool run_file(ParseFn fn,
     if (line) {
       // The buffer is padded with 0s, so the scan for the end of the line
       // stops even when the error is on the last line.
-      const u8* bol = ctx.err_buf + ctx.err_offset - (col - 1);
+      const u8* bol = ctx.err_buf + ctx.err_loc.u - (col - 1);
       const u8* eol = bol;
       while (*eol != '\n' && *eol != '\r' && *eol != 0) {
         ++eol;

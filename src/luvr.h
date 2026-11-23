@@ -20,6 +20,7 @@ typedef struct Name Name;
 typedef struct NameId NameId;
 typedef struct NameMap NameMap;
 typedef struct SlotId SlotId;
+typedef struct SrcLoc SrcLoc;
 typedef struct StrRef StrRef;
 typedef struct Token Token;
 
@@ -283,6 +284,11 @@ struct NameId {
   u32 u;
 };
 
+// A byte offset in a source buffer.
+struct SrcLoc {
+  u32 u;
+};
+
 // A hash table from NameId to u32. The tag is NameId.u + 1, so a slot with a
 // matching tag is the name. A NameId is an index into Ctx.names, allocated in
 // the order that names are first interned, so ids are compact, and names that
@@ -475,7 +481,7 @@ struct Ctx {
   char err_msg[256];
   const char* err_file;
   const u8* err_buf;
-  u32 err_offset;
+  SrcLoc err_loc;
 
   // Strings made by ctx_err_str() for the arguments of an error message.
   char err_scratch[1024];
@@ -535,7 +541,7 @@ const char* ctx_err_str(Ctx* ctx, const char* fmt, ...);
 NORETURN void ctx_error(Ctx* ctx,
                         const char* file,
                         const u8* buf,
-                        u32 offset,
+                        SrcLoc loc,
                         const char* fmt,
                         ...);
 
@@ -545,7 +551,7 @@ NORETURN void ctx_error(Ctx* ctx,
 NORETURN void ctx_error_unclosed(const LexState* ls,
                                  TokenKind what,
                                  TokenKind who,
-                                 u32 who_offset,
+                                 SrcLoc who_loc,
                                  const char* found);
 
 // Recursive-descent parser. The only lookahead is the lexer's current token.
@@ -614,7 +620,7 @@ enum {
 
   // Set on STRING* tokens that contained escapes. The de-escaped data is in
   // Ctx.strs at Token.v.str. Otherwise, the content is a view of Token.v.len
-  // bytes of the source buffer, starting at offset+1.
+  // bytes of the source buffer, starting at loc+1.
   TF_ESCAPED = 0x10,
 };
 
@@ -623,12 +629,12 @@ struct Token {
   u8 flags;  // TF_*
   u16 pad_;
 
-  // Normally, this is the byte offset of the token start. This is the only
-  // position information saved, errors have to rederive line/col when
-  // necessary. For STRING*, offset is the delimiter (either a '"' or the ')'
-  // that closed the previous \() interpolation). So, the content of the string
-  // always starts at offset+1.
-  u32 offset;
+  // Normally, this is the token's start. This is the only position
+  // information saved, errors have to rederive line/col when necessary. For
+  // STRING*, loc is the delimiter (either a '"' or the ')' that closed the
+  // previous \() interpolation). So, the content of the string always starts
+  // at loc+1.
+  SrcLoc loc;
 
   union {
     u64 i;        // kind=INTLIT (always unsigned, sign comes from unary minus)
@@ -901,7 +907,7 @@ struct IlSlot {
 // statement that emits nothing has an entry with the same ins as the next.
 struct IlSourcePos {
   u32 ins;     // index in IlFunc.ins of the statement's first instruction
-  u32 offset;  // of the statement in the source
+  SrcLoc loc;  // of the statement
 };
 
 struct IlFunc {
@@ -1015,12 +1021,12 @@ SlotId il_slot_add_agg(IlFunc* f, AggId agg, NameId name);
 
 Ref il_slot_addr(IlFunc* f, SlotId slot);
 
-// Records that a statement at offset in the source starts at the next
+// Records that a statement at loc in the source starts at the next
 // instruction.
-void il_source_pos(IlFunc* f, u32 offset);
+void il_source_pos(IlFunc* f, SrcLoc loc);
 
 // Writes the text form of f's instructions. src is the source that the
-// offsets in f->source_pos are in.
+// locations in f->source_pos are in.
 void il_dump(const IlFunc* f, const u8* src, FILE* out);
 
 // Writes the text form of Ctx.data[i].

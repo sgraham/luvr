@@ -116,7 +116,7 @@ static void check_rewind(LexState* ls) {
   lex_rewind(ls, &mark);
   lex_past_close(ls, depth);
   if (!lex_same_pos_for_testing(ls, &first, &ls->pos)) {
-    ctx_error(ls->ctx, ls->src.filename, ls->src.buf, mark.t.offset,
+    ctx_error(ls->ctx, ls->src.filename, ls->src.buf, mark.t.loc,
               "Lexing again after rewinding gave a different state.");
   }
   lex_rewind(ls, &mark);
@@ -156,20 +156,20 @@ static int run_file(Ctx* ctx,
   FileBuf src = {path, buf, buf + len};
   lex_init(&ls, ctx, &src);
   if (mode == MODE_DUMP) {
-    // Token offsets only increase, so line and column are tracked
+    // Token locations only increase, so line and column are tracked
     // incrementally.
     u32 line = 1, last = 0;
     const u8* bol = buf;
     for (;;) {
       lex_next(&ls);
       ++ntok;
-      for (; last < ls.pos.t.offset && last < len; ++last) {
+      for (; last < ls.pos.t.loc.u && last < len; ++last) {
         if (buf[last] == '\n') {
           ++line;
           bol = buf + last + 1;
         }
       }
-      dump_token(&ls, line, (u32)(buf + ls.pos.t.offset - bol) + 1);
+      dump_token(&ls, line, (u32)(buf + ls.pos.t.loc.u - bol) + 1);
       if (ls.pos.t.kind == TK_EOS) {
         break;
       }

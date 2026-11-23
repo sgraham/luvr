@@ -280,7 +280,7 @@ static_assert(sizeof(ExpDesc) == 32, "unexpected ExpDesc size");
 
 static void expr(Parser* p);
 static void subexpr(Parser* p, int limit, ExpDesc* e);
-static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start);
+static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start);
 static void primary(Parser* p, ExpDesc* e);
 static TypeId type(Parser* p);
 static u32 array_size(Parser* p);
@@ -413,7 +413,7 @@ static const char* token_str(Parser* p) {
 }
 
 NORETURN static void error_expected(Parser* p, const char* what) {
-  error_at(p, p->ls.pos.t.offset, "Expected %s, found %s.", what, token_str(p));
+  error_at(p, p->ls.pos.t.loc, "Expected %s, found %s.", what, token_str(p));
 }
 
 static void check(Parser* p, TokenKind kind) {
@@ -433,12 +433,12 @@ static bool optional(Parser* p, TokenKind kind) {
 
 // Like check(), but if the closer is missing and the opener was on another
 // line, the error includes the opener's line.
-static void check_match(Parser* p, TokenKind what, TokenKind who, u32 who_offset) {
+static void check_match(Parser* p, TokenKind what, TokenKind who, SrcLoc who_loc) {
   if (T(p) == what) {
     next(p);
     return;
   }
-  ctx_error_unclosed(&p->ls, what, who, who_offset, token_str(p));
+  ctx_error_unclosed(&p->ls, what, who, who_loc, token_str(p));
 }
 
 static void check_name(Parser* p, const char* what) {
@@ -448,13 +448,13 @@ static void check_name(Parser* p, const char* what) {
   next(p);
 }
 
-// Like check_name(), but returns the name, and its offset in *at.
-static NameId expect_name(Parser* p, const char* what, u32* at) {
+// Like check_name(), but returns the name, and its location in *at.
+static NameId expect_name(Parser* p, const char* what, SrcLoc* at) {
   if (T(p) != TK_NAME) {
     error_expected(p, what);
   }
   NameId name = p->ls.pos.t.v.name;
-  *at = p->ls.pos.t.offset;
+  *at = p->ls.pos.t.loc;
   next(p);
   return name;
 }
@@ -498,7 +498,7 @@ static Local* lookup(Parser* p, NameId name) {
   return (Local*)name_of(p, name)->binding;
 }
 
-static Local* declare_local(Parser* p, NameId name, u32 at, LocalKind kind) {
+static Local* declare_local(Parser* p, NameId name, SrcLoc at, LocalKind kind) {
   if (p->num_locals == MAX_LOCALS) {
     error_at(p, at, "Too many local variables.");
   }
@@ -520,7 +520,7 @@ static Local* lookup_in_func(Parser* p, NameId name) {
 
 // Declares name in the current function with type t, unless it's already one
 // of the function's locals.
-static void declare_if_new(Parser* p, NameId name, u32 at, TypeId t) {
+static void declare_if_new(Parser* p, NameId name, SrcLoc at, TypeId t) {
   if (p->func_depth == 0) {
     return;
   }
@@ -589,7 +589,7 @@ static void end_of_stat(Parser* p) {
 
 // type_args -> '{' type {',' type} '}'
 static void type_args(Parser* p) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   next(p);  // '{'
   for (;;) {
     type(p);
@@ -610,7 +610,7 @@ static void type_param(Parser* p) {
 
 // type_params -> '{' TypeParam {',' TypeParam} '}'
 static void type_params(Parser* p) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   next(p);  // '{'
   for (;;) {
     type_param(p);
@@ -640,11 +640,11 @@ static void check_module_member(Parser* p, const Module* m, NameId mod) {
   const Name* n = name_of(p, p->ls.pos.t.v.name);
   GlobalKind kind = module_global_kind(m, p->ls.pos.t.v.name);
   if (T(p) == TK_TYPENAME && kind != GK_TYPE) {
-    error_at(p, p->ls.pos.t.offset, "Type '%.*s' not found in imported module '%.*s'.", (int)n->len,
+    error_at(p, p->ls.pos.t.loc, "Type '%.*s' not found in imported module '%.*s'.", (int)n->len,
              (const char*)n->str, (int)mn->len, (const char*)mn->str);
   }
   if (T(p) == TK_NAME && kind != GK_VAR && kind != GK_FUNC && kind != GK_CONST) {
-    error_at(p, p->ls.pos.t.offset, "Variable '%.*s' not found in imported module '%.*s'.",
+    error_at(p, p->ls.pos.t.loc, "Variable '%.*s' not found in imported module '%.*s'.",
              (int)n->len, (const char*)n->str, (int)mn->len, (const char*)mn->str);
   }
 }
@@ -654,8 +654,8 @@ static TypeId global_type(GlobalInfo info) {
 }
 
 // The rest of a module.TypeName type, after the '.'. mod is the module's name,
-// at offset at. Type arguments make a type that isn't known yet.
-static TypeId qualified_type_rest(Parser* p, NameId mod, u32 at) {
+// and at is its location. Type arguments make a type that isn't known yet.
+static TypeId qualified_type_rest(Parser* p, NameId mod, SrcLoc at) {
   const Module* m = imported_module(p, mod);
   if (!m) {
     const Name* n = name_of(p, mod);
@@ -678,7 +678,7 @@ static void check_type_param(Parser* p) {
   const Name* n = name_of(p, p->ls.pos.t.v.name);
   u32 i = (u32)(n->str[0] - 'A');
   if (!(p->type_params & (1u << i))) {
-    error_at(p, p->ls.pos.t.offset, "Undefined type parameter '%c'.", 'A' + i);
+    error_at(p, p->ls.pos.t.loc, "Undefined type parameter '%c'.", 'A' + i);
   }
 }
 
@@ -687,7 +687,7 @@ static TypeId check_type_name(Parser* p) {
   GlobalInfo info = module_global_info(p->mod, name);
   if ((info & GLOBAL_KIND_MASK) != GK_TYPE) {
     const Name* n = name_of(p, name);
-    error_at(p, p->ls.pos.t.offset, "Undefined type '%.*s'.", (int)n->len, (const char*)n->str);
+    error_at(p, p->ls.pos.t.loc, "Undefined type '%.*s'.", (int)n->len, (const char*)n->str);
   }
   return global_type(info);
 }
@@ -741,9 +741,9 @@ static TypeId type_pointer_to(Parser* p, TypeId t) {
 static bool type_has_layout(Parser* p, TypeId t);
 static u32 type_size(Parser* p, TypeId t);
 
-// [count]elem, which is at offset at. Like pointers, an array of an unknown
-// type is unknown.
-static TypeId type_array_of(Parser* p, TypeId elem, u32 count, u32 at) {
+// [count]elem, which is at `at` for errors. Like pointers, an array of an
+// unknown type is unknown.
+static TypeId type_array_of(Parser* p, TypeId elem, u32 count, SrcLoc at) {
   if (elem.u == TY_UNKNOWN) {
     return ty_unknown;
   }
@@ -765,7 +765,7 @@ static TypeId type_array_of(Parser* p, TypeId elem, u32 count, u32 at) {
 }
 
 static TypeId type(Parser* p) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   switch (T(p)) {
     case TK_STAR:
       next(p);
@@ -808,7 +808,7 @@ static TypeId type(Parser* p) {
     }
     case TK_TYPEOF:
       next(p);
-      at = p->ls.pos.t.offset;
+      at = p->ls.pos.t.loc;
       check(p, TK_LPAREN);
       expr(p);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
@@ -1039,7 +1039,7 @@ static bool const_exact_in_float(ConstInt v, TypeId t) {
 // Out of line, since check_const_conversion() handles nearly all constants
 // without it. Float constants are rounded, and are only out of range if they
 // round to infinity.
-static NOINLINE void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
+static NOINLINE void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, SrcLoc at) {
   if (!type_is_integer(e->type)) {
     float f = (float)e->cv.f;
     if (t.u == TY_F32 && (f > FLT_MAX || f < -FLT_MAX)) {
@@ -1055,7 +1055,7 @@ static NOINLINE void check_const_fits(Parser* p, const ExpDesc* e, TypeId t, u32
 // Untyped constants are only range checked when they're given a type.
 // Integers from 0 to 127 fit in every numeric type, and nearly all constants
 // are in that range, so they skip the full check.
-static void check_const_conversion(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
+static void check_const_conversion(Parser* p, TypeId to, const ExpDesc* e, SrcLoc at) {
   if (e->kind != EK_CONST || !type_is_untyped(e->type)) {
     return;
   }
@@ -1065,14 +1065,14 @@ static void check_const_conversion(Parser* p, TypeId to, const ExpDesc* e, u32 a
 }
 
 // Out of line so that check_assign() is small enough to be inlined.
-static NOINLINE NORETURN void assign_type_error(Parser* p, TypeId from, TypeId to, u32 at) {
+static NOINLINE NORETURN void assign_type_error(Parser* p, TypeId from, TypeId to, SrcLoc at) {
   error_at(p, at, "Can't assign %s to %s.", type_str(p, from), type_str(p, to));
 }
 
 // The size in [N]T has to be a constant integer, and can't be negative. It's
 // limited to u32, like the size in bytes of every type.
 static u32 array_size(Parser* p) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   ExpDesc e;
   subexpr(p, -1, &e);
   if (e.kind != EK_CONST || !type_is_integer(e.type)) {
@@ -1089,7 +1089,7 @@ static u32 array_size(Parser* p) {
 
 // There's no syntax for function types, so functions can't be values. Out of
 // line, since it's only for names whose type isn't builtin.
-static NOINLINE void check_function_called(Parser* p, const ExpDesc* e, u32 at) {
+static NOINLINE void check_function_called(Parser* p, const ExpDesc* e, SrcLoc at) {
   if (T(p) != TK_LPAREN && type_is_function(p, e->type)) {
     error_at(p, at, "A function can only be called.");
   }
@@ -1097,14 +1097,14 @@ static NOINLINE void check_function_called(Parser* p, const ExpDesc* e, u32 at) 
 
 // Most uses of a void result are caught as type mismatches. This is for the
 // uses that accept any type.
-static void check_not_void(Parser* p, const ExpDesc* e, u32 at) {
+static void check_not_void(Parser* p, const ExpDesc* e, SrcLoc at) {
   if (e->type.u == TY_VOID) {
     error_at(p, at, "Can't use the result of a function with no return type.");
   }
 }
 
 // Checks that a value can be assigned to something of type `to`.
-static void check_assign(Parser* p, TypeId to, const ExpDesc* e, u32 at) {
+static void check_assign(Parser* p, TypeId to, const ExpDesc* e, SrcLoc at) {
   if (!assignable(p, e->type, to)) {
     assign_type_error(p, e->type, to, at);
   }
@@ -1132,7 +1132,7 @@ static const char* const arith_error[] = {
 // The type of `a op b` for an arithmetic or bitwise op. Operands are numbers
 // of the same type, apart from untyped constants. Floats only have +, -, *
 // and /. A shift count can be any integer type, and strings can be added.
-static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
+static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, SrcLoc at) {
   if (a.u == TY_UNKNOWN || b.u == TY_UNKNOWN) {
     return ty_unknown;
   }
@@ -1154,7 +1154,7 @@ static TypeId type_for_arith(Parser* p, BinOpr op, TypeId a, TypeId b, u32 at) {
 }
 
 // `what` is the start of the error message, naming what needed the bool.
-static void expect_bool(Parser* p, const ExpDesc* e, u32 at, const char* what) {
+static void expect_bool(Parser* p, const ExpDesc* e, SrcLoc at, const char* what) {
   if (e->type.u != TY_UNKNOWN && e->type.u != TY_BOOL) {
     error_at(p, at, "%s expects bool, not %s.", what, type_str(p, e->type));
   }
@@ -1183,7 +1183,7 @@ static bool const_is_zero(const ExpDesc* e) {
 }
 
 // A constant zero divisor is an error even when the dividend isn't constant.
-static void check_divisor(Parser* p, BinOpr op, const ExpDesc* rhs, u32 at) {
+static void check_divisor(Parser* p, BinOpr op, const ExpDesc* rhs, SrcLoc at) {
   if ((op == OPR_DIV || op == OPR_MOD) && rhs->kind == EK_CONST && const_is_zero(rhs)) {
     error_at(p, at, "Divide by zero.");
   }
@@ -1191,7 +1191,7 @@ static void check_divisor(Parser* p, BinOpr op, const ExpDesc* rhs, u32 at) {
 
 // A constant shift count can't be negative, or at least the width of a typed
 // value being shifted. `t` is the type of the value being shifted.
-static void check_shift_count(Parser* p, BinOpr op, TypeId t, const ExpDesc* rhs, u32 at) {
+static void check_shift_count(Parser* p, BinOpr op, TypeId t, const ExpDesc* rhs, SrcLoc at) {
   if ((op != OPR_SHL && op != OPR_SHR) || rhs->kind != EK_CONST || !type_is_integer(rhs->type)) {
     return;
   }
@@ -1210,10 +1210,10 @@ static NOINLINE void check_const_operands(Parser* p,
                                           BinOpr op,
                                           TypeId t,
                                           const ExpDesc* lhs,
-                                          u32 lhs_at,
+                                          SrcLoc lhs_at,
                                           const ExpDesc* rhs,
-                                          u32 rhs_at,
-                                          u32 at) {
+                                          SrcLoc rhs_at,
+                                          SrcLoc at) {
   // A shift count keeps its own type.
   if (op != OPR_SHL && op != OPR_SHR && !type_is_untyped(t)) {
     check_const_conversion(p, t, lhs, lhs_at);
@@ -1227,7 +1227,7 @@ static NOINLINE void check_const_operands(Parser* p,
 // value of type t. Typed results overflow at their own width, and untyped ones
 // past the range of ConstInt or double. Divisors and shift counts have already
 // been checked.
-static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc* rhs, u32 at) {
+static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc* rhs, SrcLoc at) {
   bool overflow = false;
   double fr = 0;
   ConstInt ir = 0;
@@ -1331,7 +1331,7 @@ static void fold_arith(Parser* p, BinOpr op, TypeId t, ExpDesc* e, const ExpDesc
 // the target. Integers can be rounded when cast to a float type, but a float
 // has to be integral to be cast to an integer type. Out of line, since casts
 // of constants are rare.
-static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, u32 at) {
+static NOINLINE void fold_cast(Parser* p, ExpDesc* e, TypeId t, SrcLoc at) {
   if (type_is_float(t)) {
     double d;
     if (type_is_integer(e->type)) {
@@ -1403,7 +1403,7 @@ static NOINLINE bool fold_compare(BinOpr op, const ExpDesc* a, const ExpDesc* b)
 // Emission
 
 // bool and integers up to 32 bits are i32, and the other integers are i64.
-static IlType il_type_of(Parser* p, TypeId t, u32 at) {
+static IlType il_type_of(Parser* p, TypeId t, SrcLoc at) {
   if (type_is_pointer(p, t)) {
     return IT_I64;
   }
@@ -1488,7 +1488,7 @@ static Ref emit_addr(Parser* p, const ExpDesc* e) {
 // Emits whatever is needed to make e one value of type t, and returns its Ref.
 // t has already been checked against e's type. If e is an untyped constant
 // it will take on t's type.
-static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
+static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, SrcLoc at) {
   IlType ty = il_type_of(p, t, at);
   if (e->kind == EK_CONST && t.u == TY_BOOL) {
     return il_const_int(&p->il, ty, e->cv.b);
@@ -1510,7 +1510,7 @@ static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, u32 at) {
 }
 
 // Returns the address of the aggregate that e is.
-static Ref emit_agg_addr(Parser* p, const ExpDesc* e, u32 at) {
+static Ref emit_agg_addr(Parser* p, const ExpDesc* e, SrcLoc at) {
   if (e->kind == EK_LOCAL) {
     return il_slot_addr(&p->il, e->slot);
   }
@@ -1520,7 +1520,7 @@ static Ref emit_agg_addr(Parser* p, const ExpDesc* e, u32 at) {
   error_at(p, at, "This expression isn't supported yet.");
 }
 
-static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e, u32 at) {
+static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e, SrcLoc at) {
   if (type_is_struct(p, dst->type)) {
     Ref src = emit_agg_addr(p, e, at);
     il_copy(&p->il, emit_addr(p, dst), src, type_info(p, dst->type)->agg);
@@ -1530,7 +1530,7 @@ static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e,
   il_emit(&p->il, OP_STORE, il_mem_type_of(p, dst->type), v, emit_addr(p, dst));
 }
 
-static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, u32 at) {
+static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, SrcLoc at) {
   Ref addr = il_slot_addr(&p->il, l->slot);
   if (type_is_struct(p, l->type)) {
     il_copy(&p->il, addr, emit_agg_addr(p, e, at), type_info(p, l->type)->agg);
@@ -1550,7 +1550,7 @@ static void emit_struct_init(Parser* p, Ref addr, TypeId st) {
   }
 }
 
-static SlotId emit_local_slot(Parser* p, TypeId t, NameId name, u32 at) {
+static SlotId emit_local_slot(Parser* p, TypeId t, NameId name, SrcLoc at) {
   if (type_is_struct(p, t) && type_has_layout(p, t)) {
     return il_slot_add_agg(&p->il, type_info(p, t)->agg, name);
   }
@@ -1565,7 +1565,7 @@ static Ref emit_extend_if_necessary(Parser* p, Ref v, TypeId t) {
   return il_emit(&p->il, type_is_unsigned(t) ? OP_ZEXT32 : OP_SEXT32, IT_I64, v, 0);
 }
 
-static void emit_print(Parser* p, const ExpDesc* e, u32 at) {
+static void emit_print(Parser* p, const ExpDesc* e, SrcLoc at) {
   TypeId t = type_concrete(e->type);
   RuntimeSym sym;
   switch ((FixedType)t.u) {
@@ -1611,7 +1611,7 @@ static void emit_print(Parser* p, const ExpDesc* e, u32 at) {
 
 // Called after a binary operator and before its right operand, so that the
 // left operand is evaluated first. Constants are kept so they can be folded.
-static void emit_infix(Parser* p, ExpDesc* e, u32 at) {
+static void emit_infix(Parser* p, ExpDesc* e, SrcLoc at) {
   if (e->kind == EK_LOCAL || e->kind == EK_ADDR) {
     e->ref = emit_to_ref(p, e, e->type, at);
     e->kind = EK_REF;
@@ -1627,7 +1627,11 @@ struct LogicalJoin {
 
 // Called after the left operand of 'and' or 'or'. The right operand is only
 // evaluated when the left one hasn't determined the final result.
-static void emit_logical_begin(Parser* p, BinOpr op, const ExpDesc* e, u32 at, LogicalJoin* join) {
+static void emit_logical_begin(Parser* p,
+                               BinOpr op,
+                               const ExpDesc* e,
+                               SrcLoc at,
+                               LogicalJoin* join) {
   Ref left = emit_to_ref(p, e, ty_bool, at);
   join->slot = il_slot_add(&p->il, IT_I32, (NameId){IL_SLOT_UNNAMED});
   join->end = il_block_declare(&p->il);
@@ -1642,14 +1646,14 @@ static void emit_logical_begin(Parser* p, BinOpr op, const ExpDesc* e, u32 at, L
   }
 }
 
-static void emit_logical_end(Parser* p, const ExpDesc* rhs, u32 at, const LogicalJoin* join) {
+static void emit_logical_end(Parser* p, const ExpDesc* rhs, SrcLoc at, const LogicalJoin* join) {
   Ref right = emit_to_ref(p, rhs, ty_bool, at);
   il_emit(&p->il, OP_STORE, IT_I32, right, il_slot_addr(&p->il, join->slot));
   il_block_start(&p->il, join->end);
 }
 
 // Unary '-' or '~', which give the operand's type. Constants are folded.
-static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
+static void unary_arith(Parser* p, bool neg, ExpDesc* e, SrcLoc at) {
   TypeId t = e->type;
   if (t.u == TY_UNKNOWN) {
     exp_unemitted(e);
@@ -1686,14 +1690,14 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, u32 at) {
 // subexpr -> (primary | unop subexpr) { binop subexpr }
 // where binop is any binary operator with a priority higher than `limit`.
 static void subexpr(Parser* p, int limit, ExpDesc* e) {
-  u32 start = p->ls.pos.t.offset;
+  SrcLoc start = p->ls.pos.t.loc;
   switch (T(p)) {
     case TK_NOT: {
       if (limit >= PRIORITY_NOT) {
-        error_at(p, p->ls.pos.t.offset, "'not' needs parentheses here.");
+        error_at(p, p->ls.pos.t.loc, "'not' needs parentheses here.");
       }
       next(p);
-      u32 at = p->ls.pos.t.offset;
+      SrcLoc at = p->ls.pos.t.loc;
       subexpr(p, PRIORITY_NOT, e);
       expect_bool(p, e, at, "'not'");
       e->shape = SH_VALUE;
@@ -1713,7 +1717,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
     case TK_MINUS:
     case TK_TILDE: {
       bool neg = T(p) == TK_MINUS;
-      u32 at = p->ls.pos.t.offset;
+      SrcLoc at = p->ls.pos.t.loc;
       next(p);
       subexpr(p, PRIORITY_UNARY, e);
       unary_arith(p, neg, e, at);
@@ -1722,7 +1726,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
     }
     case TK_AMP: {
       next(p);
-      u32 at = p->ls.pos.t.offset;
+      SrcLoc at = p->ls.pos.t.loc;
       // Only valid if the operand turns out to be a bare name.
       NameId name = p->ls.pos.t.v.name;
       subexpr(p, PRIORITY_UNARY, e);
@@ -1756,11 +1760,11 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
 
 // The { binop subexpr } loop of subexpr(). It's separate so that
 // sizeof_operand() can continue an expression after already parsing a
-// primary. `start` is the offset of the left operand.
-static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
+// primary. `start` is the location of the left operand.
+static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start) {
   BinOpr op = tok_to_binopr(T(p));
   while (op != OPR_NONE && priority[op] > limit) {
-    u32 at = p->ls.pos.t.offset;
+    SrcLoc at = p->ls.pos.t.loc;
     next(p);
     if (EMIT) {
       emit_infix(p, e, start);
@@ -1776,7 +1780,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, u32 start) {
         emit_logical_begin(p, op, e, start, &join);
       }
     }
-    u32 rhs_at = p->ls.pos.t.offset;
+    SrcLoc rhs_at = p->ls.pos.t.loc;
     ExpDesc rhs;
     subexpr(p, priority[op], &rhs);
     if (logical) {
@@ -1866,7 +1870,7 @@ static void expr(Parser* p) {
 
 // Returns the condition's value when emitting, and otherwise 0.
 static Ref cond(Parser* p) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   ExpDesc e;
   subexpr(p, -1, &e);
   expect_bool(p, &e, at, "Condition");
@@ -1894,7 +1898,7 @@ static void interpolated_string(Parser* p) {
 // Locals are looked up first, so they shadow globals.
 
 // Reports an error at `at` if name is already a global.
-static void check_not_global(Parser* p, NameId name, u32 at) {
+static void check_not_global(Parser* p, NameId name, SrcLoc at) {
   if (global_kind(p, name) != GK_NONE) {
     const Name* n = name_of(p, name);
     error_at(p, at,
@@ -1909,7 +1913,7 @@ static void check_not_global(Parser* p, NameId name, u32 at) {
 // Part of it is code layout in funcsig() (moving the error report out of line
 // recovers most of that), and part is page faults from growing
 // Module.globals.
-static void declare_definition(Parser* p, NameId name, u32 at, GlobalInfo info) {
+static void declare_definition(Parser* p, NameId name, SrcLoc at, GlobalInfo info) {
   if (global_kind(p, name) != GK_NONE) {
     const Name* n = name_of(p, name);
     error_at(p, at, "Duplicate top-level definition of '%.*s'.", (int)n->len, (const char*)n->str);
@@ -1923,7 +1927,7 @@ static void declare_definition(Parser* p, NameId name, u32 at, GlobalInfo info) 
 struct Targets {
   u32 n;
   NameId name[MAX_TARGETS];
-  u32 at[MAX_TARGETS];
+  SrcLoc at[MAX_TARGETS];
 };
 
 // for_targets -> name {',' name}
@@ -1934,10 +1938,10 @@ static void for_targets(Parser* p, Targets* t) {
       error_expected(p, "loop variable name");
     }
     if (t->n == MAX_TARGETS) {
-      error_at(p, p->ls.pos.t.offset, "Too many loop variables.");
+      error_at(p, p->ls.pos.t.loc, "Too many loop variables.");
     }
     t->name[t->n] = p->ls.pos.t.v.name;
-    t->at[t->n] = p->ls.pos.t.offset;
+    t->at[t->n] = p->ls.pos.t.loc;
     if (name_of(p, t->name[t->n])->is_const) {
       error_at(p, t->at[t->n], "A constant can't be a loop variable.");
     }
@@ -1971,7 +1975,7 @@ static bool skim_to_for(Parser* p, u32 depth) {
 // are parsed first, and then the lexer is rewound to parse the element with
 // the loop variables bound. Expressions can't declare new names, so there's
 // no parser state to be saved.
-static void comprehension(Parser* p, const LexPos* elem, u32 at) {
+static void comprehension(Parser* p, const LexPos* elem, SrcLoc at) {
 #if BUILD_DEBUG
   LexPos at_for;
   lex_mark(&p->ls, &at_for);
@@ -2009,7 +2013,7 @@ static void comprehension(Parser* p, const LexPos* elem, u32 at) {
 
 // '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
 static void list_literal(Parser* p) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   u32 depth = p->ls.pos.bracket_depth;
   next(p);
   if (T(p) != TK_RSQUARE) {
@@ -2033,14 +2037,14 @@ static void list_literal(Parser* p) {
 
 // '{' '}' | '{' expr ':' expr {',' expr ':' expr} [','] '}'
 static void dict_literal(Parser* p) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   next(p);
   if (T(p) != TK_RBRACE) {
     expr(p);
     check(p, TK_COLON);
     expr(p);
     if (T(p) == TK_FOR) {
-      error_at(p, p->ls.pos.t.offset, "Dict comprehensions aren't supported yet.");
+      error_at(p, p->ls.pos.t.loc, "Dict comprehensions aren't supported yet.");
     }
     while (optional(p, TK_COMMA)) {
       if (T(p) == TK_RBRACE) {
@@ -2067,7 +2071,7 @@ static TypeId sizeof_operand(Parser* p) {
   }
   ExpDesc e;
   if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
-    u32 start = p->ls.pos.t.offset;
+    SrcLoc start = p->ls.pos.t.loc;
     primary(p, &e);
     if (e.shape == SH_TYPE) {
       return e.type;
@@ -2201,7 +2205,7 @@ static const Field* struct_field(Parser* p, TypeId st, NameId name) {
   return NULL;
 }
 
-static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, u32 at) {
+static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, SrcLoc at) {
   const Name* n = name_of(p, name);
   error_at(p, at, "'%.*s' isn't a field of %s.", (int)n->len, (const char*)n->str, type_str(p, st));
 }
@@ -2209,22 +2213,22 @@ static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, u32
 // Arguments are checked against callee if it's a function type. When EMIT,
 // the arguments are put in args, and the return value is how many there are.
 static u32 call_args(Parser* p, TypeId callee, Ref* args) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   bool is_function = type_is_function(p, callee);
   u32 num_params = is_function ? type_info(p, callee)->num_params : 0;
   u32 first_param = is_function ? type_info(p, callee)->first_param : 0;
   u32 num_args = 0;
-  u32 extra_at = 0;  // the first argument past num_params
-  next(p);           // '('
+  SrcLoc extra_at = {0};  // the first argument past num_params
+  next(p);                // '('
   if (T(p) != TK_RPAREN) {
     for (;;) {
       if (num_args++ == num_params) {
-        extra_at = p->ls.pos.t.offset;
+        extra_at = p->ls.pos.t.loc;
       }
       if (T(p) == TK_RPAREN) {
-        error_at(p, p->ls.pos.t.offset, "Trailing commas aren't allowed in calls.");
+        error_at(p, p->ls.pos.t.loc, "Trailing commas aren't allowed in calls.");
       }
-      u32 arg_at = p->ls.pos.t.offset;
+      SrcLoc arg_at = p->ls.pos.t.loc;
       ExpDesc e;
       subexpr(p, -1, &e);
       check_not_void(p, &e, arg_at);
@@ -2247,7 +2251,7 @@ static u32 call_args(Parser* p, TypeId callee, Ref* args) {
       }
     }
   }
-  u32 close_at = p->ls.pos.t.offset;
+  SrcLoc close_at = p->ls.pos.t.loc;
   check_match(p, TK_RPAREN, TK_LPAREN, at);
   if (is_function && num_args != num_params) {
     error_at(p, num_args > num_params ? extra_at : close_at, "Expected %u argument%s, not %u.",
@@ -2265,7 +2269,7 @@ static u32 call_args(Parser* p, TypeId callee, Ref* args) {
 // arguments continue from there. Fields that aren't given get their defaults.
 // Literals of generic structs aren't checked yet.
 static void struct_args(Parser* p, ExpDesc* e) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   TypeId st = e->type;
   bool has_fields = type_is_struct(p, st);
   // The literal is built in a temporary, because most uses of it, such as an
@@ -2292,12 +2296,12 @@ static void struct_args(Parser* p, ExpDesc* e) {
     for (;;) {
       ++num_args;
       if (T(p) == TK_RPAREN) {
-        error_at(p, p->ls.pos.t.offset, "Trailing commas aren't allowed in calls.");
+        error_at(p, p->ls.pos.t.loc, "Trailing commas aren't allowed in calls.");
       }
-      u32 field_at = p->ls.pos.t.offset;
+      SrcLoc field_at = p->ls.pos.t.loc;
       if (optional(p, TK_DOT)) {
         NameId name = p->ls.pos.t.v.name;
-        u32 name_at = p->ls.pos.t.offset;
+        SrcLoc name_at = p->ls.pos.t.loc;
         check_name(p, "field name");
         if (has_fields) {
           const Field* f = struct_field(p, st, name);
@@ -2323,7 +2327,7 @@ static void struct_args(Parser* p, ExpDesc* e) {
         given[field] = true;
         ++field;
       }
-      u32 arg_at = p->ls.pos.t.offset;
+      SrcLoc arg_at = p->ls.pos.t.loc;
       ExpDesc arg;
       subexpr(p, -1, &arg);
       check_not_void(p, &arg, arg_at);
@@ -2358,7 +2362,7 @@ static void struct_args(Parser* p, ExpDesc* e) {
 // Makes ptr, the pointer that was loaded into base, the element at index
 // idx. Its type has already been changed to the pointee. A constant index
 // that fits is kept in the offset, so that a field of the element adds to it.
-static void emit_pointer_index(Parser* p, ExpDesc* ptr, Ref base, const ExpDesc* idx, u32 at) {
+static void emit_pointer_index(Parser* p, ExpDesc* ptr, Ref base, const ExpDesc* idx, SrcLoc at) {
   if (!type_has_layout(p, ptr->type)) {
     error_at(p, at, "This expression isn't supported yet.");
   }
@@ -2388,7 +2392,7 @@ static void emit_pointer_index(Parser* p, ExpDesc* ptr, Ref base, const ExpDesc*
 // pointer or a fixed-size array is typed so far. A constant index into an
 // array is checked against its size.
 static void index_or_slice(Parser* p, ExpDesc* e) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   bool is_pointer = type_is_pointer(p, e->type);
   bool is_array = type_is_array(p, e->type);
   // The pointer is loaded before the index is evaluated, like the left operand
@@ -2400,7 +2404,7 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   next(p);  // '['
   // The index, or the slice's start, which can be left out.
   ExpDesc first;
-  u32 first_at = p->ls.pos.t.offset;
+  SrcLoc first_at = p->ls.pos.t.loc;
   if (T(p) != TK_COLON) {
     subexpr(p, -1, &first);
   }
@@ -2451,12 +2455,12 @@ static void postfix(Parser* p, ExpDesc* e) {
         next(p);
         if (T(p) == TK_TYPENAME) {
           // module.TypeName is handled by primary().
-          error_at(p, p->ls.pos.t.offset, "Unexpected type name after '.'.");
+          error_at(p, p->ls.pos.t.loc, "Unexpected type name after '.'.");
         } else if (T(p) != TK_NAME) {
           error_expected(p, "field name");
         }
         NameId name = p->ls.pos.t.v.name;
-        u32 name_at = p->ls.pos.t.offset;
+        SrcLoc name_at = p->ls.pos.t.loc;
         next(p);
         const Field* f = type_is_struct(p, base) ? struct_field(p, base, name) : NULL;
         // Methods aren't typed yet, so a name that isn't a field is only an
@@ -2495,12 +2499,12 @@ static void postfix(Parser* p, ExpDesc* e) {
       }
       case TK_LSQUARE:
         if (e->shape == SH_TYPE) {
-          error_at(p, p->ls.pos.t.offset, "A type can't be indexed.");
+          error_at(p, p->ls.pos.t.loc, "A type can't be indexed.");
         }
         index_or_slice(p, e);
         break;
       case TK_LPAREN: {
-        u32 at = p->ls.pos.t.offset;
+        SrcLoc at = p->ls.pos.t.loc;
         if (e->shape == SH_TYPE) {
           struct_args(p, e);
           break;
@@ -2528,7 +2532,7 @@ static void postfix(Parser* p, ExpDesc* e) {
       }
       case TK_LBRACE:
         if (e->shape == SH_NAME || e->shape == SH_LVALUE) {
-          error_at(p, p->ls.pos.t.offset, "Type arguments can only follow a type name.");
+          error_at(p, p->ls.pos.t.loc, "Type arguments can only follow a type name.");
         }
         if (e->shape != SH_TYPE) {
           return;
@@ -2536,7 +2540,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         type_args(p);
         e->type = ty_unknown;
         if (T(p) == TK_LBRACE) {
-          error_at(p, p->ls.pos.t.offset, "Type arguments were given twice.");
+          error_at(p, p->ls.pos.t.loc, "Type arguments were given twice.");
         }
         break;
       default:
@@ -2561,7 +2565,7 @@ static TypeId literal_type(Parser* p) {
 //          | list | dict | sizeof | alignof | offsetof | cast
 //          followed by postfix
 static void primary(Parser* p, ExpDesc* e) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   e->shape = SH_VALUE;
   e->type = ty_unknown;
   exp_unemitted(e);
@@ -2620,7 +2624,7 @@ static void primary(Parser* p, ExpDesc* e) {
       if (m) {
         next(p);
         if (T(p) != TK_DOT) {
-          error_at(p, p->ls.pos.t.offset, "Expecting '.' after module name.");
+          error_at(p, p->ls.pos.t.loc, "Expecting '.' after module name.");
         }
         next(p);
         if (T(p) != TK_NAME && T(p) != TK_TYPENAME) {
@@ -2629,7 +2633,7 @@ static void primary(Parser* p, ExpDesc* e) {
         check_module_member(p, m, name);
         GlobalInfo member = module_global_info(m, p->ls.pos.t.v.name);
         GlobalKind member_kind = (GlobalKind)(member & GLOBAL_KIND_MASK);
-        u32 member_at = p->ls.pos.t.offset;
+        SrcLoc member_at = p->ls.pos.t.loc;
         e->shape = T(p) == TK_TYPENAME ? SH_TYPE : SH_LVALUE;
         next(p);
         if (member_kind == GK_TYPE) {
@@ -2704,7 +2708,7 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_ALIGNOF: {
       bool is_size = T(p) == TK_SIZEOF;
       next(p);
-      at = p->ls.pos.t.offset;
+      at = p->ls.pos.t.loc;
       check(p, TK_LPAREN);
       TypeId t = sizeof_operand(p);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
@@ -2722,13 +2726,13 @@ static void primary(Parser* p, ExpDesc* e) {
     }
     case TK_OFFSETOF: {
       next(p);
-      at = p->ls.pos.t.offset;
+      at = p->ls.pos.t.loc;
       check(p, TK_LPAREN);
-      u32 type_at = p->ls.pos.t.offset;
+      SrcLoc type_at = p->ls.pos.t.loc;
       TypeId t = type(p);
       check(p, TK_COMMA);
       NameId name = p->ls.pos.t.v.name;
-      u32 name_at = p->ls.pos.t.offset;
+      SrcLoc name_at = p->ls.pos.t.loc;
       check_name(p, "field name");
       e->type = ty_i64;
       if (type_is_struct(p, t)) {
@@ -2750,9 +2754,9 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_CAST: {  // cast T(expr)
       next(p);
       TypeId t = type(p);
-      at = p->ls.pos.t.offset;
+      at = p->ls.pos.t.loc;
       check(p, TK_LPAREN);
-      u32 value_at = p->ls.pos.t.offset;
+      SrcLoc value_at = p->ls.pos.t.loc;
       subexpr(p, -1, e);
       check_match(p, TK_RPAREN, TK_LPAREN, at);
       if (!castable(p, e->type, t)) {
@@ -2784,11 +2788,11 @@ static void primary(Parser* p, ExpDesc* e) {
 // type t. An untyped initializer keeps its untypedness.
 static void declare_const(Parser* p,
                           NameId name,
-                          u32 at,
+                          SrcLoc at,
                           bool toplevel,
                           TypeId t,
                           const ExpDesc* v,
-                          u32 value_at) {
+                          SrcLoc value_at) {
   if (v->kind != EK_CONST) {
     error_at(p, value_at, "Expected a constant expression.");
   }
@@ -2811,20 +2815,20 @@ static void declare_const(Parser* p,
 
 // The rest of a declaration once its type is parsed: name ['=' expr].
 static void decl_rest(Parser* p, bool toplevel, TypeId t) {
-  u32 at;
+  SrcLoc at;
   NameId name = expect_name(p, "variable name", &at);
   if (toplevel) {
-    check_not_global(p, name, T(p) == TK_EQ ? p->ls.pos.t.offset : at);
+    check_not_global(p, name, T(p) == TK_EQ ? p->ls.pos.t.loc : at);
   } else if (lookup_in_func(p, name)) {
     const Name* n = name_of(p, name);
     error_at(p, at, "'%.*s' is already declared.", (int)n->len, (const char*)n->str);
   }
   bool is_const = name_of(p, name)->is_const;
-  u32 value_at = at;
+  SrcLoc value_at = at;
   ExpDesc v;
   bool has_value = optional(p, TK_EQ);
   if (has_value) {
-    value_at = p->ls.pos.t.offset;
+    value_at = p->ls.pos.t.loc;
     subexpr(p, -1, &v);
     check_assign(p, t, &v, value_at);
     if (is_const) {
@@ -2835,7 +2839,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
       error_at(p, value_at, "Expected a constant expression.");
     }
   } else if (is_const) {
-    error_at(p, p->ls.pos.t.offset, "A constant needs a value.");
+    error_at(p, p->ls.pos.t.loc, "A constant needs a value.");
   }
   if (toplevel) {
     declare_global(p, name, GK_VAR);
@@ -2884,7 +2888,7 @@ static_assert(COUNTOF(augassign_opr) == TK_SHREQ - TK_PLUSEQ + 1,
 //   call   -> postfix chain ending in a call
 static void decl_or_expr_stat(Parser* p, bool toplevel) {
   TokenKind k = T(p);
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
     NameId name = p->ls.pos.t.v.name;
     ExpDesc exp;
@@ -2898,13 +2902,13 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         error_at(p, at, "Can't assign to this expression.");
       }
       if (toplevel && T(p) != TK_EQ) {
-        error_at(p, p->ls.pos.t.offset, "Augmented assignment isn't allowed at top level.");
+        error_at(p, p->ls.pos.t.loc, "Augmented assignment isn't allowed at top level.");
       }
       // The current function's local that's assigned to, if it already exists.
       Local* loc = NULL;
       if (exp.shape == SH_NAME) {
         if (toplevel) {
-          check_not_global(p, name, p->ls.pos.t.offset);
+          check_not_global(p, name, p->ls.pos.t.loc);
         }
         loc = lookup(p, name);
         // An enclosing function's 'global' doesn't apply to this function, so
@@ -2913,14 +2917,14 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           loc = NULL;
         }
         if (loc && loc < &p->locals[p->func_base]) {
-          error_at(p, p->ls.pos.t.offset, "Upvalues are immutable.");
+          error_at(p, p->ls.pos.t.loc, "Upvalues are immutable.");
         }
         if (loc && loc->kind == LK_PARAM) {
-          error_at(p, p->ls.pos.t.offset, "Function parameters are immutable.");
+          error_at(p, p->ls.pos.t.loc, "Function parameters are immutable.");
         }
         if (loc &&
             (loc->kind == LK_CONST || (loc->kind == LK_GLOBAL && name_of(p, name)->is_const))) {
-          error_at(p, p->ls.pos.t.offset, "Cannot assign a new value to a constant.");
+          error_at(p, p->ls.pos.t.loc, "Cannot assign a new value to a constant.");
         }
       }
       bool is_plain = T(p) == TK_EQ;
@@ -2930,9 +2934,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         error_at(p, at, "This statement isn't supported yet.");
       }
       TokenKind op_kind = T(p);
-      u32 op_at = p->ls.pos.t.offset;
+      SrcLoc op_at = p->ls.pos.t.loc;
       next(p);
-      u32 value_at = p->ls.pos.t.offset;
+      SrcLoc value_at = p->ls.pos.t.loc;
       ExpDesc v;
       subexpr(p, -1, &v);
       if (is_plain) {
@@ -3004,15 +3008,15 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
 //              | decl_or_expr_stat
 static void simple_stat(Parser* p) {
   if (EMIT) {
-    il_source_pos(&p->il, p->ls.pos.t.offset);
+    il_source_pos(&p->il, p->ls.pos.t.loc);
     if (T(p) != TK_RETURN && T(p) != TK_PASS && T(p) != TK_PRINT && !is_builtin_type(T(p)) &&
         T(p) != TK_NAME && T(p) != TK_TYPENAME && T(p) != TK_STAR) {
-      error_at(p, p->ls.pos.t.offset, "This statement isn't supported yet.");
+      error_at(p, p->ls.pos.t.loc, "This statement isn't supported yet.");
     }
   }
   switch (T(p)) {
     case TK_RETURN: {
-      u32 return_at = p->ls.pos.t.offset;
+      SrcLoc return_at = p->ls.pos.t.loc;
       next(p);
       if (T(p) == TK_NEWLINE || block_follow(T(p))) {
         if (p->ret_type.u != TY_VOID && p->ret_type.u != TY_UNKNOWN) {
@@ -3023,7 +3027,7 @@ static void simple_stat(Parser* p) {
           il_emit(&p->il, OP_RET, IT_VOID, 0, 0);
         }
       } else {
-        u32 at = p->ls.pos.t.offset;
+        SrcLoc at = p->ls.pos.t.loc;
         ExpDesc e;
         subexpr(p, -1, &e);
         if (p->ret_type.u == TY_VOID) {
@@ -3047,7 +3051,7 @@ static void simple_stat(Parser* p) {
       return;
     case TK_PRINT: {
       next(p);
-      u32 at = p->ls.pos.t.offset;
+      SrcLoc at = p->ls.pos.t.loc;
       ExpDesc e;
       subexpr(p, -1, &e);
       check_not_void(p, &e, at);
@@ -3058,7 +3062,7 @@ static void simple_stat(Parser* p) {
     }
     case TK_CHECK: {
       next(p);
-      u32 at = p->ls.pos.t.offset;
+      SrcLoc at = p->ls.pos.t.loc;
       ExpDesc e;
       subexpr(p, -1, &e);
       expect_bool(p, &e, at, "'check'");
@@ -3067,7 +3071,7 @@ static void simple_stat(Parser* p) {
     case TK_GLOBAL:
       next(p);
       for (;;) {
-        u32 at;
+        SrcLoc at;
         NameId name = expect_name(p, "variable name", &at);
         if (global_kind(p, name) == GK_NONE) {
           const Name* n = name_of(p, name);
@@ -3092,8 +3096,7 @@ static void simple_stat(Parser* p) {
     case TK_FOR:
     case TK_WITH:
     case TK_DEF:
-      error_at(p, p->ls.pos.t.offset, "'%s' can't follow ':' on the same line.",
-               tok_kind_name(T(p)));
+      error_at(p, p->ls.pos.t.loc, "'%s' can't follow ':' on the same line.", tok_kind_name(T(p)));
     default:
       decl_or_expr_stat(p, /*toplevel=*/false);
       return;
@@ -3139,7 +3142,7 @@ static Flow suite(Parser* p) {
 // one if every branch returns.
 static Flow if_branch(Parser* p, BlockId* end) {
   if (EMIT) {
-    il_source_pos(&p->il, p->ls.pos.t.offset);
+    il_source_pos(&p->il, p->ls.pos.t.loc);
   }
   Ref condition = cond(p);
   BlockId next_branch = {0};
@@ -3172,9 +3175,9 @@ static Flow if_branch(Parser* p, BlockId* end) {
 // A top-level function's name is a global, and a nested function's name is a
 // local of the enclosing function. The new function's scope is opened after
 // the name, and the return value is for func_close().
-static u32 funcsig(Parser* p, bool is_method, NameId* func_name, u32* name_at) {
+static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at) {
   NameId name = p->ls.pos.t.v.name;
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   TypeId ret = ty_void;
   if (T(p) == TK_NAME) {
     next(p);
@@ -3209,18 +3212,18 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, u32* name_at) {
     }
   }
   if (T(p) == TK_LBRACE) {
-    error_at(p, p->ls.pos.t.offset, "Functions can't have type parameters, only structs.");
+    error_at(p, p->ls.pos.t.loc, "Functions can't have type parameters, only structs.");
   }
   u32 outer = func_open(p);
   p->ret_type = ret;
 
-  u32 lparen = p->ls.pos.t.offset;
+  SrcLoc lparen = p->ls.pos.t.loc;
   check(p, TK_LPAREN);
   if (T(p) != TK_RPAREN) {
     bool first = true;
     for (;;) {
       name = p->ls.pos.t.v.name;
-      at = p->ls.pos.t.offset;
+      at = p->ls.pos.t.loc;
       TypeId t = ty_unknown;
       if (T(p) == TK_NAME) {
         next(p);
@@ -3228,7 +3231,7 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, u32* name_at) {
           t = qualified_type_rest(p, name, at);
           name = expect_name(p, "parameter name", &at);
         } else if (!(is_method && first)) {
-          error_at(p, p->ls.pos.t.offset, "Parameter needs a type.");
+          error_at(p, p->ls.pos.t.loc, "Parameter needs a type.");
         }
       } else {
         t = type(p);
@@ -3251,7 +3254,7 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, u32* name_at) {
 static void foreign_decl(Parser* p, bool is_method) {
   p->in_foreign = true;
   NameId name;
-  u32 name_at;
+  SrcLoc name_at;
   func_close(p, funcsig(p, is_method, &name, &name_at));
   p->in_foreign = false;
   end_of_stat(p);
@@ -3261,7 +3264,7 @@ static void foreign_decl(Parser* p, bool is_method) {
 static void funcdef(Parser* p, bool is_method) {
   TypeId outer_ret = p->ret_type;
   NameId name;
-  u32 name_at;
+  SrcLoc name_at;
   u32 outer = funcsig(p, is_method, &name, &name_at);
   if (EMIT) {
     if (is_method) {
@@ -3332,7 +3335,7 @@ static Flow stat(Parser* p) {
     }
     case TK_FOR: {
       if (EMIT) {
-        error_at(p, p->ls.pos.t.offset, "'for' isn't supported yet.");
+        error_at(p, p->ls.pos.t.loc, "'for' isn't supported yet.");
       }
       Targets t;
       next(p);
@@ -3348,12 +3351,12 @@ static Flow stat(Parser* p) {
     }
     case TK_WITH:
       if (EMIT) {
-        error_at(p, p->ls.pos.t.offset, "'with' isn't supported yet.");
+        error_at(p, p->ls.pos.t.loc, "'with' isn't supported yet.");
       }
       next(p);
       expr(p);
       if (optional(p, TK_AS)) {
-        u32 at;
+        SrcLoc at;
         NameId name = expect_name(p, "variable name", &at);
         if (name_of(p, name)->is_const) {
           error_at(p, at, "A constant can't be a 'with' variable.");
@@ -3386,7 +3389,7 @@ static void image_extend(Parser* p, u32 size) {
 
 // Writes defval, the default of a field of type t, at offset in p->image.
 // Every target is little-endian.
-static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, u32 at) {
+static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, SrcLoc at) {
   if (t.u == TY_BOOL) {
     p->image.items[offset] = defval->cv.b;
   } else if (type_is_integer(t)) {
@@ -3439,7 +3442,7 @@ static void struct_body(Parser* p, TypeId st) {
   bool has_image = false;
   p->image.num = 0;
   for (;;) {
-    u32 type_at = p->ls.pos.t.offset;
+    SrcLoc type_at = p->ls.pos.t.loc;
     TypeId t = type(p);
     TypeId inner = t;
     while (type_is_array(p, inner)) {
@@ -3450,7 +3453,7 @@ static void struct_body(Parser* p, TypeId st) {
       error_at(p, type_at, "'%.*s' can't contain itself.", (int)n->len, (const char*)n->str);
     }
     NameId name = p->ls.pos.t.v.name;
-    u32 name_at = p->ls.pos.t.offset;
+    SrcLoc name_at = p->ls.pos.t.loc;
     check_name(p, "field name");
     for (u32 i = first; i < p->fields.num; ++i) {
       if (p->fields.items[i].name.u == name.u) {
@@ -3472,7 +3475,7 @@ static void struct_body(Parser* p, TypeId st) {
       }
     }
     if (optional(p, TK_EQ)) {
-      u32 value_at = p->ls.pos.t.offset;
+      SrcLoc value_at = p->ls.pos.t.loc;
       ExpDesc v;
       subexpr(p, -1, &v);
       check_assign(p, t, &v, value_at);
@@ -3519,19 +3522,19 @@ static void struct_body(Parser* p, TypeId st) {
 // ambiguous.
 static void receiver_param(Parser* p) {
   if (is_type_start(T(p)) && T(p) != TK_TYPEPARAM) {
-    error_at(p, p->ls.pos.t.offset, "Methods can't be defined for specific type arguments.");
+    error_at(p, p->ls.pos.t.loc, "Methods can't be defined for specific type arguments.");
   }
   type_param(p);
 }
 
 static void receiver(Parser* p) {
-  u32 at = p->ls.pos.t.offset;
+  SrcLoc at = p->ls.pos.t.loc;
   switch (T(p)) {
     case TK_TYPENAME:
       check_type_name(p);
       next(p);
       if (T(p) == TK_LBRACE) {
-        u32 brace = p->ls.pos.t.offset;
+        SrcLoc brace = p->ls.pos.t.loc;
         next(p);
         for (;;) {
           receiver_param(p);
@@ -3597,7 +3600,7 @@ static void toplevel_stat(Parser* p) {
         error_expected(p, "struct name (a TypeName)");
       }
       NameId name = p->ls.pos.t.v.name;
-      u32 at = p->ls.pos.t.offset;
+      SrcLoc at = p->ls.pos.t.loc;
       next(p);
       if (T(p) == TK_LBRACE) {
         type_params(p);
@@ -3618,7 +3621,7 @@ static void toplevel_stat(Parser* p) {
       foreign_decl(p, /*is_method=*/false);
       return;
     case TK_IMPORT:
-      error_at(p, p->ls.pos.t.offset, "Imports must come before other declarations.");
+      error_at(p, p->ls.pos.t.loc, "Imports must come before other declarations.");
     default:
       decl_or_expr_stat(p, /*toplevel=*/true);
       end_of_stat(p);
@@ -3633,7 +3636,7 @@ static void toplevel_stat(Parser* p) {
 static u8* name_buf_new(Ctx* ctx, u32 len) {
   u8* buf = (u8*)calloc(len + LEX_PADDING, 1);
   if (!buf) {
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+    ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
   }
   return buf;
 }
@@ -3644,14 +3647,14 @@ static Module* module_new(Ctx* ctx, u8* name_buf, NameId name) {
   Module* m = (Module*)calloc(1, sizeof(Module));
   if (!m) {
     free(name_buf);
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+    ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
   }
   *vec_push(ctx, &ctx->modules) = m;
   m->name = name;
   m->name_buf = name_buf;
   m->loading = true;
   if (!namemap_init(&m->imports, 16)) {
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+    ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
   }
   namemap_set(ctx, &ctx->module_ids, name, ctx->modules.num - 1);
   return m;
@@ -3661,7 +3664,7 @@ static Module* module_new(Ctx* ctx, u8* name_buf, NameId name) {
 static char* filename_new(Ctx* ctx, size_t len) {
   char* filename = (char*)malloc(len + 1);
   if (!filename) {
-    ctx_error(ctx, NULL, NULL, 0, "Out of memory.");
+    ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
   }
   return filename;
 }
@@ -3686,7 +3689,7 @@ static bool module_read(Ctx* ctx, Module* m, char* filename) {
     cap *= 2;
   }
   if (!namemap_init(&m->globals, cap)) {
-    ctx_error(ctx, filename, NULL, 0, "Out of memory.");
+    ctx_error(ctx, filename, NULL, (SrcLoc){0}, "Out of memory.");
   }
   return true;
 }
@@ -3710,7 +3713,7 @@ static void parse_import(Parser* p, Module* m) {
 }
 
 // Reports an import of ctx->modules.items[idx], which is still loading.
-NORETURN static void error_import_cycle(Parser* p, u32 idx, u32 at) {
+NORETURN static void error_import_cycle(Parser* p, u32 idx, SrcLoc at) {
   // The modules that are loading are the chain of imports that led here, and
   // they're in Ctx.modules in the same order.
   Ctx* ctx = p->ls.ctx;
@@ -3730,8 +3733,8 @@ NORETURN static void error_import_cycle(Parser* p, u32 idx, u32 at) {
 
 // Returns the index in Ctx.modules of the module that path[0..len) names,
 // relative to the current module's directory, and loads and parses it if it's
-// new. at is the path's offset, for errors.
-static u32 import_module(Parser* p, const u8* path, u32 len, u32 at) {
+// new. at is the path's location, for errors.
+static u32 import_module(Parser* p, const u8* path, u32 len, SrcLoc at) {
   Ctx* ctx = p->ls.ctx;
   const char* err = path_import_is_invalid(path, len);
   if (err) {
@@ -3788,13 +3791,13 @@ static void parse_module(Parser* p) {
     }
     u32 len;
     const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-    u32 idx = import_module(p, s, len, p->ls.pos.t.offset);
+    u32 idx = import_module(p, s, len, p->ls.pos.t.loc);
     // The module is bound to the last component of its path.
     u32 base = path_dir_len(s, len);
     NameId name = lex_intern_padded(p->ls.ctx, s + base, len - base);
     next(p);
     if (optional(p, TK_AS)) {
-      u32 at;
+      SrcLoc at;
       name = expect_name(p, "module alias", &at);
     }
     declare_global(p, name, GK_MODULE);
@@ -3827,7 +3830,7 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   // The Parser isn't a local, so that it's still valid after a longjmp.
   Parser* p = (Parser*)malloc(sizeof(Parser));
   if (!p) {
-    ctx_error(ctx, path, NULL, 0, "Out of memory.");
+    ctx_error(ctx, path, NULL, (SrcLoc){0}, "Out of memory.");
   }
   p->num_locals = 0;
   p->global_consts.items = NULL;
@@ -3862,7 +3865,7 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   p->types.num = TY_NUM_FIXED;
   vec_reserve(ctx, &p->param_types, INITIAL_TYPES);
   if (!hashtable_init(&p->array_types, 64)) {
-    ctx_error(ctx, path, NULL, 0, "Out of memory.");
+    ctx_error(ctx, path, NULL, (SrcLoc){0}, "Out of memory.");
   }
   if (EMIT) {
     il_init(&p->il, ctx);
@@ -3878,7 +3881,7 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   char* filename = filename_new(ctx, path_len);
   memcpy(filename, path, path_len + 1);
   if (!module_read(ctx, p->mod, filename)) {
-    ctx_error(ctx, filename, NULL, 0, "Couldn't open '%s'.", filename);
+    ctx_error(ctx, filename, NULL, (SrcLoc){0}, "Couldn't open '%s'.", filename);
   }
   lex_init(&p->ls, ctx, &p->mod->src);
   parse_module(p);
