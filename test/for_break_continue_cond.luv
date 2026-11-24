@@ -1,0 +1,24 @@
+# OUT: 1
+# OUT: 2
+# OUT: 4
+# OUT: 5
+# OUT: 8
+# OUT: 3
+
+def int main():
+    i = 0
+    for:
+        i = i + 1
+        if i > 5:
+            break
+        if i == 3:
+            continue
+        print i
+    print i + 2
+    n = 0
+    for n < 3:
+        n = n + 1
+        for:
+            break
+    print n
+    return 0
