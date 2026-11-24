@@ -7,3 +7,33 @@
 struct str:
     *u8 _data
     int _len
+
+
+struct Range:
+    int start
+    int stop
+    int step
+
+
+### on Range def bool __contains__(self, int value):
+###     if self.step == 0:
+###         return false
+###
+###     # Outside the range bounds.
+###     if self.step > 0:
+###         if value < self.start or value >= self.stop:
+###             return false
+###     else:
+###         if value > self.start or value <= self.stop:
+###             return false
+###
+###     # Check if value is on the corect stride.
+###     diff = value - self.start
+###     return diff % self.step == 0
+###
+###
+### on Range def str __str__(self):
+###     if self.step == 1:
+###         return "range(\(self.start), \(self.stop))"
+###     else:
+###         return "range(\(self.start), \(self.stop), \(self.step))"
