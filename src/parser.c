@@ -317,6 +317,8 @@ static void expr(Parser* p);
 static void subexpr(Parser* p, int limit, ExpDesc* e);
 static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start);
 static void primary(Parser* p, ExpDesc* e);
+static void postfix(Parser* p, ExpDesc* e);
+static void list_literal(Parser* p, TypeId expected, ExpDesc* e);
 static TypeId type(Parser* p);
 static u32 array_size(Parser* p);
 static IlType il_mem_type_of(Parser* p, TypeId t);
@@ -1968,6 +1970,20 @@ static void expr(Parser* p) {
   subexpr(p, -1, &e);
 }
 
+// A list or array literal gets its type from what it's assigned to, which is
+// known before it's parsed. Only a literal at the start of the expression gets
+// `t`, since that's decided by the first token.
+static void expr_expect(Parser* p, TypeId t, ExpDesc* e) {
+  if (T(p) != TK_LSQUARE) {
+    subexpr(p, -1, e);
+    return;
+  }
+  SrcLoc start = p->ls.pos.t.loc;
+  list_literal(p, t, e);
+  postfix(p, e);
+  binop_rest(p, -1, e, start);
+}
+
 // Returns the condition's value when emitting, and otherwise 0.
 static Ref cond_value(Parser* p, ExpDesc* e, SrcLoc at) {
   expect_bool(p, e, at, "Condition");
@@ -2154,10 +2170,17 @@ static void comprehension(Parser* p, const LexPos* elem, SrcLoc at) {
 }
 
 // '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
-static void list_literal(Parser* p) {
+//
+// The literal is an array if `expected` is an array type, and otherwise its
+// type isn't known yet.
+static void list_literal(Parser* p, TypeId expected, ExpDesc* e) {
   SrcLoc at = p->ls.pos.t.loc;
   u32 depth = p->ls.pos.bracket_depth;
+  e->shape = SH_VALUE;
+  e->type = ty_unknown;
+  exp_unemitted(e);
   next(p);
+  u32 count = 0;
   if (T(p) != TK_RSQUARE) {
     LexPos elem;
     lex_mark(&p->ls, &elem);
@@ -2167,14 +2190,23 @@ static void list_literal(Parser* p) {
     }
     lex_rewind(&p->ls, &elem);
     expr(p);
+    count = 1;
     while (optional(p, TK_COMMA)) {
       if (T(p) == TK_RSQUARE) {
         break;  // trailing comma
       }
       expr(p);
+      ++count;
     }
   }
   check_match(p, TK_RSQUARE, TK_LSQUARE, at);
+  if (type_is_array(p, expected)) {
+    u32 want = type_info(p, expected)->count;
+    if (count != want) {
+      error_at(p, at, "Expected %u element%s, not %u.", want, want == 1 ? "" : "s", count);
+    }
+    e->type = expected;
+  }
 }
 
 // '{' '}' | '{' expr ':' expr {',' expr ':' expr} [','] '}'
@@ -2927,7 +2959,7 @@ static void primary(Parser* p, ExpDesc* e) {
       e->shape = SH_VALUE;
       break;
     case TK_LSQUARE:
-      list_literal(p);
+      list_literal(p, ty_unknown, e);
       break;
     case TK_LBRACE:
       dict_literal(p);
@@ -3057,7 +3089,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
   bool has_value = optional(p, TK_EQ);
   if (has_value) {
     value_at = p->ls.pos.t.loc;
-    subexpr(p, -1, &v);
+    expr_expect(p, t, &v);
     check_assign(p, t, &v, value_at);
     if (is_const) {
       declare_const(p, name, at, toplevel, t, &v, value_at);
