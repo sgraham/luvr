@@ -3199,9 +3199,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           error_at(p, p->ls.pos.t.loc, "Cannot assign a new value to a constant.");
         }
       }
-      bool is_plain = T(p) == TK_EQ;
-      bool declares = exp.shape == SH_NAME && is_plain;
-      bool stores_field = is_plain && exp.kind == EK_ADDR;
+      bool not_augassign = T(p) == TK_EQ;
+      bool declares = exp.shape == SH_NAME && not_augassign;
+      bool stores_field = not_augassign && exp.kind == EK_ADDR;
       if (EMIT && !toplevel && !declares && !stores_field) {
         error_at(p, at, "This statement isn't supported yet.");
       }
@@ -3209,15 +3209,14 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       SrcLoc op_at = p->ls.pos.t.loc;
       next(p);
       SrcLoc value_at = p->ls.pos.t.loc;
+      // A new local takes the value's type, even if it shadows a global
+      // function.
+      bool to_existing = not_augassign && (!declares || loc);
       ExpDesc v;
-      subexpr(p, -1, &v);
-      if (is_plain) {
-        // A new local takes the value's type, even if it shadows a global
-        // function.
-        if (!declares || loc) {
-          check_assign(p, exp.type, &v, value_at);
-        }
-      } else {
+      expr_expect(p, to_existing ? exp.type : ty_unknown, &v);
+      if (to_existing) {
+        check_assign(p, exp.type, &v, value_at);
+      } else if (!not_augassign) {
         // The result is always the target's type, so it doesn't need to be
         // checked again.
         BinOpr op = augassign_opr[op_kind - TK_PLUSEQ];
