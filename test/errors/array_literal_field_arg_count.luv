@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:9:19:    Pair p = Pair([1])
+# CERR: {ssss}                        ^ error: Expected 2 elements, not 1.
+
+struct Pair:
+    [2]int v
+
+def int main():
+    Pair p = Pair([1])
+    return 0

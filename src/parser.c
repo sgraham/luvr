@@ -2521,7 +2521,7 @@ static void struct_args(Parser* p, ExpDesc* e) {
       }
       SrcLoc arg_at = p->ls.pos.t.loc;
       ExpDesc arg;
-      subexpr(p, -1, &arg);
+      expr_expect(p, f ? f->type : ty_unknown, &arg);
       check_not_void(p, &arg, arg_at);
       if (f && !assignable(p, arg.type, f->type)) {
         const Name* n = name_of(p, f->name);
