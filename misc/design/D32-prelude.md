@@ -175,11 +175,24 @@ is then an error, as in Python.
 - The prelude's structs get their AggInfo when the definition ends, so
   every IL dump starts with their `agg` lines. They're left in. Each one
   is a reminder that the prelude has a cost.
+- Builtins that the compiler implements (`len`, `max`, `range`) have
+  `GK_BUILTIN` entries in `prelude_globals`, which replaces
+  `Name.is_builtin`. So they're found and shadowed the same way as names
+  that the prelude defines.
+- The prelude isn't in `Ctx.module_ids`, so it can't be imported, and a
+  user's `prelude.luv` doesn't conflict with it. Its filename is
+  `<prelude>`, which is what errors in it show.
+- The prelude is `MODULE_PRELUDE` (0) and the root module is `MODULE_ROOT`
+  (1). Imports are found relative to the root module's directory.
+- `luv parse` doesn't count the prelude's bytes in its throughput, so that
+  numbers stay comparable as the prelude grows. Its parse time is included.
 
 ## Steps
 
 1. Loading the prelude, with nothing useful in it yet: embedding, module 0,
    lookup through `prelude_globals`, `<prelude>` in errors, and a bench.
+   Done 2026-11-23. Cycles on the desktop were within noise (dumbbench
+   +1.2% by median with overlapping ranges, betterbench -0.1%).
 2. `struct str` in the prelude bound to `TY_STR`, and the `str` cases in
    the layout functions removed.
 3. `str` values as aggregates on top of that, redoing the change that was

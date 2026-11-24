@@ -1,0 +1,19 @@
+# Builtins and prelude names can be shadowed by a module's own definitions,
+# parameters, and locals.
+# OUT: 7
+# OUT: 3
+# OUT: 5
+def int max(int a, int b):
+    if a > b:
+        return a
+    return b
+
+def int twice(int len):
+    return len + len
+
+def int main():
+    range = 5
+    print max(7, 2)
+    print twice(1) + 1
+    print range
+    return 0

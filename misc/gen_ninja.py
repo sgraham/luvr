@@ -27,12 +27,35 @@ TARGETS = {
     "unittest": ["src/unittest.c", "src/il.c", "src/path.c", "src/lex.c", "src/ctx.c"],
 }
 
+# Sources that include the generated header with the prelude.
+PRELUDE_USERS = {"src/parser_check.c", "src/parser_emit.c"}
 
-def windows_rules(debug, msvc):
+
+# Writes a C header with the bytes of src as prelude_src, followed by
+# LEX_PADDING zeros so that it can be lexed in place.
+def write_embed(src, dst):
+    data = open(src, "rb").read()
+    lines = []
+    for i in range(0, len(data), 16):
+        lines.append("  " + ", ".join(str(b) for b in data[i:i + 16]) + ",")
+    text = f"// Generated from {src} by misc/gen_ninja.py.\n"
+    text += f"#define PRELUDE_LEN {len(data)}\n"
+    text += "static const u8 prelude_src[PRELUDE_LEN + LEX_PADDING] = {\n"
+    text += "\n".join(lines) + "\n};\n"
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(dst, "w", newline="\n") as f:
+        f.write(text)
+
+
+def quote(arg):
+    return f'"{arg}"' if " " in arg else arg
+
+
+def windows_rules(out, debug, msvc):
     cc = "cl" if msvc else "clang-cl"
     # /Z7 keeps debug info in each .obj rather than a shared compiler .pdb, so
     # that compiles can run in parallel.
-    cflags = ["/nologo", "-D_CRT_SECURE_NO_WARNINGS=0", "/Z7", "/W4", "/WX"]
+    cflags = ["/nologo", "-D_CRT_SECURE_NO_WARNINGS=0", "/Z7", "/W4", "/WX", f"/I{out}/gen"]
     ldflags = ["/nologo", "/DEBUG"]
     if debug:
         cflags += ["/Od", "-DBUILD_DEBUG=1"]
@@ -56,8 +79,10 @@ rule link
 """
 
 
-def posix_rules(debug):
-    cflags = ["-g", "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Wimplicit-fallthrough"]
+def posix_rules(out, debug):
+    cflags = [
+        "-g", "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Wimplicit-fallthrough", f"-I{out}/gen"
+    ]
     ldflags = ["-g"]
     if debug:
         san = ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
@@ -86,13 +111,20 @@ rule link
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out",
-                    required=True,
-                    help="output directory, relative to the repository root")
-    ap.add_argument("--platform", required=True, choices=["win", "linux", "mac"])
+    ap.add_argument("--out", help="output directory, relative to the repository root")
+    ap.add_argument("--platform", choices=["win", "linux", "mac"])
     ap.add_argument("--debug", action="store_true")
     ap.add_argument("--msvc", action="store_true")
+    ap.add_argument("--embed",
+                    nargs=2,
+                    metavar=("SRC", "DST"),
+                    help="write the prelude header DST from SRC, instead of build.ninja")
     args = ap.parse_args()
+    if args.embed:
+        write_embed(*args.embed)
+        return
+    if not args.out or not args.platform:
+        ap.error("--out and --platform are required")
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     os.chdir(root)
@@ -108,21 +140,30 @@ def main():
         regen.append("--msvc")
 
     text = f"ninja_required_version = 1.10\nbuilddir = {out}\n\n"
-    text += windows_rules(args.debug, args.msvc) if win else posix_rules(args.debug)
+    text += windows_rules(out, args.debug, args.msvc) if win else posix_rules(out, args.debug)
     text += f"""
 rule regen
-  command = {" ".join(f'"{a}"' if " " in a else a for a in regen)}
+  command = {" ".join(quote(a) for a in regen)}
   generator = 1
   description = REGEN $out
 
 build {out}/build.ninja: regen misc/gen_ninja.py
+
+rule embed
+  command = {quote(sys.executable)} misc/gen_ninja.py --embed $in $out
+  description = EMBED $in
+
+build {out}/gen/prelude.h: embed src/prelude.luv | misc/gen_ninja.py
 """
 
     srcs = sorted({s for ss in TARGETS.values() for s in ss})
     obj = {s: f"{out}/obj/{os.path.splitext(s)[0]}{obj_ext}" for s in srcs}
     text += "\n"
     for s in srcs:
-        text += f"build {obj[s]}: cc {s}\n"
+        # The header is order-only, since the depfile has it once the object
+        # has been built.
+        dep = f" || {out}/gen/prelude.h" if s in PRELUDE_USERS else ""
+        text += f"build {obj[s]}: cc {s}{dep}\n"
     text += "\n"
     # Objects are linked in the order listed in TARGETS, since that decides
     # where functions land in the executable.

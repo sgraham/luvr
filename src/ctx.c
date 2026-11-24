@@ -35,8 +35,10 @@ void ctx_free(Ctx* ctx) {
     namemap_free(&m->globals);
     namemap_free(&m->imports);
     free(m->name_buf);
-    free((void*)m->src.filename);
-    free((void*)m->src.buf);
+    if (!m->src.is_static) {
+      free((void*)m->src.filename);
+      free((void*)m->src.buf);
+    }
     free(m);
   }
   free(ctx->modules.items);

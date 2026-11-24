@@ -1,5 +1,7 @@
 #include "luvr.h"
 
+#include "prelude.h"
+
 // This file is compiled twice, by parser_check.c with EMIT 0 and by
 // parser_emit.c with EMIT 1.
 #if !defined(EMIT)
@@ -196,6 +198,9 @@ typedef enum GlobalKind {
   GK_TYPE,
   GK_MODULE,
   GK_CONST,
+  // Only in Parser.prelude_globals, for functions that the compiler
+  // implements, such as len.
+  GK_BUILTIN,
 } GlobalKind;
 
 // GlobalInfo is a GlobalKind in the low bits. The higher bits are the index of
@@ -226,6 +231,10 @@ struct Parser {
   VEC(u8) image;
   // Each [N]T, by a hash of N and T. The slot's val is the TypeId.
   HashTable array_types;
+  // The prelude's globals by NameId, for names below prelude_name_end. See
+  // prelude_load().
+  GlobalInfo* prelude_globals;
+  u32 prelude_name_end;
   u32 num_locals;
   u32 func_base;   // first of the current function's entries in locals
   u32 func_depth;  // 0 at top level
@@ -490,6 +499,17 @@ static GlobalKind global_kind(Parser* p, NameId name) {
   return module_global_kind(p->mod, name);
 }
 
+// Looks for a name that's used, which is in the module's own globals or the
+// prelude. Definitions only check the module's globals, so they can shadow
+// the prelude.
+static GlobalInfo global_info(Parser* p, NameId name) {
+  GlobalInfo info = module_global_info(p->mod, name);
+  if (info == GK_NONE && name.u < p->prelude_name_end) {
+    info = p->prelude_globals[name.u];
+  }
+  return info;
+}
+
 static void declare_global(Parser* p, NameId name, GlobalInfo info) {
   namemap_set(p->ls.ctx, &p->mod->globals, name, info);
 }
@@ -700,7 +720,7 @@ static void check_type_param(Parser* p) {
 
 static TypeId check_type_name(Parser* p) {
   NameId name = p->ls.pos.t.v.name;
-  GlobalInfo info = module_global_info(p->mod, name);
+  GlobalInfo info = global_info(p, name);
   if ((info & GLOBAL_KIND_MASK) != GK_TYPE) {
     const Name* n = name_of(p, name);
     error_at(p, p->ls.pos.t.loc, "Undefined type '%.*s'.", (int)n->len, (const char*)n->str);
@@ -2758,7 +2778,7 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_NAME: {
       NameId name = p->ls.pos.t.v.name;
       const Name* n = name_of(p, name);
-      GlobalInfo info = n->binding ? GK_NONE : module_global_info(p->mod, name);
+      GlobalInfo info = n->binding ? GK_NONE : global_info(p, name);
       GlobalKind kind = (GlobalKind)(info & GLOBAL_KIND_MASK);
       const Module* m = kind == GK_MODULE ? imported_module(p, name) : NULL;
       if (m) {
@@ -2786,9 +2806,9 @@ static void primary(Parser* p, ExpDesc* e) {
         }
         break;
       }
-      bool defined = n->binding || n->is_builtin || kind != GK_NONE;
+      bool defined = n->binding || kind != GK_NONE;
       next(p);
-      if (!n->binding && kind == GK_NONE && name.u == p->ls.ctx->name_len.u && T(p) == TK_LPAREN) {
+      if (kind == GK_BUILTIN && name.u == p->ls.ctx->name_len.u && T(p) == TK_LPAREN) {
         len_call(p, e);
         break;
       }
@@ -3957,7 +3977,7 @@ static u32 import_module(Parser* p, const u8* path, u32 len, SrcLoc at) {
   // Modules that m imports are added after it.
   u32 m_idx = ctx->modules.num - 1;
   // Files are found relative to the root module's directory.
-  const char* root = ctx->modules.items[0]->src.filename;
+  const char* root = ctx->modules.items[MODULE_ROOT]->src.filename;
   u32 root_dir = path_dir_len((const u8*)root, (u32)strlen(root));
   char* filename = filename_new(ctx, root_dir + name_len + strlen(".luv"));
   memcpy(filename, root, root_dir);
@@ -4002,12 +4022,59 @@ static void parse_module(Parser* p) {
   }
 }
 
+// Parses the prelude as module 0, and fills in prelude_globals.
+//
+// NameIds are allocated in the order that names are first interned, and the
+// prelude is the first source that's lexed. So every name that it defines is
+// below prelude_name_end, and the prelude's globals can be found by indexing
+// with the NameId instead of hashing. Names that the compiler interns before
+// it, such as keywords, are also below prelude_name_end, but they're never
+// globals, so their entries are GK_NONE.
+static void prelude_load(Ctx* ctx, Parser* p) {
+  ASSERT(ctx->modules.num == MODULE_PRELUDE);
+  static const char* const builtins[] = {"len", "max", "range"};
+  NameId builtin_names[COUNTOF(builtins)];
+  for (u32 i = 0; i < COUNTOF(builtins); ++i) {
+    builtin_names[i] = lex_intern_safe(ctx, builtins[i]);
+  }
+  Module* m = (Module*)calloc(1, sizeof(Module));
+  if (!m) {
+    ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
+  }
+  *vec_push(ctx, &ctx->modules) = m;
+  // It isn't in Ctx.module_ids, so it can't be imported.
+  m->name = lex_intern_safe(ctx, "prelude");
+  m->src = (FileBuf){"<prelude>", prelude_src, prelude_src + PRELUDE_LEN, /*is_static=*/true};
+  m->loading = true;
+  if (!namemap_init(&m->globals, MIN_GLOBALS) || !namemap_init(&m->imports, 16)) {
+    ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
+  }
+  p->mod = m;
+  lex_init(&p->ls, ctx, &m->src);
+  parse_module(p);
+  m->loading = false;
+  u32 end = ctx->names.num;
+  p->prelude_globals = (GlobalInfo*)malloc(end * sizeof(GlobalInfo));
+  if (!p->prelude_globals) {
+    ctx_error(ctx, NULL, NULL, (SrcLoc){0}, "Out of memory.");
+  }
+  for (u32 i = 0; i < end; ++i) {
+    p->prelude_globals[i] = module_global_info(m, (NameId){i});
+  }
+  for (u32 i = 0; i < COUNTOF(builtins); ++i) {
+    ASSERT(p->prelude_globals[builtin_names[i].u] == GK_NONE);
+    p->prelude_globals[builtin_names[i].u] = GK_BUILTIN;
+  }
+  p->prelude_name_end = end;
+}
+
 // Undoes the file's bindings and frees the Parser.
 static void parse_end(Parser* p) {
   pop_locals(p, 0);
   if (EMIT) {
     il_free(&p->il);
   }
+  free(p->prelude_globals);
   free(p->global_consts.items);
   free(p->global_funcs.items);
   free(p->types.items);
@@ -4020,29 +4087,12 @@ static void parse_end(Parser* p) {
 
 void PARSE_FILE(Ctx* ctx, const char* path) {
   ASSERT(ctx->modules.num == 0);
-  // The Parser isn't a local, so that it's still valid after a longjmp.
-  Parser* p = (Parser*)malloc(sizeof(Parser));
+  // The Parser isn't a local, so that it's still valid after a longjmp. All of
+  // its fields start as zero, including those that are freed by parse_end().
+  Parser* p = (Parser*)calloc(1, sizeof(Parser));
   if (!p) {
     ctx_error(ctx, path, NULL, (SrcLoc){0}, "Out of memory.");
   }
-  p->num_locals = 0;
-  p->global_consts.items = NULL;
-  p->global_consts.num = p->global_consts.cap = 0;
-  p->global_funcs.items = NULL;
-  p->global_funcs.num = p->global_funcs.cap = 0;
-  p->types.items = NULL;
-  p->types.num = p->types.cap = 0;
-  p->param_types.items = NULL;
-  p->param_types.num = p->param_types.cap = 0;
-  p->fields.items = NULL;
-  p->fields.num = p->fields.cap = 0;
-  memset(&p->array_types, 0, sizeof(p->array_types));
-  p->func_base = 0;
-  p->func_depth = 0;
-  p->ret_type = ty_unknown;
-  // il_free() is safe on the zeroed IlFunc if there's an error before
-  // il_init().
-  memset(&p->il, 0, sizeof(p->il));
   // Names are shared by all files parsed with ctx, so this file's bindings
   // are undone at the end, including after an error.
   jmp_buf* outer = ctx->on_error;
@@ -4063,6 +4113,7 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   if (EMIT) {
     il_init(&p->il, ctx);
   }
+  prelude_load(ctx, p);
   // The root module's canonical name is its file name, without the directory
   // or .luv.
   u32 len;

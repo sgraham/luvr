@@ -48,7 +48,7 @@ static int usage(void) {
 
 // Each file is a separate program, so it has its own Ctx. Prints the error
 // and returns false if the file fails. Otherwise adds the size of the
-// program's modules to nbytes.
+// program's modules other than the prelude to nbytes.
 static bool run_file(ParseFn fn,
                      FuncDoneFn on_func,
                      AggDoneFn on_agg,
@@ -89,7 +89,9 @@ static bool run_file(ParseFn fn,
   }
   fn(&ctx, path);
   *secs += now_sec() - t0;
-  for (u32 j = 0; j < ctx.modules.num; ++j) {
+  // The prelude's parse time is included, but not its size, so that
+  // throughput stays comparable as the prelude changes.
+  for (u32 j = MODULE_ROOT; j < ctx.modules.num; ++j) {
     const FileBuf* src = &ctx.modules.items[j]->src;
     *nbytes += (size_t)(src->end - src->buf);
   }

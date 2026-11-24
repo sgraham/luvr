@@ -656,10 +656,9 @@ static_assert(sizeof(Token) == 16, "unexpected Token size");
 struct Name {
   const u8* str;  // points into a source buffer (or static, for keywords)
   u32 len;
-  u8 kind;          // TK_NAME, TK_TYPENAME, TK_TYPEPARAM, or a keyword kind
-  bool is_const;    // kind=TK_NAME: an ALL_CAPS constant
-  bool is_builtin;  // kind=TK_NAME: a builtin function such as len
-  void* binding;    // parser: current symbol for this name, or NULL
+  u8 kind;        // TK_NAME, TK_TYPENAME, TK_TYPEPARAM, or a keyword kind
+  bool is_const;  // kind=TK_NAME: an ALL_CAPS constant
+  void* binding;  // parser: current symbol for this name, or NULL
 };
 
 // Decoded copy of a string literal that contained escapes.
@@ -674,11 +673,21 @@ struct FileBuf {
   const char* filename;  // for errors
   const u8* buf;
   const u8* end;  // buf + len
+  // filename and buf are static, such as the prelude's, so a Module doesn't
+  // free them.
+  bool is_static;
 };
 
 // The value for a name in Module.globals. The parser packs the kind of global
 // into it, and for constants, where the value is.
 typedef u32 GlobalInfo;
+
+// Indices in Ctx.modules. The prelude is parsed before the root module, and
+// the root module's imports follow it.
+enum {
+  MODULE_PRELUDE,
+  MODULE_ROOT,
+};
 
 // A source file, and what's kept from parsing it for the rest of the
 // compilation. Modules are owned by the Ctx.
@@ -687,7 +696,7 @@ struct Module {
   NameId name;
   // A padded copy of the canonical name, which the Name may point into.
   u8* name_buf;
-  FileBuf src;  // filename and buf are freed with the Ctx
+  FileBuf src;  // freed with the Ctx unless is_static
   // Until it's been parsed. Importing a module that's still loading is an
   // import cycle.
   bool loading;

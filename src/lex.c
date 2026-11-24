@@ -131,7 +131,6 @@ static u32 intern(Ctx* ctx, const u8* s, u32 len, u64 h, TokenKind kind_if_new) 
   n->str = s;
   n->len = len;
   n->is_const = false;
-  n->is_builtin = false;
   n->kind = kind_if_new ? kind_if_new : classify_ident(s, len, &n->is_const);
   n->binding = NULL;
   hashtable_insert(ctx, t, slot, tag, idx);
@@ -163,15 +162,6 @@ bool lex_intern_init(Ctx* ctx) {
   for (size_t i = 0; i < COUNTOF(kws); ++i) {
     u32 len = (u32)strlen(kws[i].s);
     intern(ctx, (const u8*)kws[i].s, len, hash_ident_safe(kws[i].s, len), kws[i].kind);
-  }
-  // TODO: Builtins should be defined in a prelude written in luv. This list is
-  // only so that references to them can be checked, and shouldn't grow. Switch
-  // to a prelude before adding any more.
-  static const char* const builtins[] = {"len", "max", "range"};
-  for (size_t i = 0; i < COUNTOF(builtins); ++i) {
-    u32 len = (u32)strlen(builtins[i]);
-    u32 idx = intern(ctx, (const u8*)builtins[i], len, hash_ident_safe(builtins[i], len), TK_NAME);
-    ctx->names.items[idx].is_builtin = true;
   }
   ctx->name_len = lex_intern_safe(ctx, "len");
   return true;
