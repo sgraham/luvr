@@ -143,7 +143,7 @@ rule link
 
 def posix_rules(out, debug):
     cflags = [
-        "-g", "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Wimplicit-fallthrough", f"-I{out}/gen"
+        "-g", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wpedantic", "-Wimplicit-fallthrough", f"-I{out}/gen"
     ]
     ldflags = ["-g"]
     if debug:

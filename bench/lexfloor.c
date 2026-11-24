@@ -84,7 +84,7 @@ static u64 pass_lex(void) {
   }
   LexState ls;
   u64 n = 0;
-  FileBuf src = {"bench", g_buf, g_buf + g_len};
+  FileBuf src = {"bench", g_buf, g_buf + g_len, /*is_static=*/false};
   lex_init(&ls, &ctx, &src);
   do {
     lex_next(&ls);

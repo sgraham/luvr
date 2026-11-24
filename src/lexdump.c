@@ -153,7 +153,7 @@ static int run_file(Ctx* ctx,
     return 1;
   }
   double t0 = now_sec();
-  FileBuf src = {path, buf, buf + len};
+  FileBuf src = {path, buf, buf + len, /*is_static=*/false};
   lex_init(&ls, ctx, &src);
   if (mode == MODE_DUMP) {
     // Token locations only increase, so line and column are tracked
