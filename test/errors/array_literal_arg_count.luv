@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:9:10:    f(1, [1, 2])
+# CERR: {ssss}               ^ error: Expected 3 elements, not 2.
+
+def f(int n, [3]int a):
+    pass
+
+def int main():
+    f(1, [1, 2])
+    return 0

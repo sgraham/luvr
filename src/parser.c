@@ -2413,12 +2413,13 @@ static u32 call_args(Parser* p, TypeId callee, Ref* args) {
       if (T(p) == TK_RPAREN) {
         error_at(p, p->ls.pos.t.loc, "Trailing commas aren't allowed in calls.");
       }
+      bool has_param = num_args <= num_params;
+      TypeId t = has_param ? p->param_types.items[first_param + num_args - 1] : ty_unknown;
       SrcLoc arg_at = p->ls.pos.t.loc;
       ExpDesc e;
-      subexpr(p, -1, &e);
+      expr_expect(p, t, &e);
       check_not_void(p, &e, arg_at);
-      if (num_args <= num_params) {
-        TypeId t = p->param_types.items[first_param + num_args - 1];
+      if (has_param) {
         if (!assignable(p, e.type, t)) {
           error_at(p, arg_at, "Argument %u is %s, but the parameter is %s.", num_args,
                    type_str(p, e.type), type_str(p, t));
