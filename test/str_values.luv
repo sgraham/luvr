@@ -1,0 +1,50 @@
+# OUT: hello
+# OUT: hello
+# OUT: [world]
+# OUT: picked
+# OUT: other
+# OUT: Bob
+# OUT: 7
+# OUT: Bob is 7, true
+# OUT: Alice
+# OUT:
+# OUT: tagged
+struct Person:
+    str name
+    int age
+
+def bracket(str s):
+    print "[\(s)]"
+
+def str pick(bool first, str a, str b):
+    if first:
+        return a
+    return b
+
+def Person rename(Person p, str name):
+    return Person(name, p.age)
+
+def str tag():
+    return "tagged"
+
+def int main():
+    str greeting = "hello"
+    copy = greeting
+    print greeting
+    print copy
+    bracket("world")
+
+    print pick(true, "picked", "other")
+    print pick(false, "picked", "other")
+
+    bob = Person("Bob", 7)
+    print bob.name
+    print bob.age
+    print "\(bob.name) is \(bob.age), \(bob.age > 5)"
+    alice = rename(bob, "Alice")
+    print alice.name
+
+    str empty
+    print empty
+    print tag()
+    return 0

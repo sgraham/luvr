@@ -2,7 +2,8 @@
 # every module, after the module's own globals, and can be shadowed.
 
 # The fields are only for the prelude's own methods. Other code passes the str
-# itself, and uses len() for its length.
+# itself, and uses len() for its length. The compiler builds and reads strs
+# through these fields, by name.
 struct str:
     *u8 _data
     int _len

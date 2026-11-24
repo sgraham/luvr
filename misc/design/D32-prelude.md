@@ -204,5 +204,7 @@ is then an error, as in Python.
    shelved for this. Most of its `str` special cases go away. What's left
    is string literals, which become a value with two stores into a
    temporary, and `print` of a `str`.
+   Done 2026-11-23. The offsets of `_data` and `_len` are looked up by name
+   once, at the end of the prelude's `struct str`.
 4. Later: typed methods (`__len__`, `__eq__`, dispatch for `print`), then
    generic containers and the runtime's `foreign` declarations.

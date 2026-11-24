@@ -246,7 +246,11 @@ struct Parser {
   u32 type_params;
   TypeId ret_type;  // of the current function
   bool in_foreign;  // in a foreign function's signature
-  IlFunc il;        // of the current function, only used when EMIT
+  // The offsets of the prelude str's _data and _len, which are both 8 bytes.
+  // Set at the end of its definition.
+  u32 str_data_offset;
+  u32 str_len_offset;
+  IlFunc il;  // of the current function, only used when EMIT
 };
 
 // The syntactical shape of parsing an expression. Used to decide whether
@@ -1520,11 +1524,15 @@ static void exp_unemitted(ExpDesc* e) {
   }
 }
 
-static Ref emit_addr(Parser* p, const ExpDesc* e) {
-  if (e->offset == 0) {
-    return e->base;
+static Ref emit_offset_addr(Parser* p, Ref base, u32 offset) {
+  if (offset == 0) {
+    return base;
   }
-  return il_emit(&p->il, OP_ADD, IT_I64, e->base, il_const_int(&p->il, IT_I64, e->offset));
+  return il_emit(&p->il, OP_ADD, IT_I64, base, il_const_int(&p->il, IT_I64, offset));
+}
+
+static Ref emit_addr(Parser* p, const ExpDesc* e) {
+  return emit_offset_addr(p, e->base, e->offset);
 }
 
 // Emits whatever is needed to make e one value of type t, and returns its Ref.
@@ -1558,6 +1566,19 @@ static Ref emit_agg_addr(Parser* p, const ExpDesc* e, SrcLoc at) {
   }
   if (e->kind == EK_ADDR) {
     return emit_addr(p, e);
+  }
+  if (e->kind == EK_STR) {
+    // A string literal is only data and a length until it's used as a str
+    // value, and then it's built in a new temporary. It can't be a constant
+    // image in the data, because the pointer to the bytes would need a
+    // relocation.
+    AggId agg = type_agg(p, ty_str);
+    Ref temp = il_slot_addr(&p->il, il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED}));
+    Ref len = il_const_int(&p->il, IT_I64, p->ls.ctx->data.items[e->data.u].len);
+    il_emit(&p->il, OP_STORE, IT_I64, il_const_data(&p->il, e->data),
+            emit_offset_addr(p, temp, p->str_data_offset));
+    il_emit(&p->il, OP_STORE, IT_I64, len, emit_offset_addr(p, temp, p->str_len_offset));
+    return temp;
   }
   error_at(p, at, "This expression isn't supported yet.");
 }
@@ -1636,12 +1657,15 @@ static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
   }
   Ref args[2];
   u32 nargs = 1;
-  if (t.u == TY_STR) {
-    if (e->kind != EK_STR) {
-      error_at(p, at, "This expression isn't supported yet.");
-    }
+  if (t.u == TY_STR && e->kind == EK_STR) {
+    // A literal is printed from its data, without building a str.
     args[0] = il_const_data(&p->il, e->data);
     args[1] = il_const_int(&p->il, IT_I64, p->ls.ctx->data.items[e->data.u].len);
+    nargs = 2;
+  } else if (t.u == TY_STR) {
+    Ref addr = emit_agg_addr(p, e, at);
+    args[0] = il_emit(&p->il, OP_LOAD, IT_I64, emit_offset_addr(p, addr, p->str_data_offset), 0);
+    args[1] = il_emit(&p->il, OP_LOAD, IT_I64, emit_offset_addr(p, addr, p->str_len_offset), 0);
     nargs = 2;
   } else {
     args[0] = emit_to_ref(p, e, t, at);
@@ -2284,6 +2308,13 @@ static const Field* struct_field(Parser* p, TypeId st, NameId name) {
     }
   }
   return NULL;
+}
+
+// Returns the offset of a field of the prelude's str, which has to be 8 bytes.
+static u32 str_field_offset(Parser* p, const char* name) {
+  const Field* f = struct_field(p, ty_str, lex_intern_safe(p->ls.ctx, name));
+  ASSERT(f && type_size(p, f->type) == 8);
+  return f->offset;
 }
 
 static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, SrcLoc at) {
@@ -3835,6 +3866,10 @@ static void toplevel_stat(Parser* p) {
       }
       check(p, TK_COLON);
       struct_body(p, st);
+      if (is_str) {
+        p->str_data_offset = str_field_offset(p, "_data");
+        p->str_len_offset = str_field_offset(p, "_len");
+      }
       return;
     }
     case TK_FOREIGN:
