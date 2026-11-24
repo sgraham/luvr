@@ -74,8 +74,8 @@ already how statements work.
   nested `def` inside a loop starts at zero.
 - They apply to the innermost loop. There are no labels.
 - They end their block, so a statement after them in the same block is
-  unreachable. That uses the same `FLOW_JUMPS` as `return`
-  ([D30](D30-emission.md)).
+  an error ("Expected end of block"), as it is after `return`. All three
+  are `FLOW_ENDS`.
 
 ## Flow
 
@@ -112,9 +112,9 @@ jumps to the start of the body.
 
 The condition is emitted with `cond()`, the same as `if`, so `and` and
 `or` branch directly to `:body` or `:exit` as they do in `if`. A constant
-condition gets no special handling. `for true:` is an error, since `for:`
-is the one way to write it. Only the literal is rejected. A named constant
-(`for DEBUG:`) is an ordinary condition.
+condition gets no special handling. `for true:` isn't checked for: it's an
+ordinary condition, so the loop falls through, and a function that ends in
+one needs a `return` after it, which points towards `for:`.
 
 Loops are the first back edges in the IL. The SSA pass needs to know which
 slots each loop stores ([D30](D30-emission.md) lists that as left for the

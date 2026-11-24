@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:4:9:def int main():
+# CERR: {ssss}             ^ error: Missing return at the end of a function returning int.
+def int main():
+    for:
+        if true:
+            break
+        return 0

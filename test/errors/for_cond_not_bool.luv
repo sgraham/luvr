@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:6:9:    for x + 1:
+# CERR: {ssss}             ^ error: Condition expects bool, not int.
+def int main():
+    x = 0
+    for x + 1:
+        x += 1
+    return 0

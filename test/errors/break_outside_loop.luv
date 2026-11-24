@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:9:        break
+# CERR: {ssss}             ^ error: 'break' isn't in a loop.
+def int main():
+    if true:
+        break
+    return 0

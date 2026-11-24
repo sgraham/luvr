@@ -36,6 +36,5 @@ def int main():
                 print "outer1"
             print "outer2"
             break
-            print "outer2.5"
     print "outer3"
     return 0

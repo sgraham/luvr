@@ -19,6 +19,7 @@ typedef struct Field Field;
 typedef struct GlobalFunc GlobalFunc;
 typedef struct Local Local;
 typedef struct LogicalJoin LogicalJoin;
+typedef struct Loop Loop;
 typedef struct NamedConst NamedConst;
 typedef struct Parser Parser;
 typedef struct Targets Targets;
@@ -245,6 +246,11 @@ struct Parser {
   // struct's list or method's receiver.
   u32 type_params;
   TypeId ret_type;  // of the current function
+  Loop* loop;       // the current function's innermost loop, or NULL
+  // The first name in the current for header. It's a loop variable if it's
+  // followed by 'in' or ','. Names can't be at offset 0 after 'for', so 0 is
+  // none.
+  SrcLoc loop_var_at;
   bool in_foreign;  // in a foreign function's signature
   // The offsets of the prelude str's _data and _len, which are both 8 bytes.
   // Set at the end of its definition.
@@ -269,10 +275,12 @@ typedef enum Shape {
 } Shape;
 
 // How control leaves a statement or block. A block's flow is its last
-// statement's, since a return has to be last.
+// statement's, since a return, break or continue has to be last.
 typedef enum Flow {
   FLOW_FALLS_THROUGH,  // can reach whatever follows
-  FLOW_RETURNS,        // always returns
+  // Can't reach whatever follows. It always ends in a return, break or
+  // continue, or it's a 'for:' without a break.
+  FLOW_ENDS,
 } Flow;
 
 // Where an expression's value is.
@@ -1133,10 +1141,16 @@ static u32 array_size(Parser* p) {
   return (u32)e.cv.i;
 }
 
+// Loop variables are only checked for in the error paths, so that primary()
+// doesn't need to know about for headers.
+static bool is_loop_var(Parser* p, SrcLoc at) {
+  return at.u == p->loop_var_at.u && (T(p) == TK_IN || T(p) == TK_COMMA);
+}
+
 // There's no syntax for function types, so functions can't be values. Out of
 // line, since it's only for names whose type isn't builtin.
 static NOINLINE void check_function_called(Parser* p, const ExpDesc* e, SrcLoc at) {
-  if (T(p) != TK_LPAREN && type_is_function(p, e->type)) {
+  if (T(p) != TK_LPAREN && type_is_function(p, e->type) && !is_loop_var(p, at)) {
     error_at(p, at, "A function can only be called.");
   }
 }
@@ -1953,12 +1967,16 @@ static void expr(Parser* p) {
 }
 
 // Returns the condition's value when emitting, and otherwise 0.
+static Ref cond_value(Parser* p, ExpDesc* e, SrcLoc at) {
+  expect_bool(p, e, at, "Condition");
+  return EMIT ? emit_to_ref(p, e, ty_bool, at) : 0;
+}
+
 static Ref cond(Parser* p) {
   SrcLoc at = p->ls.pos.t.loc;
   ExpDesc e;
   subexpr(p, -1, &e);
-  expect_bool(p, &e, at, "Condition");
-  return EMIT ? emit_to_ref(p, &e, ty_bool, at) : 0;
+  return cond_value(p, &e, at);
 }
 
 // "...\(e)...\(e)..."
@@ -2038,31 +2056,36 @@ static void declare_definition(Parser* p, NameId name, SrcLoc at, GlobalInfo inf
 
 // Loop variables, which are bound after the expression that's iterated.
 struct Targets {
-  u32 n;
+  u32 num_targets;
   NameId name[MAX_TARGETS];
   SrcLoc at[MAX_TARGETS];
 };
 
+// A loop whose body is being parsed.
+struct Loop {
+  bool has_break;
+};
+
 // for_targets -> name {',' name}
-static void for_targets(Parser* p, Targets* t) {
-  t->n = 0;
+// The first name has already been parsed.
+static void for_targets(Parser* p, Targets* t, NameId first, SrcLoc first_at) {
+  t->num_targets = 0;
+  NameId name = first;
+  SrcLoc at = first_at;
   for (;;) {
-    if (T(p) != TK_NAME) {
-      error_expected(p, "loop variable name");
+    if (t->num_targets == MAX_TARGETS) {
+      error_at(p, at, "Too many loop variables.");
     }
-    if (t->n == MAX_TARGETS) {
-      error_at(p, p->ls.pos.t.loc, "Too many loop variables.");
+    if (name_of(p, name)->is_const) {
+      error_at(p, at, "A constant can't be a loop variable.");
     }
-    t->name[t->n] = p->ls.pos.t.v.name;
-    t->at[t->n] = p->ls.pos.t.loc;
-    if (name_of(p, t->name[t->n])->is_const) {
-      error_at(p, t->at[t->n], "A constant can't be a loop variable.");
-    }
-    ++t->n;
-    next(p);
+    t->name[t->num_targets] = name;
+    t->at[t->num_targets] = at;
+    ++t->num_targets;
     if (!optional(p, TK_COMMA)) {
       break;
     }
+    name = expect_name(p, "loop variable name", &at);
   }
 }
 
@@ -2097,11 +2120,13 @@ static void comprehension(Parser* p, const LexPos* elem, SrcLoc at) {
   while (T(p) == TK_FOR || T(p) == TK_IF) {
     if (optional(p, TK_FOR)) {
       Targets t;
-      for_targets(p, &t);
+      SrcLoc first_at;
+      NameId first = expect_name(p, "loop variable name", &first_at);
+      for_targets(p, &t, first, first_at);
       check(p, TK_IN);
       expr(p);
       // Loop variables are always new, so they shadow any outer name.
-      for (u32 i = 0; i < t.n; ++i) {
+      for (u32 i = 0; i < t.num_targets; ++i) {
         declare_local(p, t.name[i], t.at[i], LK_VAR);
       }
     } else {
@@ -2841,8 +2866,9 @@ static void primary(Parser* p, ExpDesc* e) {
         break;
       }
       // A name followed by '=' is an assignment target, which declares the name
-      // if it's new.
-      if (!defined && T(p) != TK_EQ) {
+      // if it's new. Similarly, a loop variable is declared after the
+      // expression that's iterated.
+      if (!defined && T(p) != TK_EQ && !is_loop_var(p, at)) {
         error_at(p, at, "Undefined reference to '%.*s'.", (int)n->len, (const char*)n->str);
       }
       if (n->binding) {
@@ -3249,6 +3275,14 @@ static void simple_stat(Parser* p) {
     }
     case TK_BREAK:
     case TK_CONTINUE:
+      if (!p->loop) {
+        error_at(p, p->ls.pos.t.loc, "'%s' isn't in a loop.", tok_kind_name(T(p)));
+      }
+      if (T(p) == TK_BREAK) {
+        p->loop->has_break = true;
+      }
+      next(p);
+      return;
     case TK_PASS:
       next(p);
       return;
@@ -3311,6 +3345,11 @@ static void simple_stat(Parser* p) {
   }
 }
 
+static Flow simple_stat_flow(TokenKind k) {
+  bool ends = k == TK_RETURN || k == TK_BREAK || k == TK_CONTINUE;
+  return ends ? FLOW_ENDS : FLOW_FALLS_THROUGH;
+}
+
 // block -> INDENT stat {stat} DEDENT
 static Flow block(Parser* p) {
   next(p);  // INDENT
@@ -3321,7 +3360,7 @@ static Flow block(Parser* p) {
     if (block_follow(T(p))) {
       break;
     }
-    if (k == TK_RETURN) {
+    if (simple_stat_flow(k) != FLOW_FALLS_THROUGH) {
       error_expected(p, "end of block");
     }
   }
@@ -3338,7 +3377,7 @@ static Flow suite(Parser* p) {
   if (T(p) == TK_NEWLINE || block_follow(T(p))) {
     error_expected(p, "an indented block");
   }
-  Flow flow = T(p) == TK_RETURN ? FLOW_RETURNS : FLOW_FALLS_THROUGH;
+  Flow flow = simple_stat_flow(T(p));
   simple_stat(p);
   end_of_stat(p);
   return flow;
@@ -3471,6 +3510,8 @@ static void foreign_decl(Parser* p, bool is_method) {
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, bool is_method) {
   TypeId outer_ret = p->ret_type;
+  Loop* outer_loop = p->loop;
+  p->loop = NULL;
   NameId name;
   SrcLoc name_at;
   u32 outer = funcsig(p, is_method, &name, &name_at);
@@ -3517,55 +3558,87 @@ static void funcdef(Parser* p, bool is_method) {
   }
   func_close(p, outer);
   p->ret_type = outer_ret;
+  p->loop = outer_loop;
+}
+
+// for_header -> for_targets 'in' expr | expr
+//
+// A bare name followed by 'in' or ',' is a loop variable. Any other name
+// starts a condition, which continues from the name.
+static void for_header(Parser* p) {
+  SrcLoc at = p->ls.pos.t.loc;
+  ExpDesc e;
+  if (T(p) == TK_NAME) {
+    NameId name = p->ls.pos.t.v.name;
+    p->loop_var_at = at;
+    primary(p, &e);
+    p->loop_var_at = (SrcLoc){0};
+    if ((e.shape == SH_NAME || e.shape == SH_PARAM) && (T(p) == TK_IN || T(p) == TK_COMMA)) {
+      Targets t;
+      for_targets(p, &t, name, at);
+      check(p, TK_IN);
+      expr(p);
+      for (u32 i = 0; i < t.num_targets; ++i) {
+        declare_if_new(p, t.name[i], t.at[i], ty_unknown);
+      }
+      return;
+    }
+    binop_rest(p, -1, &e, at);
+  } else {
+    subexpr(p, -1, &e);
+  }
+  cond_value(p, &e, at);
 }
 
 // stat -> 'if' expr ':' suite {'elif' expr ':' suite} ['else' ':' suite]
-//       | 'for' for_targets 'in' expr ':' suite
+//       | 'for' [for_header] ':' suite
 //       | 'with' expr ['as' name] ':' suite
 //       | 'def' funcdef
 //       | simple_stat end
 //
 //
-// An 'if' only always returns if it has an 'else' and all of its branches
-// always return. A 'for' never does, since its body might not run.
+// An 'if' only ends if it has an 'else' and all of its branches end. A
+// 'for' with a header might not run its body, so it only ends if it's 'for:'
+// with no break.
 static Flow stat(Parser* p) {
   switch (T(p)) {
     case TK_IF: {
       next(p);
       BlockId end = {IL_BLOCK_NONE};
       // &= rather than &&, so that every branch is still parsed.
-      bool returns = if_branch(p, &end) == FLOW_RETURNS;
+      bool ends = if_branch(p, &end) == FLOW_ENDS;
       while (optional(p, TK_ELIF)) {
-        returns &= if_branch(p, &end) == FLOW_RETURNS;
+        ends &= if_branch(p, &end) == FLOW_ENDS;
       }
       if (optional(p, TK_ELSE)) {
         check(p, TK_COLON);
-        returns &= suite(p) == FLOW_RETURNS;
+        ends &= suite(p) == FLOW_ENDS;
       } else {
-        returns = false;
+        ends = false;
       }
       // The else suite, or the last condition being false, continues into
       // the end block.
       if (EMIT && end.u != IL_BLOCK_NONE) {
         il_block_start(&p->il, end);
       }
-      return returns ? FLOW_RETURNS : FLOW_FALLS_THROUGH;
+      return ends ? FLOW_ENDS : FLOW_FALLS_THROUGH;
     }
     case TK_FOR: {
       if (EMIT) {
         error_at(p, p->ls.pos.t.loc, "'for' isn't supported yet.");
       }
-      Targets t;
       next(p);
-      for_targets(p, &t);
-      check(p, TK_IN);
-      expr(p);
-      for (u32 i = 0; i < t.n; ++i) {
-        declare_if_new(p, t.name[i], t.at[i], ty_unknown);
+      bool forever = T(p) == TK_COLON;
+      if (!forever) {
+        for_header(p);
       }
       check(p, TK_COLON);
+      Loop* outer = p->loop;
+      Loop loop = {0};
+      p->loop = &loop;
       suite(p);
-      return FLOW_FALLS_THROUGH;
+      p->loop = outer;
+      return forever && !loop.has_break ? FLOW_ENDS : FLOW_FALLS_THROUGH;
     }
     case TK_WITH:
       if (EMIT) {
@@ -3588,7 +3661,7 @@ static Flow stat(Parser* p) {
       funcdef(p, /*is_method=*/false);
       return FLOW_FALLS_THROUGH;
     default: {
-      Flow flow = T(p) == TK_RETURN ? FLOW_RETURNS : FLOW_FALLS_THROUGH;
+      Flow flow = simple_stat_flow(T(p));
       simple_stat(p);
       end_of_stat(p);
       return flow;

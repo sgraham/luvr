@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:13:            continue
+# CERR: {ssss}                  ^ error: 'continue' isn't in a loop.
+def int main():
+    for:
+        def f():
+            continue
+        return 0

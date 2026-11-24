@@ -126,7 +126,7 @@ Not done yet:
   with `STORE i, ADD i 1` and `JMP header`, and the exit (where `break`
   goes). With the iteration protocol this may be a special case of it
   instead.
-- `break` and `continue` become `FLOW_JUMPS`, which end their block like
+- `break` and `continue` are `FLOW_ENDS`, which end their block like
   `return`, so nothing is emitted into an unreachable block.
 
 ## Recovering branches for `and` and `or` (for the SSA pass)

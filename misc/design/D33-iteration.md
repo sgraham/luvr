@@ -85,7 +85,7 @@ Needs:
 
 - Recognizing `range` in the `for` header. It's already a builtin symbol
   (`len`, `max` and `range` in parser.c).
-- `break` and `continue` as `FLOW_JUMPS` (needed by every approach).
+- `break` and `continue` (`FLOW_ENDS`) (needed by every approach).
 - A decision about step signs. A constant step chooses `<` or `>` when the
   loop is emitted. A non-constant step needs either a test of the sign on
   each step, or two copies of the loop with the test hoisted before them.

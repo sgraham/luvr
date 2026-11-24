@@ -1,0 +1,48 @@
+# OUT: 1
+# OUT: 3
+# OUT: 5
+# OUT: 7
+# OUT: 9
+# OUT: 5
+# OUT: 1
+# OUT: in
+# OUT: not in
+# OUT: 0
+# OUT: 1
+# OUT: 10
+# OUT: 11
+
+# Conditional loops, and telling a condition from loop variables.
+struct Point:
+    int x
+    int y
+
+def int main():
+    i = 0
+    for i < 10:
+        i += 1
+        if i % 2 == 0:
+            continue
+        print i
+    p = Point(.x=1, .y=2)
+    for p.x < 5:
+        p.x += 1
+    print p.x
+    done = false
+    n = 0
+    for not done:
+        n += 1
+        done = true
+    print n
+    j = 1
+    for (j in range(3)):
+        print "in"
+        break
+    k = 5
+    for k not in range(3):
+        print "not in"
+        break
+    for a in range(2):
+        for b in range(2):
+            print a * 10 + b
+    return 0

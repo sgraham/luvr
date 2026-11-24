@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:9:        print "bad"
+# CERR: {ssss}             ^ error: Expected end of block, found 'print'.
+def int main():
+    for i in range(3):
+        break
+        print "bad"
+    return 0
