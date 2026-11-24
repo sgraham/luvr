@@ -1147,10 +1147,12 @@ static bool is_loop_var(Parser* p, SrcLoc at) {
   return at.u == p->loop_var_at.u && (T(p) == TK_IN || T(p) == TK_COMMA);
 }
 
-// There's no syntax for function types, so functions can't be values. Out of
-// line, since it's only for names whose type isn't builtin.
+// There's no syntax for function types, so functions can't be values. A
+// function's name followed by '=', or as a loop variable, declares a local
+// that shadows it, as for other globals. Out of line, since it's only for
+// names whose type isn't builtin.
 static NOINLINE void check_function_called(Parser* p, const ExpDesc* e, SrcLoc at) {
-  if (T(p) != TK_LPAREN && type_is_function(p, e->type) && !is_loop_var(p, at)) {
+  if (T(p) != TK_LPAREN && T(p) != TK_EQ && type_is_function(p, e->type) && !is_loop_var(p, at)) {
     error_at(p, at, "A function can only be called.");
   }
 }
@@ -3164,7 +3166,11 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       ExpDesc v;
       subexpr(p, -1, &v);
       if (is_plain) {
-        check_assign(p, exp.type, &v, value_at);
+        // A new local takes the value's type, even if it shadows a global
+        // function.
+        if (!declares || loc) {
+          check_assign(p, exp.type, &v, value_at);
+        }
       } else {
         // The result is always the target's type, so it doesn't need to be
         // checked again.

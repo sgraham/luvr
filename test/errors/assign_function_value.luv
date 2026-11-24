@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:9:    f = g
+# CERR: {ssss}             ^ error: A function can only be called.
+def g():
+    pass
+
+def int main():
+    f = g
+    return 0

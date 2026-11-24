@@ -29,3 +29,8 @@ Keep (c) in mind if typos start biting. With function-level scope, the Lua
 `block()` → `removelocalvars` step (`lparser.c`, `block`) becomes a no-op
 inside a function. Lua's `actloc` stack only gets pushed per function and per
 comprehension ([D10](D10-comprehensions.md)).
+
+A global function's name is shadowed the same way (2026-11-24): `f = 5` in
+a function declares a local `f`, and so does `for f in xs`, as for global
+variables and prelude names ([D32](D32-prelude.md)). Functions aren't values,
+so `f = g` is still an error at `g`.

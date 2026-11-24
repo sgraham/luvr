@@ -1,0 +1,15 @@
+# OUT: 0
+# OUT: 1
+# OUT: 7
+
+def int item():
+    return 7
+
+def func_a():
+    for item in range(2):
+        print item
+
+def int main():
+    func_a()
+    print item()
+    return 0
