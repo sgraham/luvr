@@ -1,20 +1,10 @@
-# D31 Aggregates (proposal)
+# D31 Aggregates
 
-Written 2026-11-20, for review before any code. It covers structs and
-fixed-size arrays as values: their layout, what each target ABI needs to
-know about them, how they appear in [D26](D26-il.md)'s IL, how they can still end up in
-registers, and how the parser emits them. `str` is the first consumer.
-`range` needs an iteration protocol, and so method calls, first, and both
-are out of scope here.
-
-## What exists now
-
-Struct types aren't typed yet. There's no `TypeInfo` for a struct, fields
-aren't recorded, and `sizeof` of a struct takes the non-constant path. The
-first step is struct typing in the checking build: fields and their types,
-field access, struct literals checked against fields, and the layout below,
-which makes `sizeof` and `alignof` of every struct an untyped constant
-([D28](D28-constants.md)).
+Written 2026-11-20. Structs and fixed-size arrays as values: their layout,
+what each target ABI needs to know about them, how they appear in
+[D26](D26-il.md)'s IL, and how they can still end up in registers. Steps 1
+to 5 (below) are done. The ABI step, the classifier check against clang,
+and splitting aggregate slots come with the backend.
 
 ## Layout
 
@@ -25,15 +15,19 @@ Fields are never reordered.
 
 - Scalars are naturally aligned. `bool` is 1 byte and pointers are 8.
 - `[N]T` is `N * sizeof(T)` bytes with `T`'s alignment.
-- `str` is `{*u8 data; int len}`: 16 bytes, aligned to 8.
+- `str` is `{*u8 _data; int _len}`, defined in the prelude
+  ([D32](D32-prelude.md)): 16 bytes, aligned to 8.
 - A field of struct type needs the full definition ([D11](D11-forward-refs.md)), and a struct
   that contains itself by value is an error at its definition.
-- A struct with no fields is an error (open question 3).
-- Decided (2026-11-20): field defaults (`int x = 5` in a struct body) must
-  be constant expressions, like global initializers ([D28](D28-constants.md)). A struct with
-  defaults then has a constant image, which goes in the data table, and
-  creating one is a copy of that image instead of a `ZERO`. A struct
-  without defaults is zeroed.
+- A struct with no fields is an error. A struct that needs no data can have
+  a `u8` field. That avoids matching C, where GCC and clang make an empty
+  struct size 0, C++ makes it size 1, MSVC's C rejects it, and Apple ignores
+  empty-struct parameters.
+- Field defaults (`int x = 5` in a struct body) must be constant
+  expressions, like global initializers ([D28](D28-constants.md)). A struct
+  with defaults has a constant image in the data table, and creating one is
+  a copy of that image instead of a `ZERO`. A struct without defaults is
+  zeroed.
 - Each generic instantiation ([D21](D21-generics.md)) gets its own layout, computed when it's
   instantiated.
 - Nothing in luv is aligned to more than 8, and there's no syntax to ask
@@ -252,7 +246,7 @@ what clang's callers and callees assume):
 | target | arguments | results |
 |---|---|---|
 | Win64 | callee extends | caller extends |
-| SysV x64 | callee extends by the psABI. clang before 2026-11 relied on the caller having done it (open question 6) | caller extends |
+| SysV x64 | callee extends by the psABI. clang before 2026-11 relied on the caller having done it (see Decisions) | caller extends |
 | AAPCS64 (Linux) | callee extends | caller extends |
 | Apple arm64 | caller extends | callee extends (clang only) |
 
@@ -303,33 +297,23 @@ that the "memory" cases become a hidden result pointer.
 
 The three classifiers together need less than QBE's type records hold.
 QBE keeps every field because its text IL is all that it sees. Here the
-fields are known to typing, so the summary can be computed once, when the
-struct's definition ends:
+fields are known to typing, so the summary is computed once, when the
+struct's definition ends, by `il_agg_add` in il.c. It classifies from the
+struct's scalars flattened into `AggLeaf {offset, IlType}`, which are only
+collected for aggregates of up to 32 bytes. A struct's `TypeInfo` holds the
+resulting `AggId`. `AggInfo` has:
 
-```c
-typedef struct AggInfo {
-  u32 size;
-  u8 align;  // log2
-  u8 abi;    // AGG_SSE0, AGG_SSE1, AGG_HFA_F32, AGG_HFA_F64
-} AggInfo;
-```
+- the size and log2 alignment.
+- SSE bits for each of the two eightbytes of an aggregate of 16 bytes or
+  less, set when every field overlapping that eightbyte is a float and
+  there's at least one.
+- an HFA kind, `f32` or `f64`, when every field (flattened) is that float
+  type and there are 1 to 4 of them.
 
-- `AGG_SSE0` and `AGG_SSE1` are set for an aggregate of 16 bytes or less
-  when every field overlapping that eightbyte is a float, and there's at
-  least one field in it.
-- `AGG_HFA_F32` or `AGG_HFA_F64` is set when every field (flattened) is
-  that float type and there are 1 to 4 of them.
-- Win64 reads only `size`, SysV reads `size` and the SSE bits, and arm64
-  reads `size` and the HFA bits.
-
-QBE's `isdark`, its union handling, and the SysV classes for `long double`
-and vectors (X87, SSEUP) aren't needed, since luv has no packed structs,
-unions, `long double` or vector types.
-
-Implemented (2026-11-22) as `il_agg_add` in il.c, which classifies from the
-struct's scalars flattened into `AggLeaf {offset, IlType}`. A struct's
-`TypeInfo` holds an `AggId`, which replaced its own size and alignment.
-Leaves are only collected for structs of up to 32 bytes.
+Win64 reads only the size, SysV the size and the SSE bits, and arm64 the
+size and the HFA kind. QBE's `isdark`, its union handling, and the SysV
+classes for `long double` and vectors (X87, SSEUP) aren't needed, since luv
+has no packed structs, unions, `long double` or vector types.
 
 Win arm64 and Linux AAPCS64 need nothing more. Win arm64 differs only in
 variadic calls, where floats and HFAs go in GPRs. RISC-V's LP64D (and
@@ -365,8 +349,7 @@ This refines [D26](D26-il.md) ("Aggregates are memory").
   by index. A struct's `TypeInfo` holds its index.
 - There's no aggregate value type. An aggregate only appears as an address,
   an `i64`.
-- `IlSlot` gets a size and alignment, or an `AggInfo` index, so that a
-  slot can hold an aggregate.
+- An `IlSlot` holds either a scalar type or an `AggInfo` index.
 - A field is `ADD addr, KINT offset`, then `LOAD` or `STORE` of the field's
   type. Nested fields (`a.b.c`) add their offsets in the front end, so
   they're still one `ADD`.
@@ -382,18 +365,18 @@ This refines [D26](D26-il.md) ("Aggregates are memory").
   address of aggregate parameter `n`, which is the callee's own copy.
   Aggregate parameters are immutable like other parameters, so their
   fields and elements can't be assigned or have their address taken.
-- Decided (2026-11-23): a call that returns an aggregate has
-  `RESULTAGG dst, agg` as its first argument, where `dst` is a new
-  temporary slot in the caller, and the call's value is that slot. A
-  function that returns an aggregate is `func #N @name` (`IlFunc.ret` is
-  `IT_AGG`, with `ret_agg`), and returns with `RET addr`, the address of
-  the value. The ABI step turns `RESULTAGG` into the hidden pointer, or
+- A call that returns an aggregate has `RESULTAGG dst, agg` as its first
+  argument, where `dst` is a new temporary slot in the caller, and the
+  call's value is that slot. A function that returns an aggregate is
+  `func #N @name` (`IlFunc.ret` is `IT_AGG`, with `ret_agg`), and returns
+  with `RET addr`, the address of the value. The ABI step turns `RESULTAGG` into the hidden pointer, or
   into stores of the result registers after the call, and `RET addr` into
   a copy through the hidden pointer, or loads into the result registers.
-  QBE instead has a typed call (`%r =:t call`) whose result is a pointer to
-  memory that its ABI pass allocates. That was rejected so that all memory
-  is a slot before the ABI step, and so that `dst` could later be the final
-  destination when nothing aliases it.
+  `RESULTAGG` is only needed because the parser's IL is the same for every
+  target. QBE's typed call (`%r =:t call`), whose result is memory that its
+  ABI pass allocates, was rejected so that all memory is a slot before the
+  ABI step, and so that `dst` can later be the final destination when
+  nothing aliases it.
 - Captured values ([D12](D12-nested-functions.md)) need nothing extra. A nested function that
   captures gets a pointer to a block of its captured values as a scalar
   first parameter ([D26](D26-il.md)). A captured aggregate is copied into that block
@@ -430,153 +413,46 @@ slots:
   call is emitted. That saves a pass, but puts per-target code in the
   parser and makes `luv il`'s output depend on the target.
 
-(c) is ruled out (2026-11-20). The parser should emit the same IL for
-every target, so that the backends can be tested on identical input, and
-target details stay out of the parser. The lean is (b).
+(c) is ruled out. The parser emits the same IL for every target, so that
+the backends can be tested on identical input, and target details stay out
+of the parser. The lean is (b).
 
-An example, with notation that's only for illustration: `PARAM i64 rdi` is
-the value that arrives in `rdi`, and `CALL @len, rdi=%5, rsi=%6` passes
-values in those registers. The luv code is:
+With (a), a `str` passed between two luv functions on SysV is stored to
+memory by the caller, loaded into `rdi` and `rsi`, stored again by the
+callee, and reloaded for each field access. That's what QBE generates
+(`qbe -t amd64_sysv` and `-t arm64_apple` were checked). With (b), the ABI
+step's loads and stores are at constant offsets, so the slots are split and
+promoted (below), and the data and length go straight between registers.
+On Win64, a `str` goes by pointer either way. The callee loads fields
+through the incoming pointer, and the caller's copy becomes two stores of
+the fields once its source slot is split.
 
-```
-def int len(str s):
-    return s.len
+Splitting doesn't help where the ABI's pieces don't match the fields. SysV
+passes `{i32, i32}` as one `i64`, which overlaps the two `i32` accesses
+differently, so the slot stays in memory. That's correct, just no faster.
+The ABI step could build the `i64` with a shift and an `OR`, as clang does,
+later.
 
-def int caller(*u8 d, int n):
-    x = str(d, n)
-    return len(x)
-```
+QBE lowers late to keep physical registers out of its optimizer, whose
+later passes (load forwarding, GVN, code motion) would otherwise have to
+leave register copies alone, and so that its IL before `abi1` reads the
+same for every target. The costs of (b) for luv:
 
-The parser emits the same IL for every target:
+- The SSA pass runs on target-specific IL, so its output has to be tested
+  on each target. The parser's output doesn't change.
+- Physical registers only appear as attributes: the register of a `PARAM`,
+  and the register or stack offset of each of a `CALL`'s arguments and
+  results. There's no "copy to `rdi`" instruction until register
+  allocation, so the SSA pass never sees a register assigned twice. That's
+  enough with one forward pass and no code motion. A later optimized tier
+  that moves code has to keep the same rule.
+- Stack arguments only exist at the call, relative to `rsp`, so the ABI
+  step needs a way to say "store this at outgoing offset 16 for this call".
+  That's needed under (a) too.
 
-```
-func i64 @len
-:0
-  %1 = PARAMAGG 0, str     # the address of s
-  %2 = ADD i64 %1, 8
-  %3 = LOAD i64 %2
-  RET i64 %3
-
-func i64 @caller
-  slot $0 str               # x
-:0
-  %1 = PARAM i64 0          # d
-  %2 = PARAM i64 1          # n
-  %3 = SLOT $0
-  STORE i64 %1, %3
-  %4 = ADD i64 %3, 8
-  STORE i64 %2, %4
-  %5 = ARGAGG %3, str
-  %6 = CALL i64 @len, %5
-  RET i64 %6
-```
-
-**SysV under (a).** `x`'s address is used by `ARGAGG`, so its slot stays in
-memory through the SSA pass. So does `s`, since `PARAMAGG` is opaque. Then
-the ABI step runs:
-
-```
-len:                        # PARAMAGG became a slot and two stores
-  STORE i64 (PARAM i64 rdi), $s
-  STORE i64 (PARAM i64 rsi), $s+8
-  %3 = LOAD i64 $s+8        # reloads what was just stored
-  RET i64 %3
-caller:
-  STORE d, $0               # from the parser
-  STORE n, $0+8
-  %5 = LOAD i64 $0          # ARGAGG became two loads
-  %6 = LOAD i64 $0+8
-  CALL @len, rdi=%5, rsi=%6
-```
-
-This is exactly what QBE generates. Compiling the equivalent QBE IL with
-`qbe -t amd64_sysv` gives:
-
-```
-len:    subq $16, %rsp           caller: ...
-        movq %rdi, 0(%rsp)               movq %rdi, -16(%rbp)
-        movq %rsi, 8(%rsp)               movq %rsi, -8(%rbp)
-        movq 8(%rsp), %rax               movq -16(%rbp), %rdi
-        addq $16, %rsp                   movq -8(%rbp), %rsi
-        ret                              callq len
-```
-
-`-t arm64_apple` is the same, with an address computation for each access.
-
-**SysV under (b).** The ABI step runs first and gives the same rewrite as
-above. But then the SSA pass runs, and `$s` and `$0` are only used by
-`LOAD`s and `STORE`s at offsets 0 and 8. Each is split into two scalar
-slots, and both are promoted. `%3` becomes `PARAM i64 rsi`, and the
-caller's `%5` and `%6` become `d` and `n`:
-
-```
-len:
-  %3 = PARAM i64 rsi
-  RET i64 %3                # mov rax, rsi; ret
-caller:
-  CALL @len, rdi=d, rsi=n   # d and n are already in rdi and rsi
-```
-
-**Win64, either way.** `str` is 16 bytes, so it goes by pointer. In `len`,
-`PARAMAGG` becomes the incoming pointer, `PARAM i64 rcx`, with no copy (see
-below), and the field is a load through it: `mov rax, [rcx+8]`. The caller
-has to make a copy, and passes its address:
-
-```
-caller:
-  slot $t str               # the copy
-  COPY $t, $0, 16
-  CALL @len, rcx=$t
-```
-
-Under (b), `$0` is only stored at constant offsets and copied, so it's
-split and promoted. The `COPY` from it becomes two stores of `d` and `n`
-into `$t`. `$t` is passed by address, so it stays in memory. That's what
-Win64 requires anyway. QBE does the same here, except that `$0` stays in
-memory, so `d` and `n` are stored to `$0` and then copied to `$t` through
-`rax`.
-
-**Where the pieces don't match the fields.** SysV passes `{i32, i32}` as
-one `i64`. After the ABI step, the slot has an `i64` access at offset 0 as
-well as the `i32` field accesses at 0 and 4. They overlap differently, so
-the slot isn't split. It stays in memory, and the result is the same as
-(a). That's correct, just no faster.
-
-**Drawbacks of (b), and why QBE is late.** The ABI step puts physical
-registers into the IL. In QBE, that means copies to and from registers
-like `rdi`, which aren't SSA values: `rdi` is assigned again before every
-call. QBE's passes between promotion and `abi1` (load forwarding, GVN,
-global code motion, if-conversion) would all have to leave those copies
-alone, or keep them next to their calls. Lowering late keeps physical
-registers out of the optimizer entirely, and keeps QBE's optimizer
-target-independent. QBE also prints its IL after each pass for debugging,
-and before `abi1` it reads the same for every target.
-
-For luv, the costs of (b) are smaller, but they're real:
-
-- The SSA pass runs on target-specific IL, so its output differs per
-  target and has to be tested on each. The parser's output, the input to
-  every backend, doesn't change.
-- Physical registers must not appear as ordinary instructions. The ABI
-  step only writes them as attributes: the register of a `PARAM`, and the
-  register or stack offset of each of a `CALL`'s arguments and results.
-  There's no "copy to `rdi`" instruction until register allocation, so
-  the SSA pass never sees a register assigned twice. With only one
-  forward pass (promotion, folding and CSE, no code motion), that's
-  enough. A later optimized tier that moves code would have to keep the
-  same rule.
-- The SysV MEMORY argument area, and stack arguments in general, only
-  exist at the call, relative to `rsp`. The ABI step needs a way to say
-  "store this at outgoing offset 16 for this call". That's needed under
-  (a) too, so it's not a cost of (b) as such.
-- Pieces that don't match fields (`{i32, i32}` on SysV) leave the slot in
-  memory. The ABI step could build the `i64` from the two fields with a
-  shift and an `OR`, as clang does, so that the slot is still split.
-  That's an improvement for later.
-
-The benefit is mostly for small aggregates passed by value in registers:
-`str`, and later ranges, slices and small structs like points. Large
-aggregates go through memory on every target either way.
+The benefit is for small aggregates passed in registers: `str`, and later
+ranges, slices and small structs. Large aggregates go through memory on
+every target either way.
 
 **The callee's copy.** On Win64, and for an arm64 aggregate over 16 bytes,
 the callee gets a pointer to the caller's copy. luv parameters are
@@ -605,57 +481,26 @@ The proposal is to split unescaped aggregate slots into scalars:
 - If two accesses overlap differently (an `i64` at 0 and an `i32` at 4),
   or an array is indexed by a non-constant, the slot stays in memory.
 
-QBE's alternative is load forwarding (`loadopt`). For each `LOAD`, it
-searches backwards for the most recent `STORE` to the same address. If
-alias analysis can show that nothing in between may write that address,
-the load is replaced by the stored value. When the search reaches a join
-in the control flow, it continues into each predecessor and inserts a phi
-of the values found. Alias analysis is what makes it work: QBE tracks each
-pointer's base (which slot or global) and constant offset, and whether the
-slot has escaped, so it knows that a store through an unrelated pointer
-can't change the value.
+QBE's alternative is load forwarding (`loadopt`): for each `LOAD`, search
+backwards, through predecessors with phis at joins, for the last `STORE` to
+the same address that alias analysis (base slot or global, constant offset,
+escaped or not) shows nothing else may overwrite. It's more general, since
+it works on escaped slots and memory reached through pointers. But it's a
+separate pass with its own alias information and a search per load, where
+splitting is promotion keyed by (slot, offset) instead of by slot, inside
+the existing forward pass. The lean is splitting now, with load forwarding
+possible in an optimized tier if loads through pointers in loops matter.
 
-Load forwarding is more general than splitting. It works on slots whose
-address has escaped, and on memory reached through pointers, as long as
-nothing in between may alias. But it's a separate pass with its own alias
-information and a search for every load, where splitting is promotion
-keyed by (slot, offset) instead of by slot, inside the existing forward
-pass. It also wouldn't help QBE with the ABI's stores and loads, which are
-added after it runs.
+## The parser and interpreter
 
-The two don't exclude each other. Splitting covers locals, which are what
-`str` and small structs mostly are. Load forwarding could be added to an
-optimized tier later, if repeated loads through pointers (`p.x` in a loop
-body) turn out to matter.
-
-## The parser
-
-- `ExpDesc` gets `EK_ADDR`: an aggregate, or a field of one, in memory at
-  `ref` plus a constant `off`. A field of an `EK_LOCAL` aggregate is
-  `EK_ADDR` with the slot's `SLOT` as the base, and a field of an
-  `EK_ADDR` adds its offset. A field of an aggregate parameter has
-  `PARAMAGG` as the base. A scalar field is only loaded when it's used,
-  like `EK_LOCAL`.
-- Assigning one aggregate to another is `COPY`. Assigning a field is
-  `STORE`.
-- A struct literal is built in a new temporary slot, with a `ZERO` (or a
-  `COPY` of the struct's default image, if it has defaults) and a `STORE`
-  for each field given, and then copied to wherever it goes. A
-  call that returns an aggregate gets a new temporary slot as its
-  destination.
-- Building a literal straight into its destination could be added for
-  declarations, but splitting may make it unnecessary: a `COPY` between two
-  unescaped slots becomes scalar moves, which promotion removes.
-- Temporary slots are never reused within a function ([D30](D30-emission.md)). Later, slot
-  coalescing can reuse them for slots that stay in memory.
-
-## The interpreter
-
-`misc/interp.py` addresses slots by number now. With aggregates, each frame
-gets a `bytearray`, slot addresses become byte offsets (with a base per
-frame, so that addresses in different calls differ), and `LOAD`/`STORE`
-use `struct.pack` for each type. `COPY`, `ZERO`, `ARGAGG` and `PARAMAGG`
-are done directly. The interpreter can't check an ABI, so it only checks
+An aggregate, or a field of one, is `EK_ADDR`: a base address and a
+constant offset ([D30](D30-emission.md)). Assigning an aggregate is `COPY`,
+and assigning a field is `STORE`. Struct literals and aggregate call
+results are built in a new temporary slot, then copied to wherever they go.
+Building a literal straight into its destination is a later optimization,
+which splitting may make unnecessary. `misc/interp.py` gives each frame a
+`bytearray`, so slot addresses are byte offsets, and it does `COPY`,
+`ZERO`, `ARGAGG` and `PARAMAGG` directly. It can't check an ABI, only
 layout, copies and field access.
 
 ## Checking the classifiers before there's a backend
@@ -671,64 +516,39 @@ same luv structs. The table above came from doing this by hand.
 ## Steps
 
 1. Struct typing in the checking build, with layout and constant
-   `sizeof`/`alignof`. Probably several pieces, driven by tests.
-2. `AggInfo` and its bits, with unit tests taken from the checked cases.
+   `sizeof`/`alignof`.
+2. `AggInfo` and its bits.
 3. Aggregate slots, `COPY`, `ZERO`, `EK_ADDR`, field loads and stores,
-   struct literals, and a byte-addressed interpreter. The `struct_*` tests
-   that don't pass structs to functions start to run.
-4. `ARGAGG`, `PARAMAGG` and aggregate results, before any ABI step. The
-   interpreter passes them by copying. `struct_small_by_value.luv` and
-   `struct_large_by_value.luv` start to run.
-5. `str` as `{*u8 data; int len}`: `str` locals, parameters and results,
-   and `print` of a non-literal `str`. `print.luv` starts to run.
+   struct literals, default images, pointers and arrays.
+4. `ARGAGG`, `PARAMAGG` and `RESULTAGG`, before any ABI step.
+5. `str` as an aggregate, done through the prelude ([D32](D32-prelude.md)).
 
-The classifiers, the clang comparison script, the ABI step and splitting
-aggregate slots come with the backend.
+## Decisions
+
+- Aggregates passed or returned by value in a `foreign` signature are an
+  error for now. The basic C runtime doesn't need them, and the rule
+  doesn't depend on the target, so a program can't compile on SysV and fail
+  on Win64, where the same `str` would go by pointer. Runtime helpers take
+  a `str`'s data and length as two scalars, as `luv_print_str` does.
+- Narrow integers are extended on both sides, on every target. On SysV the
+  psABI says the callee extends, but clang's callees historically relied on
+  the caller extending to 32 bits, which clang and GCC callers do. clang
+  changed on 2026-11-16 (llvm-project b1c38d9b, #236450) to
+  `-msmall-int-abi-compat=both` by default, except on Darwin and
+  PlayStation. clang 18, used for the checks above, predates it. luv
+  callers always extend, and luv callees extend too, at the cost of a
+  `movsx`/`movzx` per narrow parameter. The callee's extension can later
+  go only in [D26](D26-il.md)'s second entry point, which every function
+  that C can call has, so that calls between luv functions skip it.
 
 ## Open questions
 
-1. Where the ABI step goes: (a) or (b). (c) is ruled out. Both lean (b),
-   unless a cost comes up that's not listed above.
-2. Splitting aggregate slots, or QBE-style load forwarding. The lean is
-   splitting now, with load forwarding possible in an optimized tier.
-3. Decided (2026-11-20): empty structs are an error. A struct that needs
-   no data can have a `u8` field. That avoids the question of matching C,
-   where GCC and clang make an empty struct size 0, C++ makes it size 1,
-   MSVC's C rejects it, and Apple ignores empty-struct parameters.
-4. Decided (2026-11-20): `str` is a builtin type with a fixed layout, at
-   least at first. The compiler needs detailed knowledge of it either way,
-   so whether its definition is written in the prelude doesn't change
-   much.
-5. When the caller can skip the copy for an aggregate passed by pointer
+1. Where the ABI step goes: (a) or (b). (c) is ruled out. The lean is (b).
+2. Splitting aggregate slots, or load forwarding. The lean is splitting.
+3. When the caller can skip the copy for an aggregate passed by pointer
    (Win64, arm64 over 16 bytes) or in SysV's argument area. A luv callee
    never writes its parameters, so for luv-to-luv calls the copy is only
-   needed if the original could change during the call. That can't
-   happen to an unescaped local or a temporary. It can happen to a local
-   whose address was taken, if the callee writes through that pointer
-   while reading its parameter. A C callee owns the copy and may write
-   it, so calls to `foreign` functions always copy.
-   Decided (2026-11-20): for now, an aggregate passed or returned by
-   value in a `foreign` signature is an error. Calling the basic C
-   runtime doesn't need it. The rule doesn't depend on the target, so a
-   program doesn't compile on SysV and fail on Win64, where the same
-   `str` would go by pointer. Runtime helpers that take a `str` on
-   Win64 may need it sooner. Until then they can take the data and length
-   as two scalar arguments, as `luv_print_str` does.
-6. Decided (2026-11-20): extend narrow integers on both sides, on every
-   target. On SysV the psABI says the opposite of what clang does: the
-   bits above the type are unspecified, so the callee extends. clang's
-   callees historically don't, and rely on the caller having extended to
-   32 bits, which clang and GCC callers do. GCC extends on both sides.
-   clang changed on 2026-11-16 (llvm-project b1c38d9b, "Fix arg extension
-   incompatibility with platform psABI", #236450, based on D124435). It
-   added `-msmall-int-abi-compat={platform,clang,both}`, defaulting to
-   `both`: the caller extends and the callee doesn't assume it. That
-   applies to SysV x86-32 and x86-64 except Darwin and PlayStation, where
-   clang's old convention is now the platform ABI. clang 18, used for the
-   checks above, predates it. Doing both is safe with every
-   compiler. luv callers always extend (they already do), and luv callees
-   extend too, at the cost of a `movsx`/`movzx` per narrow parameter (and
-   per narrow result returned from C). When it's convenient, the callee's
-   extension can go only in [D26](D26-il.md)'s second entry point, which every
-   function that C can call already has, so that calls between luv
-   functions skip it.
+   needed if the original could change during the call. That can't happen
+   to an unescaped local or a temporary. It can happen to a local whose
+   address was taken, if the callee writes through that pointer while
+   reading its parameter.

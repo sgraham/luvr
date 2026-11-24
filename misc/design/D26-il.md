@@ -1,9 +1,10 @@
 # D26 The IL (provisional)
 
-Written 2026-11-14, before expression typing exists, so that typing has
-something to produce and a dump to test against. Everything here is
-expected to change as it's used. The parts most likely to change are listed
-at the end.
+Written 2026-11-14, before expression typing existed. The raw stage, the
+dump and the parser's side of it exist ([D30](D30-emission.md)), and
+aggregates are in [D31](D31-aggregates.md). The SSA pass and everything
+after it are still a plan. The parts most likely to change are listed at
+the end.
 
 The two references are LuaJIT's IR and dstogov/ir, which follows it. Both
 keep a function's instructions in one flat array, refer to operands by
@@ -15,11 +16,11 @@ ir's are 16 bytes with 32-bit operands and room for a third operand.
 
 - One function at a time. All of it is reset when the function is finished.
 - Instructions are 8 bytes: an opcode, a type, and two 24-bit operands.
-- Operands are references. A reference below a bias is a constant, and at
-  or above it is an instruction.
+- Operands are references, either to an instruction or to a constant.
 - Value types are `i32`, `i64`, `f32` and `f64`. Narrower integers exist
   only in memory and in extension operations.
-- Aggregates are memory. The IL has no struct values.
+- Aggregates are memory. The IL has no struct values
+  ([D31](D31-aggregates.md)).
 - The front end never emits a phi. It reads and writes locals as frame
   slots. One forward pass at the end of the function turns slots whose
   address was never taken into SSA values, and folds and removes common
@@ -63,62 +64,33 @@ local.
 
 ## Could the SSA pass be removed?
 
-Considered 2026-11-15. Disallowing `&x` on scalar and pointer locals would
-make it possible to build SSA while parsing, since that's the only way a
-local's escape is found late. Captures are by value ([D12](D12-nested-functions.md)), so they don't
-add another. Not done, for these reasons:
+Considered 2026-11-15, and not done. Disallowing `&x` on scalar and pointer
+locals would make it possible to build SSA while parsing, since that's the
+only way a local's escape is found late. But:
 
 - It doesn't make the backend one pass. The backward code generation pass
-  needs the whole function, so the walks per function go from three
-  (parser, SSA, code generation) to two, not to one.
-- The SSA pass also knows each loop's stored list before it reaches the
-  loop header, so its phis are exact. Building SSA while parsing, the
-  header is emitted before the body is seen. That means a provisional phi
-  for every local read in the loop, as in Braun et al., with the unneeded
-  ones left as copies or patched through a forwarding array. Code already
-  emitted in the body saw an opaque phi, so loop-invariant locals and
-  constants don't fold or CSE inside the loop.
-- The parser would have to track definitions per block and emit phis for
-  `and`, `or` and comprehension accumulators itself.
-- The language cost is mostly C interop: `strtol(s, &end, 10)`,
-  `sqlite3_open(path, &db)` and other out-parameters, of which `**T` is
-  very common. [D5b](D05-decl-vs-expr.md) also currently names `*int out` as the way to return a
-  second value. The workaround would be a `[1]int` or a one-field struct.
-- The folding, CSE and phi lookup move into the parser. They don't go
-  away. What's saved is the walk, the second buffer, and the local `LOAD`,
-  `STORE` and `SLOT` instructions that are emitted and then dropped.
+  needs the whole function, so the walks per function go from three to
+  two, not to one.
+- The SSA pass knows each loop's stored list before it reaches the loop
+  header, so its phis are exact. Building SSA while parsing needs a
+  provisional phi for every local read in a loop, as in Braun et al., and
+  code already emitted in the body can't fold or CSE through them.
+- The parser would have to emit phis for `and`, `or` and comprehension
+  accumulators itself, and the folding, CSE and phi lookup would move into
+  it rather than going away.
+- The language cost is C interop: `strtol(s, &end, 10)`,
+  `sqlite3_open(path, &db)` and other out-parameters.
 
-If one stage is wanted later, a narrower rule than a ban would do: a local
-whose address can be taken is marked at its declaration, so it's memory
-from its first use. The loop phi problem remains.
-
-The worry was memory bandwidth in long functions. None of this is
-measured, but the expectation is that it's minor:
-
-- Both buffers are walked sequentially, 8 bytes per instruction. A
-  streaming read of the 207 MB dumbbench source is 0.05 ns/byte, against
-  1.81 ns/byte for the full lexer ([section 5](lexer.md)).
-- The IL is about the size of the source that produced it, so the pass
-  streams about as many bytes as the lexer did.
-- Folding, the CSE probe and operand mapping are probably several ns per
-  instruction, and exist in a one-stage design too. Moving 16 bytes
-  sequentially is well under 1 ns.
-- Both buffers are reused per function. A function of 10k instructions is
-  80 KB per buffer. Only generated functions near 1M instructions (8 MB per
-  buffer) reach memory at all.
-
-The random access is what to watch in long functions, and the number of
-passes doesn't change it: the CSE hash chain, the per-block slot
-definitions and their walk through predecessors, and operand references
-and the register and spill arrays in the backward pass. The two stages add
-the raw-to-final reference map, 4 bytes per raw instruction, whose accesses
-are mostly to recent entries.
-
-The raw stage is internal to the compiler, so rewriting in place (item 3
-below) or skipping the stage for functions that never take an address can
-be done later without changing the language. A bench input that's one
-function of a few hundred thousand statements should be added once the
-pass exists.
+The expected cost of two stages is minor, though not measured. Both
+buffers are walked sequentially, 8 bytes per instruction, and the IL is
+about the size of its source, so the pass streams about as many bytes as
+the lexer did (a streaming read is 0.05 ns/byte against 1.81 ns/byte for
+the lexer, [section 5](lexer.md)). Both buffers are reused per function, so
+only generated functions near 1M instructions reach memory. The random
+accesses (the CSE chain, per-block slot definitions, the raw-to-final
+reference map) are what to watch in long functions, and the number of
+passes doesn't change those. A bench input that's one function of a few
+hundred thousand statements should be added once the pass exists.
 
 ## Instruction format
 
@@ -133,9 +105,10 @@ compiler.
 Bit 23 of a `Ref` (`REF_INS`) says that it's an instruction, and the other
 23 bits are its index in `ins`. Otherwise, it's the constant at
 `consts[ref - 1]`, and reference 0 means no operand. Instructions and
-constants are in separate arrays. That gives 8M instructions and 8M constants per function. Running
-out is an error, "function too large". Every constant's reference is below
-every instruction's, which the CSE search relies on (see below).
+constants are in separate arrays. That gives 8M instructions and 8M
+constants per function. Running out is an error, "function too large".
+Every constant's reference is below every instruction's, which the CSE
+search relies on (see below).
 
 Smaller was considered. LuaJIT's 16-bit operands would cap a function at
 32k instructions, which generated code would hit. 16 bytes as in ir would
@@ -154,48 +127,24 @@ during the SSA pass, and the register and spill slot during code
 generation. LuaJIT keeps these in the instruction's fourth 16-bit field.
 We've spent those bits on operand range instead.
 
-To revisit (2026-11-15): whether a third field in the instruction is worth
-a smaller range. With the CSE link or the register and spill slot inline,
-a chain step or an operand lookup touches one cache line, not two.
+To revisit, when the SSA pass and a code generator exist and the
+long-function bench can measure them:
 
-- LuaJIT's layout (8/8/16/16/16) allows 32k instructions and 32k
-  constants. A function that fits is at most 256 KB of IL and 128 KB of
-  side array, which stays in L2, so the second line is cheap. The raw
-  stage reaches the limit first, since every local access is a `SLOT` and
-  a `LOAD` or `STORE`. Probably a function of a couple of thousand lines.
-- 6/4/18/18/18 allows about 131k of each. It leaves no spare bits, caps
-  the opcode count at 64 (the provisional list is already around 60) and
-  the types at 16, and generated code can still reach the limit.
-- Whichever layout is used, bound the chain walk as LuaJIT does: chains are
-  per opcode, and the search stops below the larger operand reference,
-  since a match can't be defined before its operands. A 16-bit backwards
-  delta with an escape value would also halve the chain side array.
-
-Not measured. Decide with the long-function bench input once the SSA pass
-and a code generator exist.
-
-To revisit (2026-11-17): one array for both, with constants as
-instructions. LuaJIT's constants are IR instructions (`KINT` with the value
-inline, and an extra slot for 64-bit values), allocated downwards from the
-bias in the same buffer as the instructions, which grow upwards. It keeps a
-base pointer biased so that `ir[ref]` works for both. Growing at the bottom
-moves everything up by a quarter if the top is mostly free, and otherwise
-reallocates at double the size with new room below. The biased pointer is
-usually outside the allocation, which is undefined in C but works.
-Reserving the whole range of address space (2^24 × 8 bytes = 128 MB per
-buffer) and committing pages as they're used would give the same `ins[ref]`
-without moving or copying anything, and without the out-of-range pointer.
-
-- The benefit is that a constant would be an `Ins` with opcode `KINT` and
-  its type in the type field, with values that fit in the 48 operand bits
-  inline and others in a second slot. `ins_op()` and `ins_type()` would
-  then work on any operand without checking which kind it is, and the
-  separate type array goes away. That matters in passes that look at every
-  operand (folding, the code generator), not while emitting.
-- `Ref` is opaque outside `il.c`, so this only changes `il.c`: constants
-  would be allocated downwards from `REF_INS`, as LuaJIT's are from its
-  bias.
-- Decide when the SSA pass exists and can be measured.
+- (2026-11-15) Whether a third field in the instruction, for the CSE link
+  or the register and spill slot, is worth a smaller operand range, so
+  that a chain step or an operand lookup touches one cache line instead of
+  two. LuaJIT's layout (8/8/16/16/16) allows 32k instructions, which the
+  raw stage would reach in a function of a couple of thousand lines.
+  6/4/18/18/18 allows about 131k, but caps the opcodes at 64 and the types
+  at 16. Either way, the chain walk should be bounded as LuaJIT's is:
+  chains per opcode, stopping below the larger operand reference.
+- (2026-11-17) One array for both, with constants as instructions, as
+  LuaJIT does: constants grow downwards from a bias and instructions
+  upwards. Reserving 128 MB of address space per buffer and committing
+  pages as they're used would avoid moving anything. Then `ins_op()` and
+  `ins_type()` work on any operand without checking which kind it is, and
+  the separate type array goes away, which matters for folding and the
+  code generator. `Ref` is opaque outside `il.c`, so only `il.c` changes.
 
 ## Types
 
@@ -217,13 +166,16 @@ A pointer isn't a separate type from `i64`. All three targets are 64-bit.
 
 ## Constants
 
-A constant occupies one slot below the bias, holding 64 bits of payload,
-with its kind and type in a parallel byte array. Kinds:
+A constant is 64 bits of payload in `consts`, with its `IlType` in a
+parallel byte array. The type says what kind it is:
 
-- `KINT`: an integer of either width.
-- `KFLT`: a float of either width, as its bits.
-- `KSYM`: the address of a symbol (a function, a global, string data). The
-  payload is a symbol index and a 32-bit addend. These become relocations.
+- an integer type: `KINT`, an integer of either width.
+- a float type: `KFLT`, a float of either width, as its bits.
+- `IT_SYM`: `KSYM`, the address of a symbol (a function, later a global),
+  by its index in `Ctx.syms`. These become relocations.
+- `IT_DATA`: the address of data in `Ctx.data`, such as string literal
+  bytes or a struct's default image. Also a relocation, but it doesn't need
+  an interned name.
 
 Constants are interned per function through a small hash, so equal
 constants have equal references and comparing references is enough for CSE.
@@ -241,8 +193,9 @@ alignment, a scalar type if it has one, and an `escaped` flag.
   a parameter, used directly wherever it's read.
 - When the front end uses a slot's address for anything other than the
   address operand of such a `LOAD` or `STORE` (`&x`, passing it, indexing
-  into it), it sets `escaped`. Structs, arrays and anything else that's an
-  aggregate are escaped from the start.
+  into it), it sets `escaped`. Aggregate slots were planned to be escaped
+  from the start. [D31](D31-aggregates.md) proposes splitting unescaped
+  ones into scalars instead.
 - A slot that isn't escaped when the function ends is promoted.
 
 The front end also keeps, for each loop, the list of slots stored inside
@@ -332,7 +285,7 @@ expression typing.
 | Int and float | `ITOF UTOF FTOI FTOU FEXT FTRUNC BITCAST` |
 | Memory | `LOAD STORE SLOT COPY ZERO` |
 | Control | `BLOCK JMP BR RET PHI` |
-| Calls | `PARAM PARAMAGG CALL ARGAGG` |
+| Calls | `PARAM PARAMAGG CALL ARGAGG RESULTAGG` |
 | Other | `CTX EXT NOP` |
 
 The operand type is the instruction's type for arithmetic. For compares
@@ -346,8 +299,9 @@ ptr, KINT offset`, and an index is a `MUL` and an `ADD`. The code generator
 sees these when it selects the `LOAD` or `STORE` that uses them and turns
 them into an addressing mode.
 
-`COPY dst, src` and `ZERO dst` take a constant size in an extension slot.
-They're how aggregates are assigned and initialized.
+`COPY dst, src` and `ZERO dst` take an `AggId`, which gives the size and
+alignment ([D31](D31-aggregates.md)). They're how aggregates are assigned
+and initialized.
 
 A static table gives each opcode its operand count, whether it's pure,
 whether it's commutative (for CSE to order operands), and whether it ends a
@@ -359,34 +313,26 @@ Calls between luv functions use the platform's C calling convention. That
 means one convention to implement and test per target, and it means C can
 call a luv function with the signature it appears to have.
 
-`CALL callee, desc` is followed by the arguments in extension slots. The
-callee is a `KSYM` or a computed value. `desc` indexes a table of call
-descriptors: argument count, where variadic arguments start (they're
-passed differently on Apple arm64 and Win64), and the type record for an
-aggregate result. The instruction's type is the scalar result type, or
-`void`.
+`CALL callee, n` is followed by its `n` arguments in extension slots. The
+callee is a `KSYM` or a computed value, and the instruction's type is the
+scalar result type, or `void`. Variadic calls will need to say where the
+variadic arguments start, since they're passed differently on Apple arm64
+and Win64.
 
-Aggregates, following QBE:
-
-- An argument passed by value is `ARGAGG ptr, type`. It marks that the
-  memory at `ptr`, with the layout of that type record, is passed by value.
-  Its result is only used as a call argument.
-- A call that returns an aggregate takes the address to write it to as its
-  first argument, and the descriptor says so.
-- `PARAM n` is the value of scalar parameter `n`. `PARAMAGG n` is the
-  address of the function's own copy of aggregate parameter `n`.
-
-Before code generation, an ABI step for the target rewrites these into
-what the convention says: which registers, which stack offsets, which
-aggregates go by hidden pointer, which are split across registers. The
-type records it reads (size, alignment, fields) are the ones typing
-creates. The IL only refers to them by index.
+Aggregate arguments, parameters and results are `ARGAGG`, `PARAMAGG` and
+`RESULTAGG` ([D31](D31-aggregates.md)). Before code generation, an ABI step
+for the target rewrites them, and narrow integer extensions, into what the
+convention says: which registers, which stack offsets, which aggregates go
+by hidden pointer.
 
 A nested function that captures ([D12](D12-nested-functions.md)) takes a pointer to its captured
 values as an extra first argument. That's part of its type, so a call to it
 through a function value passes it too.
 
 ## The context register
+
+Confirmed 2026-11-23 ([D32](D32-prelude.md)), over a thread-local that the
+runtime owns or an implicit context parameter.
 
 One callee-saved register is reserved in all luv code for a pointer to the
 thread's luv context: `r15` on x64 and `x28` on aarch64 (provisional
@@ -431,11 +377,8 @@ name, so the code generator can report where it lives.
 
 ## The dump
 
-A text form of both stages, one instruction per line, with references
-printed as `%n` for instructions and the value itself for constants.
-The first use is as test output for expression typing: a test's expected
-IL sits beside its expected program output. [D30](D30-emission.md) gives the format, which
-`misc/interp.py` reads.
+A text form of both stages, one instruction per line.
+[D30](D30-emission.md) gives the format, which `misc/interp.py` reads.
 
 ## What's likely to change
 
