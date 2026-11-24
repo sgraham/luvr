@@ -3305,7 +3305,7 @@ static void simple_stat(Parser* p) {
       } else {
         SrcLoc at = p->ls.pos.t.loc;
         ExpDesc e;
-        subexpr(p, -1, &e);
+        expr_expect(p, p->ret_type, &e);
         if (p->ret_type.u == TY_VOID) {
           error_at(p, at, "Can't return a value from a function with no return type.");
         }

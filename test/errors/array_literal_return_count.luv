@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:6:12:    return [1, 2]
+# CERR: {ssss}                 ^ error: Expected 3 elements, not 2.
+
+def [3]int f():
+    return [1, 2]
+
+def int main():
+    f()
+    return 0
