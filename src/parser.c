@@ -2169,6 +2169,16 @@ static void comprehension(Parser* p, const LexPos* elem, SrcLoc at) {
   check_match(p, TK_RSQUARE, TK_LSQUARE, at);
 }
 
+// An element of a list or array literal, checked against `elem` if it's known.
+static void list_element(Parser* p, TypeId elem) {
+  SrcLoc at = p->ls.pos.t.loc;
+  ExpDesc v;
+  expr_expect(p, elem, &v);
+  if (elem.u != TY_UNKNOWN) {
+    check_assign(p, elem, &v, at);
+  }
+}
+
 // '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
 //
 // The literal is an array if `expected` is an array type, and otherwise its
@@ -2180,6 +2190,8 @@ static void list_literal(Parser* p, TypeId expected, ExpDesc* e) {
   e->type = ty_unknown;
   exp_unemitted(e);
   next(p);
+  bool is_array = type_is_array(p, expected);
+  TypeId elem_type = is_array ? type_info(p, expected)->elem : ty_unknown;
   u32 count = 0;
   if (T(p) != TK_RSQUARE) {
     LexPos elem;
@@ -2189,18 +2201,18 @@ static void list_literal(Parser* p, TypeId expected, ExpDesc* e) {
       return;
     }
     lex_rewind(&p->ls, &elem);
-    expr(p);
+    list_element(p, elem_type);
     count = 1;
     while (optional(p, TK_COMMA)) {
       if (T(p) == TK_RSQUARE) {
         break;  // trailing comma
       }
-      expr(p);
+      list_element(p, elem_type);
       ++count;
     }
   }
   check_match(p, TK_RSQUARE, TK_LSQUARE, at);
-  if (type_is_array(p, expected)) {
+  if (is_array) {
     u32 want = type_info(p, expected)->count;
     if (count != want) {
       error_at(p, at, "Expected %u element%s, not %u.", want, want == 1 ? "" : "s", count);

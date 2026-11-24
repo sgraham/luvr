@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:18:    [3]bool x = [1, 2, 3]
+# CERR: {ssss}                       ^ error: Can't assign an integer constant to bool.
+def int main():
+    [3]bool x = [1, 2, 3]
+    return 0

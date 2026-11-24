@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:22:    [3]u8 a = [1, 2, 300]
+# CERR: {ssss}                           ^ error: 300 doesn't fit in u8.
+
+def int main():
+    [3]u8 a = [1, 2, 300]
+    return 0

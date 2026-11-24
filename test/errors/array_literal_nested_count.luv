@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:28:    [2][2]int a = [[1, 2], [3]]
+# CERR: {ssss}                                 ^ error: Expected 2 elements, not 1.
+
+def int main():
+    [2][2]int a = [[1, 2], [3]]
+    return 0
