@@ -9,12 +9,33 @@ struct str:
     int _len
 
 
-struct Range:
-    int start
-    int stop
-    int step
-
-
+### struct Range:
+###     int start
+###     int stop
+###     int step
+###
+###
+### struct RangeIter:
+###     Range _over
+###     int _cur
+###
+###
+### on Range def RangeIter __iter__(self):
+###     return RangeIter(self, start)
+###
+###
+### on RangeIter def IterResult{int} __next__(self):
+###     if self._over.step < 0:
+###         # TODO
+###         pass
+###     else:
+###         if self._cur >= stop:
+###             return IterResult{int}(false, 0)
+###         ret = IterResult{int}(true, self._cur)
+###         self._cur += self._over.step
+###         return ret
+###
+###
 ### on Range def bool __contains__(self, int value):
 ###     if self.step == 0:
 ###         return false
