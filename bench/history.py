@@ -11,7 +11,9 @@ REV_RANGE defaults to b06070e^..main, from when parsecheck became `luv parse`.
 Each commit is extracted with `git archive`, built with its own
 `m r`, and each input is measured with perf stat and hyperfine, pinned to one
 CPU, in each mode: `luv parse` (the checking build) and `luv il` (the
-emitting build). Commits
+emitting build). Boost is turned off for the run with cpu_fixed_clocks.sh,
+and back on at the end with cpu_normal_clocks.sh, unless --keep-clocks is
+given. Commits
 that are already in the log are skipped, unless --force is given. The log is
 rewritten after each commit, so an interrupted run loses at most one.
 
@@ -29,6 +31,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -36,6 +39,10 @@ from dataclasses import asdict, dataclass, field
 
 SCHEMA = 1
 DEFAULT_RANGE = "b06070e^..main"
+# Root-owned copies of bench/cpu_fixed_clocks.sh and cpu_normal_clocks.sh,
+# which sudoers allows without a password. See cpu_fixed_clocks.sh.
+FIXED_CLOCKS = "/usr/local/sbin/cpu_fixed_clocks.sh"
+NORMAL_CLOCKS = "/usr/local/sbin/cpu_normal_clocks.sh"
 PERF_EVENTS = ["instructions", "cycles", "branches", "branch-misses", "task-clock", "page-faults"]
 
 
@@ -152,6 +159,8 @@ def machine_info(cpu):
         "governor": read_file(f"{cpufreq}/scaling_governor"),
         "energy_performance_preference": read_file(f"{cpufreq}/energy_performance_preference"),
         "boost": read_file("/sys/devices/system/cpu/cpufreq/boost"),
+        "perf_event_paranoid": read_file("/proc/sys/kernel/perf_event_paranoid"),
+        "nmi_watchdog": read_file("/proc/sys/kernel/nmi_watchdog"),
         "mem_total_kb": int(mem.group(1)) if mem else 0,
         "kernel": platform.release(),
         "os": os_name.group(1) if os_name else "",
@@ -305,9 +314,10 @@ def main():
     ap.add_argument("--hyperfine-runs", type=int, default=20)
     ap.add_argument("--hyperfine-warmup", type=int, default=3)
     ap.add_argument("--force", action="store_true", help="measure commits already in the log")
-    ap.add_argument("--allow-boost",
+    ap.add_argument("--keep-clocks",
                     action="store_true",
-                    help="measure even though boost is on, which makes times vary with temperature")
+                    help="measure with the current boost and energy preference settings, instead "
+                    "of fixing the clocks for the run")
     ap.add_argument("range", nargs="?", default=DEFAULT_RANGE)
     args = ap.parse_args()
 
@@ -322,12 +332,21 @@ def main():
         if known and known["md5"] != inp.md5:
             sys.exit(f"{inp.name}: md5 {inp.md5} differs from the log's {known['md5']}")
         log["inputs"][inp.name] = asdict(inp)
-    machine = machine_info(args.cpu)
-    if machine["boost"] == "1" and not args.allow_boost:
-        sys.exit("Boost is on (/sys/devices/system/cpu/cpufreq/boost). Turn it off, or pass "
-                 "--allow-boost.")
-    toolchain = toolchain_info()
+    if args.keep_clocks:
+        measure_commits(args, settings, inputs, log)
+        return
+    # kill's SIGTERM would otherwise skip the finally, and leave boost off.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(1))
+    run(["sudo", "-n", FIXED_CLOCKS])
+    try:
+        measure_commits(args, settings, inputs, log)
+    finally:
+        run(["sudo", "-n", NORMAL_CLOCKS])
 
+
+def measure_commits(args, settings, inputs, log):
+    machine = machine_info(args.cpu)
+    toolchain = toolchain_info()
     done = {e["commit"] for e in log["entries"]}
     for sha, short, date, subject in commits_in(args.repo, args.range):
         if sha in done and not args.force:
