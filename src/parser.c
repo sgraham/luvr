@@ -3284,6 +3284,9 @@ static void simple_stat(Parser* p) {
       if (!p->loop) {
         error_at(p, p->ls.pos.t.loc, "'%s' isn't in a loop.", tok_kind_name(T(p)));
       }
+      if (EMIT) {
+        error_at(p, p->ls.pos.t.loc, "'%s' isn't supported yet.", tok_kind_name(T(p)));
+      }
       if (T(p) == TK_BREAK) {
         p->loop->has_break = true;
       }
@@ -3570,8 +3573,9 @@ static void funcdef(Parser* p, bool is_method) {
 // for_header -> for_targets 'in' expr | expr
 //
 // A bare name followed by 'in' or ',' is a loop variable. Any other name
-// starts a condition, which continues from the name.
-static void for_header(Parser* p) {
+// starts a condition, which continues from the name. Returns the condition's
+// value when emitting, and otherwise 0.
+static Ref for_header(Parser* p) {
   SrcLoc at = p->ls.pos.t.loc;
   ExpDesc e;
   if (T(p) == TK_NAME) {
@@ -3580,6 +3584,9 @@ static void for_header(Parser* p) {
     primary(p, &e);
     p->loop_var_at = (SrcLoc){0};
     if ((e.shape == SH_NAME || e.shape == SH_PARAM) && (T(p) == TK_IN || T(p) == TK_COMMA)) {
+      if (EMIT) {
+        error_at(p, at, "Iterating isn't supported yet.");
+      }
       Targets t;
       for_targets(p, &t, name, at);
       check(p, TK_IN);
@@ -3587,13 +3594,13 @@ static void for_header(Parser* p) {
       for (u32 i = 0; i < t.num_targets; ++i) {
         declare_if_new(p, t.name[i], t.at[i], ty_unknown);
       }
-      return;
+      return 0;
     }
     binop_rest(p, -1, &e, at);
   } else {
     subexpr(p, -1, &e);
   }
-  cond_value(p, &e, at);
+  return cond_value(p, &e, at);
 }
 
 // stat -> 'if' expr ':' suite {'elif' expr ':' suite} ['else' ':' suite]
@@ -3630,20 +3637,41 @@ static Flow stat(Parser* p) {
       return ends ? FLOW_ENDS : FLOW_FALLS_THROUGH;
     }
     case TK_FOR: {
-      if (EMIT) {
-        error_at(p, p->ls.pos.t.loc, "'for' isn't supported yet.");
-      }
+      SrcLoc at = p->ls.pos.t.loc;
       next(p);
       bool forever = T(p) == TK_COLON;
+      BlockId head = {IL_BLOCK_NONE};
+      BlockId exit = {IL_BLOCK_NONE};
+      if (EMIT) {
+        head = il_block_declare(&p->il);
+        il_block_start(&p->il, head);
+      }
       if (!forever) {
-        for_header(p);
+        if (EMIT) {
+          il_source_pos(&p->il, at);
+        }
+        Ref condition = for_header(p);
+        if (EMIT) {
+          exit = il_block_declare(&p->il);
+          il_branch(&p->il, condition, exit);
+        }
       }
       check(p, TK_COLON);
       Loop* outer = p->loop;
       Loop loop = {0};
       p->loop = &loop;
-      suite(p);
+      Flow flow = suite(p);
       p->loop = outer;
+      if (EMIT) {
+        // The end of the body goes back to the head, unless the body always
+        // ends in a return (or a break or continue, which jump themselves).
+        if (flow == FLOW_FALLS_THROUGH) {
+          il_jump(&p->il, head);
+        }
+        if (exit.u != IL_BLOCK_NONE) {
+          il_block_start(&p->il, exit);
+        }
+      }
       return forever && !loop.has_break ? FLOW_ENDS : FLOW_FALLS_THROUGH;
     }
     case TK_WITH:
