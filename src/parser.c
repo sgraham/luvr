@@ -251,6 +251,10 @@ struct Parser {
   // followed by 'in' or ','. Names can't be at offset 0 after 'for', so 0 is
   // none.
   SrcLoc loop_var_at;
+  // The type that the next list literal gets, set by expr_expect(). It's a
+  // field rather than a parameter so that primary() is the only caller of
+  // postfix(), which keeps it inlined there.
+  TypeId literal_expected;
   bool in_foreign;  // in a foreign function's signature
   // The offsets of the prelude str's _data and _len, which are both 8 bytes.
   // Set at the end of its definition.
@@ -317,8 +321,6 @@ static void expr(Parser* p);
 static void subexpr(Parser* p, int limit, ExpDesc* e);
 static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start);
 static void primary(Parser* p, ExpDesc* e);
-static void postfix(Parser* p, ExpDesc* e);
-static void list_literal(Parser* p, TypeId expected, ExpDesc* e);
 static TypeId type(Parser* p);
 static u32 array_size(Parser* p);
 static IlType il_mem_type_of(Parser* p, TypeId t);
@@ -1974,14 +1976,10 @@ static void expr(Parser* p) {
 // known before it's parsed. Only a literal at the start of the expression gets
 // `t`, since that's decided by the first token.
 static void expr_expect(Parser* p, TypeId t, ExpDesc* e) {
-  if (T(p) != TK_LSQUARE) {
-    subexpr(p, -1, e);
-    return;
+  if (T(p) == TK_LSQUARE) {
+    p->literal_expected = t;
   }
-  SrcLoc start = p->ls.pos.t.loc;
-  list_literal(p, t, e);
-  postfix(p, e);
-  binop_rest(p, -1, e, start);
+  subexpr(p, -1, e);
 }
 
 // Returns the condition's value when emitting, and otherwise 0.
@@ -2181,9 +2179,12 @@ static void list_element(Parser* p, TypeId elem) {
 
 // '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
 //
-// The literal is an array if `expected` is an array type, and otherwise its
-// type isn't known yet.
-static void list_literal(Parser* p, TypeId expected, ExpDesc* e) {
+// The literal is an array if Parser.literal_expected is an array type, and
+// otherwise its type isn't known yet. It's cleared so that it doesn't apply
+// to later literals.
+static void list_literal(Parser* p, ExpDesc* e) {
+  TypeId expected = p->literal_expected;
+  p->literal_expected = ty_unknown;
   SrcLoc at = p->ls.pos.t.loc;
   u32 depth = p->ls.pos.bracket_depth;
   e->shape = SH_VALUE;
@@ -2972,7 +2973,7 @@ static void primary(Parser* p, ExpDesc* e) {
       e->shape = SH_VALUE;
       break;
     case TK_LSQUARE:
-      list_literal(p, ty_unknown, e);
+      list_literal(p, e);
       break;
     case TK_LBRACE:
       dict_literal(p);
