@@ -105,7 +105,10 @@ union ConstValue {
   bool b;
 };
 
+// The FixedTypes' entries in Parser.types are TYPE_NONE, except for str, which
+// the prelude defines as a struct.
 typedef enum TypeKind {
+  TYPE_NONE,
   TYPE_FUNC,
   TYPE_PTR,
   TYPE_STRUCT,
@@ -337,8 +340,11 @@ static bool type_is_pointer(Parser* p, TypeId t) {
   return type_is_created(t) && type_info(p, t)->kind == TYPE_PTR;
 }
 
+// str is the only FixedType that's a struct. Checking the kind alone would be
+// enough, but testing for a created type first avoids loading the TypeInfo of
+// the other builtin types, which was measurable.
 static bool type_is_struct(Parser* p, TypeId t) {
-  return type_is_created(t) && type_info(p, t)->kind == TYPE_STRUCT;
+  return (type_is_created(t) || t.u == TY_STR) && type_info(p, t)->kind == TYPE_STRUCT;
 }
 
 static bool type_is_array(Parser* p, TypeId t) {
@@ -368,6 +374,7 @@ static const char* type_str(Parser* p, TypeId t) {
   }
   switch ((FixedType)t.u) {
     case TY_UNKNOWN:
+    case TY_STR:  // a struct, so it's described above
     case TY_NUM_FIXED:
       break;
     case TY_UNTYPED_INT:
@@ -378,8 +385,6 @@ static const char* type_str(Parser* p, TypeId t) {
       return "void";
     case TY_BOOL:
       return "bool";
-    case TY_STR:
-      return "str";
     case TY_NULL:
       return "null";
     case TY_I8:
@@ -2185,7 +2190,7 @@ static bool type_has_layout(Parser* p, TypeId t) {
   if (type_is_integer(t)) {
     return !type_is_untyped(t);
   }
-  return type_is_pointer(p, t) || t.u == TY_BOOL || t.u == TY_F32 || t.u == TY_F64 || t.u == TY_STR;
+  return type_is_pointer(p, t) || t.u == TY_BOOL || t.u == TY_F32 || t.u == TY_F64;
 }
 
 static u32 type_size(Parser* p, TypeId t) {
@@ -2209,8 +2214,6 @@ static u32 type_size(Parser* p, TypeId t) {
       return 4;
     case TY_F64:
       return 8;
-    case TY_STR:
-      return 16;
     default:
       ASSERT(false && "type without a size");
       return 0;
@@ -2225,9 +2228,6 @@ static u32 type_align(Parser* p, TypeId t) {
   }
   if (type_is_array(p, t)) {
     return type_align(p, type_info(p, t)->elem);
-  }
-  if (t.u == TY_STR) {
-    return 8;
   }
   return type_size(p, t);
 }
@@ -2270,9 +2270,6 @@ static void type_agg_leaves(Parser* p, TypeId t, u32 offset, AggLeaf* leaves, u3
     for (u32 i = 0; i < type_info(p, t)->count; ++i) {
       type_agg_leaves(p, elem, offset + i * elem_size, leaves, num_leaves);
     }
-  } else if (t.u == TY_STR) {
-    leaves[(*num_leaves)++] = (AggLeaf){offset, IT_I64};
-    leaves[(*num_leaves)++] = (AggLeaf){offset + 8, IT_I64};
   } else {
     leaves[(*num_leaves)++] = (AggLeaf){offset, il_mem_type_of(p, t)};
   }
@@ -3809,10 +3806,13 @@ static void toplevel_stat(Parser* p) {
       return;
     case TK_STRUCT: {
       next(p);
-      if (T(p) != TK_TYPENAME) {
+      // str is a keyword, so the prelude's definition of it fills in TY_STR's
+      // entry, and isn't declared, since keywords are never looked up.
+      bool is_str = T(p) == TK_STR && p->mod == p->ls.ctx->modules.items[MODULE_PRELUDE];
+      if (T(p) != TK_TYPENAME && !is_str) {
         error_expected(p, "struct name (a TypeName)");
       }
-      NameId name = p->ls.pos.t.v.name;
+      NameId name = is_str ? lex_intern_safe(p->ls.ctx, "str") : p->ls.pos.t.v.name;
       SrcLoc at = p->ls.pos.t.loc;
       next(p);
       if (T(p) == TK_LBRACE) {
@@ -3820,11 +3820,19 @@ static void toplevel_stat(Parser* p) {
       }
       // The layout isn't known until the body ends, so the struct can only
       // refer to itself through pointers.
-      TypeId st = {p->types.num};
-      *vec_push(p->ls.ctx, &p->types) =
-          (TypeInfo){.kind = TYPE_STRUCT, .name = name, .agg = {AGG_NONE}, .image = {DATA_NONE}};
-      TypeId bound = p->type_params ? ty_unknown : st;
-      declare_definition(p, name, at, GK_TYPE | (bound.u << GLOBAL_KIND_BITS));
+      TypeInfo info = {.kind = TYPE_STRUCT, .name = name, .agg = {AGG_NONE}, .image = {DATA_NONE}};
+      TypeId st;
+      if (is_str) {
+        st = ty_str;
+        ASSERT(type_info(p, st)->kind == TYPE_NONE && !p->type_params);
+        info.ptr = type_info(p, st)->ptr;
+        *type_info(p, st) = info;
+      } else {
+        st = (TypeId){p->types.num};
+        *vec_push(p->ls.ctx, &p->types) = info;
+        TypeId bound = p->type_params ? ty_unknown : st;
+        declare_definition(p, name, at, GK_TYPE | (bound.u << GLOBAL_KIND_BITS));
+      }
       check(p, TK_COLON);
       struct_body(p, st);
       return;

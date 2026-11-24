@@ -84,8 +84,10 @@ new type. So:
   and `type_agg` lose their `str` cases, and `type_is_aggregate` doesn't
   need one.
 - `TypeKind` needs a `TYPE_NONE` as 0, since unused entries are zeroed and
-  0 is `TYPE_FUNC` now. `type_is_struct` checks the kind rather than
-  `type_is_created`.
+  0 is `TYPE_FUNC` now. `type_is_struct` is
+  `(type_is_created(t) || t.u == TY_STR) && kind == TYPE_STRUCT`. Checking
+  only the kind is enough, but it costs 0.5 to 2.4% on the benchmarks,
+  because it loads the TypeInfo of every builtin type.
 - `str` is a keyword, so the prelude is allowed to write `struct str:`
   (only while parsing the prelude), which binds to `TY_STR`. In the
   `TK_STRUCT` case of the parser, that's accepting `TK_STR` in module 0,
@@ -195,6 +197,9 @@ is then an error, as in Python.
    +1.2% by median with overlapping ranges, betterbench -0.1%).
 2. `struct str` in the prelude bound to `TY_STR`, and the `str` cases in
    the layout functions removed.
+   Done 2026-11-23. Under EMIT, `str` parameters and locals now take the
+   aggregate paths, and a string literal used as a value is still "isn't
+   supported yet" until step 3.
 3. `str` values as aggregates on top of that, redoing the change that was
    shelved for this. Most of its `str` special cases go away. What's left
    is string literals, which become a value with two stores into a

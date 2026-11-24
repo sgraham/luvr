@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:11:    n = s.length
+# CERR: {ssss}                ^ error: 'length' isn't a field of str.
+
+def int main():
+    s = "hello"
+    n = s.length
+    return 0
