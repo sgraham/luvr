@@ -2686,11 +2686,14 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   // evaluated, like the left operand of a binary operator.
   Ref base = 0;
   u32 offset = 0;
-  bool emits = EMIT && (is_pointer || (is_array && (e->kind == EK_LOCAL || e->kind == EK_ADDR)));
+  bool emits = EMIT && (is_pointer || (is_array && (e->kind == EK_LOCAL || e->kind == EK_ADDR ||
+                                                    e->kind == EK_CONST_DATA)));
   if (EMIT && is_pointer) {
     base = emit_to_ref(p, e, e->type, at);
   } else if (EMIT && is_array && e->kind == EK_LOCAL) {
     base = il_slot_addr(&p->il, e->slot);
+  } else if (EMIT && is_array && e->kind == EK_CONST_DATA) {
+    base = il_const_data(&p->il, e->data);
   } else if (EMIT && is_array && e->kind == EK_ADDR) {
     base = e->base;
     offset = e->offset;
@@ -2791,6 +2794,11 @@ static void postfix(Parser* p, ExpDesc* e) {
           Ref slot_addr = il_slot_addr(&p->il, e->slot);
           e->kind = EK_ADDR;
           e->base = slot_addr;
+          e->offset = f->offset;
+        } else if (EMIT && f && type_is_struct(p, e->type) && e->kind == EK_CONST_DATA) {
+          // A field of constant data is read from its image.
+          e->kind = EK_ADDR;
+          e->base = il_const_data(&p->il, e->data);
           e->offset = f->offset;
         } else if (EMIT && f && type_is_struct(p, e->type) && e->kind == EK_ADDR) {
           // A field of a nested struct is in the same memory as the outer

@@ -1,0 +1,34 @@
+# OUT: 2
+# OUT: inner
+# OUT: 5
+# OUT: 7
+# OUT: b
+# OUT: 4
+# OUT: 30
+# OUT: 2
+struct Inner:
+    int x
+    str s
+
+struct Outer:
+    int n
+    Inner inner
+
+ORIGIN = Outer(1, Inner(2, "inner"))
+[3]int PRIMES = [3, 5, 7]
+[2]str NAMES = ["a", "b"]
+[2][2]i8 GRID = [[1, 2], [3, 4]]
+[2]Inner PAIR = [Inner(10, "x"), Inner(30, "y")]
+
+def int main():
+    print ORIGIN.inner.x
+    print ORIGIN.inner.s
+    print PRIMES[1]
+    i = 2
+    print PRIMES[i]
+    print NAMES[1]
+    print GRID[1][1]
+    print PAIR[i - 1].x
+    LOCAL = Inner(2, "local")
+    print LOCAL.x
+    return 0
