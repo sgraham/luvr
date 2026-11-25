@@ -1,0 +1,39 @@
+# OUT: hello
+# OUT: 1
+# OUT: hello
+# OUT: tab	and "quotes"
+# OUT: hello
+# OUT: hello
+# OUT: tab	and "quotes"
+# OUT: changed
+# OUT: hello
+# OUT:
+struct Named:
+    str name = "hello"
+    int n = 1
+    str other = "tab\tand \"quotes\""
+
+struct Holder:
+    int before = 9
+    Named named
+    [2]Named pair
+    str empty = ""
+
+def show(Named nm):
+    print nm.name
+
+def int main():
+    Named nm
+    show(nm)
+    print nm.n
+    Holder h
+    print h.named.name
+    print h.named.other
+    print h.pair[0].name
+    print h.pair[1].name
+    print h.pair[1].other
+    h2 = Holder(.named=Named(.name="changed"))
+    print h2.named.name
+    print h2.pair[0].name
+    print h.empty
+    return 0

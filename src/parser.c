@@ -3826,17 +3826,6 @@ static void image_extend(Parser* p, u32 size) {
   p->image.num = size;
 }
 
-// Writes defval, the default of a field of type t, at offset in p->image.
-static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, SrcLoc at) {
-  if (t.u == TY_BOOL) {
-    p->image.items[offset] = defval->cv.b;
-  } else if (type_is_integer(t)) {
-    store_le(&p->image.items[offset], (u64)defval->cv.i, type_size(p, t));
-  } else if (!type_is_pointer(p, t)) {
-    error_at(p, at, "This field default isn't supported yet.");
-  }
-}
-
 // Copies data and its relocations to offset in p->image.
 static void image_add_data(Parser* p, DataId data, u32 offset) {
   const Ctx* ctx = p->ls.ctx;
@@ -3846,6 +3835,19 @@ static void image_add_data(Parser* p, DataId data, u32 offset) {
     IlReloc reloc = ctx->relocs.items[d->relocs_first + i];
     reloc.off += offset;
     *vec_push(p->ls.ctx, &p->image_relocs) = reloc;
+  }
+}
+
+// Writes defval, the default of a field of type t, at offset in p->image.
+static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, SrcLoc at) {
+  if (defval->kind == EK_CONST_DATA) {
+    image_add_data(p, defval->data, offset);
+  } else if (t.u == TY_BOOL) {
+    p->image.items[offset] = defval->cv.b;
+  } else if (type_is_integer(t)) {
+    store_le(&p->image.items[offset], (u64)defval->cv.i, type_size(p, t));
+  } else if (!type_is_pointer(p, t)) {
+    error_at(p, at, "This field default isn't supported yet.");
   }
 }
 
