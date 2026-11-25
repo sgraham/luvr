@@ -1,0 +1,21 @@
+# OUT: 5
+# OUT: 7
+# OUT: 9
+struct Point:
+    int x
+
+def *Point at(*Point pt):
+    return pt
+
+def int main():
+    Point a
+    at(&a).x = 5
+    print a.x
+    *Point ptr = &a
+    [2]*Point ps = [ptr, ptr]
+    ps[1].x = 7
+    print a.x
+    *int px = &at(&a).x
+    px[0] = 9
+    print a.x
+    return 0

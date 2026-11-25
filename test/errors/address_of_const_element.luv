@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:15:    *str q = &NAMES[1]
+# CERR: {ssss}                    ^ error: Can't take the address of non-lvalue.
+
+[2]str NAMES = ["a", "b"]
+
+def int main():
+    *str q = &NAMES[1]
+    return 0

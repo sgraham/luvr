@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:5:    NAMES[0] = "z"
+# CERR: {ssss}         ^ error: Can't assign to this expression.
+
+[2]str NAMES = ["a", "b"]
+
+def int main():
+    NAMES[0] = "z"
+    return 0

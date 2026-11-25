@@ -1,0 +1,12 @@
+# CRET: 1
+# CERR: {self}:11:10:    q = &ORIGIN
+# CERR: {ssss}                ^ error: Can't take the address of a constant.
+
+struct Point:
+    int x
+
+ORIGIN = Point(1)
+
+def int main():
+    q = &ORIGIN
+    return 0

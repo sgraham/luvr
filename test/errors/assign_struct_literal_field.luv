@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:9:5:    Point(1).x = 5
+# CERR: {ssss}         ^ error: Can't assign to this expression.
+
+struct Point:
+    int x
+
+def int main():
+    Point(1).x = 5
+    return 0

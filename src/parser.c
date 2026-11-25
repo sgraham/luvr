@@ -569,6 +569,19 @@ static bool exp_is_const(const ExpDesc* e) {
   return e->kind == EK_CONST || e->kind == EK_CONST_DATA;
 }
 
+// The shape of a field or element of e, a struct or array value. It's only
+// assignable if e is, so a part of a call's result, a literal, or a constant
+// isn't.
+static Shape exp_part_shape(const ExpDesc* e) {
+  if (e->shape == SH_PARAM) {
+    return SH_PARAM;
+  }
+  if ((e->shape == SH_NAME || e->shape == SH_LVALUE) && e->kind != EK_CONST_DATA) {
+    return SH_LVALUE;
+  }
+  return SH_VALUE;
+}
+
 // Locals
 //
 // Scope is the whole function: a local is declared by its first assignment
@@ -1851,7 +1864,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
           (l && l->kind == LK_PARAM)) {
         error_at(p, at, "Can't take the address of non-lvalue.");
       }
-      if (e->kind == EK_CONST) {
+      if (exp_is_const(e)) {
         error_at(p, at, "Can't take the address of a constant.");
       }
       if (EMIT && e->shape != SH_STRUCT_LITERAL && e->kind == EK_LOCAL) {
@@ -2709,7 +2722,9 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   }
   if (is_slice) {
     e->shape = SH_VALUE;
-  } else if (e->shape != SH_PARAM || !is_array) {
+  } else if (is_array) {
+    e->shape = exp_part_shape(e);
+  } else {
     e->shape = SH_LVALUE;
   }
   e->type = result;
@@ -2753,6 +2768,12 @@ static void postfix(Parser* p, ExpDesc* e) {
         if (type_is_struct(p, base) && !f && T(p) != TK_LPAREN) {
           field_error(p, base, name, name_at);
         }
+        // Emitting changes e's kind, so the shape is found first. Methods
+        // aren't typed yet, so a parameter whose type isn't known, such as
+        // self, might be a pointer.
+        bool through_pointer =
+            type_is_pointer(p, e->type) || (e->shape == SH_PARAM && !type_is_struct(p, e->type));
+        Shape shape = through_pointer ? SH_LVALUE : exp_part_shape(e);
         if (EMIT && f && type_is_pointer(p, e->type)) {
           // Each pointer but the last is loaded through to get the next one,
           // and the last one's value is the base.
@@ -2778,8 +2799,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         } else {
           exp_unemitted(e);
         }
-        bool in_param = e->shape == SH_PARAM && type_is_struct(p, e->type);
-        e->shape = in_param ? SH_PARAM : SH_LVALUE;
+        e->shape = shape;
         e->type = f ? f->type : ty_unknown;
         break;
       }

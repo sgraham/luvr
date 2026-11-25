@@ -1,0 +1,13 @@
+# CRET: 1
+# CERR: {self}:12:5:    mk().x = 5
+# CERR: {ssss}          ^ error: Can't assign to this expression.
+
+struct Point:
+    int x
+
+def Point mk():
+    return Point(1)
+
+def int main():
+    mk().x = 5
+    return 0

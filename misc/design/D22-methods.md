@@ -76,3 +76,14 @@ receiver: `on int def int min(self, int b)`, `on u64 def u64 min(...)` and
 so on, in the prelude. `a.min(b)` and `(3).min(b)` parse already. The
 static form `int.min(a, b)` doesn't, because a builtin type can't start an
 expression.
+
+## When methods are typed
+
+Noted 2026-11-25 ([D34](D34-constant-data.md) step 6b). A field of a
+parameter is immutable when the parameter is a known struct, but `self`
+has no type until methods are typed, so a field of a parameter whose type
+isn't known is still assignable (`self.length = self.length + 1` in
+`manual_list_int.luv` and three other method tests). This is the
+`through_pointer` case in postfix field access. Since `xyz.f(5)` is
+`Xyz.f(&xyz, 5)`, `self` will be a `*T`, so its fields are assignable
+through the pointer, and the unknown-type case can be removed.

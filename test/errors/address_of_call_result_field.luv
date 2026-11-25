@@ -1,0 +1,13 @@
+# CRET: 1
+# CERR: {self}:12:10:    q = &mk().x
+# CERR: {ssss}                ^ error: Can't take the address of non-lvalue.
+
+struct Point:
+    int x
+
+def Point mk():
+    return Point(1)
+
+def int main():
+    q = &mk().x
+    return 0

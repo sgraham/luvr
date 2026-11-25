@@ -1,0 +1,15 @@
+# CRET: 1
+# CERR: {self}:14:5:    ORIGIN.inner.x = 5
+# CERR: {ssss}          ^ error: Can't assign to this expression.
+
+struct Inner:
+    int x
+
+struct Point:
+    Inner inner
+
+ORIGIN = Point(Inner(2))
+
+def int main():
+    ORIGIN.inner.x = 5
+    return 0
