@@ -1,0 +1,4 @@
+# CRET: 1
+# CERR: {self}:4:8:nums = [1, 2, 3]
+# CERR: {ssss}            ^ error: A list can't be a constant yet.
+nums = [1, 2, 3]

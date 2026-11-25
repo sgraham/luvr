@@ -2210,6 +2210,9 @@ static void list_literal(Parser* p, ExpDesc* e) {
   next(p);
   bool is_array = type_is_array(p, expected);
   TypeId elem_type = is_array ? type_info(p, expected)->elem : ty_unknown;
+  if (p->const_context && !is_array) {
+    error_at(p, at, "A list can't be a constant yet.");
+  }
   u32 count = 0;
   if (T(p) != TK_RSQUARE) {
     LexPos elem;
