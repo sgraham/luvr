@@ -152,17 +152,26 @@ def parse(text):
             continue
         try:
             if line.startswith("data "):
-                # data @.dat0 [align 8] "bytes", or data @.dat1 [align 8] 01 02
+                # data @.dat0 [align 8] "bytes", or data @.dat1 [align 8] 01 @.dat0,
+                # where @.dat0 is its 8-byte address. Data is always dumped
+                # after the data it refers to.
                 _, name, s = line.split(None, 2)
                 align = 1
                 if s.startswith("align "):
                     _, align, s = s.split(None, 2)
                     align = int(align)
+                b = bytearray()
                 if s.startswith('"'):
                     # The escapes are a subset of a Python bytes literal's.
-                    b = ast.literal_eval("b" + s)
+                    b += ast.literal_eval("b" + s)
                 else:
-                    b = bytes(int(tok, 16) for tok in s.split())
+                    for tok in s.split():
+                        if tok.startswith("@"):
+                            if tok[1:] not in data:
+                                raise Error(f"{tok} isn't defined before it's used")
+                            b += data[tok[1:]].to_bytes(8, "little")
+                        else:
+                            b.append(int(tok, 16))
                 addr = alloc(mem, len(b), align)
                 mem.bytes[addr:addr + len(b)] = b
                 data[name[1:]] = addr

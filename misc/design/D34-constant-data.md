@@ -134,8 +134,11 @@ could work the same way.
 - The dumper only needs the bytes and the relocation list, which the back
   end needs anyway. It prints `@.datN` at each relocation's offset and
   skips its 8 bytes.
-- `interp.py` parses the tokens, and writes each relocation's address once
-  all data has been placed, since a relocation can refer to later data.
+- `interp.py` parses the tokens, and writes each relocation's address as
+  it parses the data. A literal's parts are always added before it, so data
+  only refers to earlier data, and a later or unknown target is an error
+  (decided 2026-11-25). Forward references can be added if something, such
+  as globals that point at each other, needs them.
 - Read-only and writable data: images and string bytes never change, but a
   global's storage does. **Decided (2026-11-24): a flag on `IlData`** that
   chooses `.rodata` or `.data`. A global's initial image is the global's
@@ -242,6 +245,12 @@ images like the rest.
 - A flag on `IlData` for read-only or writable data.
 - Identical images aren't shared. A literal written twice gets two images.
   Sharing can be added later if it matters.
+- A constant literal nested in another, such as `In(1)` in
+  `Outer(In(1), "x")`, is added as its own data, and then its bytes and
+  relocations are copied into the outer image. Nothing refers to the inner
+  data afterwards, but it's still emitted (decided 2026-11-25). If that becomes
+  a notable waste, a nested literal could be built in place in the outer
+  image instead, by passing its offset down as `literal_expected` is.
 - Global lists are errors for now.
 - The expected type is a parameter of `expr_expect()`, only used when a
   literal starts the expression.
