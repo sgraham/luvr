@@ -542,6 +542,12 @@ static NOINLINE void load_named_const(ExpDesc* e, const NamedConst* c) {
   e->cv = c->cv;
 }
 
+// Returns whether e's value is known at compile time, either in e itself or
+// as constant data.
+static bool exp_is_const(const ExpDesc* e) {
+  return e->kind == EK_CONST || e->kind == EK_CONST_DATA;
+}
+
 // Locals
 //
 // Scope is the whole function: a local is declared by its first assignment
@@ -2876,10 +2882,10 @@ static void primary(Parser* p, ExpDesc* e) {
       break;
     case TK_STRING:
       e->type = ty_str;
+      e->kind = EK_CONST_DATA;
       if (EMIT) {
         u32 len;
         const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-        e->kind = EK_CONST_DATA;
         e->data = il_data_add(p->ls.ctx, s, len, 1);
       }
       next(p);
@@ -3132,7 +3138,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
       declare_const(p, name, at, toplevel, t, &v, value_at);
       return;
     }
-    if (toplevel && v.kind != EK_CONST) {
+    if (toplevel && !exp_is_const(&v)) {
       error_at(p, value_at, "Expected a constant expression.");
     }
   } else if (is_const) {
@@ -3261,7 +3267,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         }
         TypeId t = type_concrete(v.type);
         check_const_conversion(p, t, &v, value_at);
-        if (toplevel && v.kind != EK_CONST) {
+        if (toplevel && !exp_is_const(&v)) {
           error_at(p, value_at, "Expected a constant expression.");
         }
         if (toplevel) {
