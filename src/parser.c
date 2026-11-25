@@ -2168,12 +2168,17 @@ static void comprehension(Parser* p, const LexPos* elem, SrcLoc at) {
 }
 
 // An element of a list or array literal, checked against `elem` if it's known.
-static void list_element(Parser* p, TypeId elem) {
+// When emitting an array, it's stored at temp + offset.
+static void list_element(Parser* p, TypeId elem, Ref temp, u32 offset) {
   SrcLoc at = p->ls.pos.t.loc;
   ExpDesc v;
   expr_expect(p, elem, &v);
   if (elem.u != TY_UNKNOWN) {
     check_assign(p, elem, &v, at);
+  }
+  if (EMIT && temp) {
+    ExpDesc dst = {.type = elem, .kind = EK_ADDR, .base = temp, .offset = offset};
+    emit_assign_to_addr(p, &dst, &v, at);
   }
 }
 
@@ -2202,13 +2207,26 @@ static void list_literal(Parser* p, ExpDesc* e) {
       return;
     }
     lex_rewind(&p->ls, &elem);
-    list_element(p, elem_type);
+  }
+  // Every element is stored, so the temporary doesn't need initializing.
+  Ref temp = 0;
+  u32 elem_size = 0;
+  if (EMIT && is_array) {
+    if (!type_has_layout(p, expected)) {
+      error_at(p, at, "This array literal isn't supported yet.");
+    }
+    temp = il_slot_addr(&p->il,
+                        il_slot_add_agg(&p->il, type_agg(p, expected), (NameId){IL_SLOT_UNNAMED}));
+    elem_size = type_size(p, elem_type);
+  }
+  if (T(p) != TK_RSQUARE) {
+    list_element(p, elem_type, temp, 0);
     count = 1;
     while (optional(p, TK_COMMA)) {
       if (T(p) == TK_RSQUARE) {
         break;  // trailing comma
       }
-      list_element(p, elem_type);
+      list_element(p, elem_type, temp, count * elem_size);
       ++count;
     }
   }
@@ -2219,6 +2237,11 @@ static void list_literal(Parser* p, ExpDesc* e) {
       error_at(p, at, "Expected %u element%s, not %u.", want, want == 1 ? "" : "s", count);
     }
     e->type = expected;
+  }
+  if (EMIT && is_array) {
+    e->kind = EK_ADDR;
+    e->base = temp;
+    e->offset = 0;
   }
 }
 
