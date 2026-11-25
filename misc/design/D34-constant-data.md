@@ -106,9 +106,10 @@ for the struct body that's being parsed.
 `EK_CONST_DATA` like other constant data, and a use is a `COPY` of its
 16-byte image instead of two stores into a temporary. They should cost the
 same once [D31](D31-aggregates.md)'s slot splitting exists. `print "x"`
-currently passes the characters' data and length directly, without building
-a `str`. It reads both from the image instead (the target of the relocation at
-offset 0, and the 8 bytes at offset 8), so its output doesn't change. Folding `len("abc")`
+passed the characters' data and length directly, without building a `str`.
+`luv_print_str` now takes the address of a `str` instead, so a literal passes
+its image (decided 2026-11-25), as does each literal piece of an interpolated
+string. Folding `len("abc")`
 could work the same way.
 
 ### In the IL

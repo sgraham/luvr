@@ -330,6 +330,7 @@ static TypeId type(Parser* p);
 static u32 array_size(Parser* p);
 static IlType il_mem_type_of(Parser* p, TypeId t);
 static AggId type_agg(Parser* p, TypeId t);
+static DataId emit_str_data(Parser* p, const u8* s, u32 len);
 static Flow stat(Parser* p);
 static Flow suite(Parser* p);
 static void parse_module(Parser* p);
@@ -1678,30 +1679,18 @@ static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
     default:
       error_at(p, at, "Printing %s isn't supported yet.", type_str(p, t));
   }
-  Ref args[2];
-  u32 nargs = 1;
-  if (t.u == TY_STR && e->kind == EK_CONST_DATA) {
-    // A constant str is printed from the bytes that its image refers to,
-    // without loading from the image.
-    const Ctx* ctx = p->ls.ctx;
-    const IlData* image = &ctx->data.items[e->data.u];
-    ASSERT(image->relocs_num == 1);
-    DataId bytes = ctx->relocs.items[image->relocs_first].target;
-    args[0] = il_const_data(&p->il, bytes);
-    args[1] = il_const_int(&p->il, IT_I64, ctx->data.items[bytes.u].len);
-    nargs = 2;
-  } else if (t.u == TY_STR) {
-    Ref addr = emit_agg_addr(p, e, at);
-    args[0] = il_emit(&p->il, OP_LOAD, IT_I64, emit_offset_addr(p, addr, p->str_data_offset), 0);
-    args[1] = il_emit(&p->il, OP_LOAD, IT_I64, emit_offset_addr(p, addr, p->str_len_offset), 0);
-    nargs = 2;
+  // A str is passed by its address, because aggregates can't be passed to the
+  // runtime by value.
+  Ref arg;
+  if (t.u == TY_STR) {
+    arg = emit_agg_addr(p, e, at);
   } else {
-    args[0] = emit_to_ref(p, e, t, at);
+    arg = emit_to_ref(p, e, t, at);
   }
   if (type_is_integer(t)) {
-    args[0] = emit_extend_if_necessary(p, args[0], t);
+    arg = emit_extend_if_necessary(p, arg, t);
   }
-  il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), args, nargs);
+  il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), &arg, 1);
 }
 
 static void emit_print_end(Parser* p) {
@@ -1716,9 +1705,8 @@ static void emit_print_str_piece(Parser* p) {
   if (len == 0) {
     return;
   }
-  Ref args[] = {il_const_data(&p->il, il_data_add(p->ls.ctx, s, len, 1, NULL, 0)),
-                il_const_int(&p->il, IT_I64, len)};
-  il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_str), args, 2);
+  Ref arg = il_const_data(&p->il, emit_str_data(p, s, len));
+  il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_str), &arg, 1);
 }
 
 // Called after a binary operator and before its right operand, so that the

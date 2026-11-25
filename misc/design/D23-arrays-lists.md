@@ -387,7 +387,7 @@ copy.**
   none of which write the newline: `luv_print_i64` (narrower signed ints are
   sign extended), `luv_print_u64` (zero extended), `luv_print_f64` (`f32`
   is widened, printed with `%f`), `luv_print_bool` (`true`/`false`),
-  `luv_print_str(data, len)` and `luv_print_end` for the newline. An
+  `luv_print_str(const str*)` and `luv_print_end` for the newline. An
   interpolated string in `print` emits one call per piece then
   `luv_print_end`, so no string is built.
 - Output is buffered by the runtime and flushed at exit. The interpreter

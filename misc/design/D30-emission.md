@@ -205,6 +205,7 @@ def int main():
 
 ```
 data @.dat0 "big "
+data @.dat1 align 8 @.dat0 04 00 00 00 00 00 00 00
 
 func i64 @add
 :0
@@ -228,7 +229,7 @@ func i64 @main
   BR %7, :2
 :3
   ;         print "big \(x)"
-  CALL @luv_print_str, @.dat0, 4
+  CALL @luv_print_str, @.dat1
   ...
 ```
 
@@ -241,8 +242,13 @@ func i64 @main
   aggregate slot is `slot $n #N`, a function that returns one is
   `func #N @name`, and `COPY`, `ZERO`, `ARGAGG`, `PARAMAGG` and
   `RESULTAGG` have it as their last operand.
-- A `data` line is `data @.datN [align N] "bytes"`. The alignment is only
-  printed when it's more than 1, as for a struct's default image.
+- A `data` line is `data @.datN [align N] "bytes"` when there are no
+  relocations and every byte is printable, `\n` or `\t`. Otherwise it's
+  `data @.datN [align N]` followed by each byte as two hex digits, with
+  `@.datM` in place of the 8 bytes of a relocation to that data
+  ([D34](D34-constant-data.md)). A string literal is its bytes, then a
+  `str` image that refers to them. The alignment is only printed when it's
+  more than 1. Data only refers to data before it.
 - An instruction is `[%n =] OP [type] operand, operand, ...`. The type is
   left out when it's `void`, for `SLOT`, which is always an `i64` address,
   and for the aggregate operations. Types are a fixed set of words that no
@@ -266,7 +272,7 @@ func i64 @main
   printed, because the lexer only keeps offsets, and finding a line number
   means counting newlines from the start of the file.
 - In `data @name "bytes"`, printable ASCII is written as itself except for
-  `"` and `\`. Everything else is `\n`, `\t`, `\\`, `\"` or `\xNN`.
+  `"` and `\`, which are `\"` and `\\`. Newline and tab are `\n` and `\t`.
 - Symbol names can't contain whitespace. Data is `@.datN`, which can't
   collide with a function's name because identifiers can't start with `.`.
 

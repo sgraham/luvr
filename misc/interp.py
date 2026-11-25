@@ -250,9 +250,12 @@ COMPARE = {
 UNSIGNED_COMPARE = {"ULT": "LT", "ULE": "LE", "UGT": "GT", "UGE": "GE"}
 
 
-def print_str(mem, addr, n):
+# s is the address of a str, which is {*u8 _data, int _len} as in the prelude.
+def print_str(mem, s):
+    data = load(mem, s, "i64")
+    n = load(mem, s + 8, "i64")
     sys.stdout.flush()
-    sys.stdout.buffer.write(mem.bytes[addr:addr + n])
+    sys.stdout.buffer.write(mem.bytes[data:data + n])
 
 
 # The runtime's functions, by symbol name. Each is passed the Memory first.

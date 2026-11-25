@@ -529,7 +529,7 @@ same luv structs. The table above came from doing this by hand.
   error for now. The basic C runtime doesn't need them, and the rule
   doesn't depend on the target, so a program can't compile on SysV and fail
   on Win64, where the same `str` would go by pointer. Runtime helpers take
-  a `str`'s data and length as two scalars, as `luv_print_str` does.
+  a pointer to a `str`, as `luv_print_str` does.
 - Narrow integers are extended on both sides, on every target. On SysV the
   psABI says the callee extends, but clang's callees historically relied on
   the caller extending to 32 bits, which clang and GCC callers do. clang
