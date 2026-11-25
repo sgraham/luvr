@@ -1,0 +1,15 @@
+# RET: 0
+struct Point:
+    int x
+    int y
+
+struct Shape:
+    [3]u8 sides = [3, 4, 5]
+    [2]Point corners = [Point(1, 2), Point(.y=4)]
+
+[2][2]int grid = [[1, 2], [3, 4]]
+[2]str NAMES = ["a", "b"]
+
+def int main():
+    [3]int ONES = [1, 1, 1]
+    return 0

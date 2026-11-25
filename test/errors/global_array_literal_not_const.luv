@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:19:[3]int nums = [1, count, 3]
+# CERR: {ssss}                        ^ error: Expected a constant expression.
+count = 2
+[3]int nums = [1, count, 3]

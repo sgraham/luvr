@@ -2185,6 +2185,9 @@ static void list_element(Parser* p, TypeId elem, Ref temp, u32 offset) {
   if (elem.u != TY_UNKNOWN) {
     check_assign(p, elem, &v, at);
   }
+  if (p->const_context && !exp_is_const(&v)) {
+    error_at(p, at, "Expected a constant expression.");
+  }
   if (EMIT && temp) {
     ExpDesc dst = {.type = elem, .kind = EK_ADDR, .base = temp, .offset = offset};
     emit_assign_to_addr(p, &dst, &v, at);
@@ -2220,6 +2223,9 @@ static void list_literal(Parser* p, ExpDesc* e) {
   // Every element is stored, so the temporary doesn't need initializing.
   Ref temp = 0;
   u32 elem_size = 0;
+  if (EMIT && is_array && p->const_context) {
+    error_at(p, at, "This array literal isn't supported yet.");
+  }
   if (EMIT && is_array) {
     if (!type_has_layout(p, expected)) {
       error_at(p, at, "This array literal isn't supported yet.");
@@ -2247,7 +2253,9 @@ static void list_literal(Parser* p, ExpDesc* e) {
     }
     e->type = expected;
   }
-  if (EMIT && is_array) {
+  if (is_array && p->const_context) {
+    e->kind = EK_CONST_DATA;
+  } else if (EMIT && is_array) {
     e->kind = EK_ADDR;
     e->base = temp;
     e->offset = 0;
@@ -3924,7 +3932,7 @@ static void struct_body(Parser* p, TypeId st) {
       SrcLoc value_at = p->ls.pos.t.loc;
       ExpDesc v;
       p->const_context = true;
-      subexpr(p, -1, &v);
+      expr_expect(p, t, &v);
       p->const_context = false;
       check_assign(p, t, &v, value_at);
       if (!exp_is_const(&v)) {
