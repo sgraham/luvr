@@ -285,7 +285,7 @@ static void test_il_data(void) {
   IlReloc str_relocs[] = {{0, hi}};
   il_data_add(&ctx, str_image, 16, 8, str_relocs, COUNTOF(str_relocs));
   static const u8 two_image[24] = {1, 2, 3, 4, 5, 6, 7, 8};
-  IlReloc two_relocs[] = {{8, escaped}, {16, hi}};
+  IlReloc two_relocs[] = {{16, hi}, {8, escaped}};
   il_data_add(&ctx, two_image, 24, 8, two_relocs, COUNTOF(two_relocs));
   il_block_start(&f, il_block_declare(&f));
   Ref args[] = {il_const_data(&f, escaped), il_const_int(&f, IT_I64, 6), il_const_data(&f, hi),

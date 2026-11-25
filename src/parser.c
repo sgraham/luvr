@@ -231,8 +231,8 @@ struct Parser {
   VEC(TypeInfo) types;  // by TypeId, with unused entries for the FixedTypes
   VEC(TypeId) param_types;
   VEC(Field) fields;
-  // The image of the struct whose body is being parsed, and its relocations in
-  // order of offset. Only used when EMIT.
+  // The image of the struct whose body is being parsed, and its relocations.
+  // Only used when EMIT.
   VEC(u8) image;
   VEC(IlReloc) image_relocs;
   // Each [N]T, by a hash of N and T. The slot's val is the TypeId.
@@ -331,6 +331,10 @@ static u32 array_size(Parser* p);
 static IlType il_mem_type_of(Parser* p, TypeId t);
 static AggId type_agg(Parser* p, TypeId t);
 static DataId emit_str_data(Parser* p, const u8* s, u32 len);
+static u32 image_begin(Parser* p, u32 size);
+static DataId image_end(Parser* p, u32 base, u32 align);
+static bool image_add_field(Parser* p, TypeId t, u32 offset);
+static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, SrcLoc at);
 static Flow stat(Parser* p);
 static Flow suite(Parser* p);
 static void parse_module(Parser* p);
@@ -2496,17 +2500,21 @@ static void struct_args(Parser* p, ExpDesc* e) {
   bool has_fields = type_is_struct(p, st);
   // The literal is built in a temporary, because most uses of it, such as an
   // argument or a field of another literal, have nowhere else to build it.
+  // In a constant context, it's built as an image in p->image instead.
   Ref temp = 0;
-  if (EMIT && p->const_context) {
-    error_at(p, at, "This struct literal isn't supported yet.");
-  }
+  u32 image = 0;
   if (EMIT) {
     if (!has_fields || !type_has_layout(p, st)) {
       error_at(p, at, "This struct literal isn't supported yet.");
     }
-    AggId agg = type_info(p, st)->agg;
-    temp = il_slot_addr(&p->il, il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED}));
-    emit_agg_init(p, temp, st);
+    if (p->const_context) {
+      image = image_begin(p, type_size(p, st));
+      image_add_field(p, st, image);
+    } else {
+      AggId agg = type_info(p, st)->agg;
+      temp = il_slot_addr(&p->il, il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED}));
+      emit_agg_init(p, temp, st);
+    }
   }
   u32 num_fields = has_fields ? type_info(p, st)->num_fields : 0;
   u32 first_field = has_fields ? type_info(p, st)->first_field : 0;
@@ -2567,7 +2575,9 @@ static void struct_args(Parser* p, ExpDesc* e) {
       if (f) {
         check_const_conversion(p, f->type, &arg, arg_at);
       }
-      if (EMIT) {
+      if (EMIT && p->const_context) {
+        image_add_const(p, f->type, &arg, image + f->offset, arg_at);
+      } else if (EMIT) {
         ExpDesc dst = {.type = f->type, .kind = EK_ADDR, .base = temp, .offset = f->offset};
         emit_assign_to_addr(p, &dst, &arg, arg_at);
       }
@@ -2580,6 +2590,9 @@ static void struct_args(Parser* p, ExpDesc* e) {
   e->shape = SH_STRUCT_LITERAL;
   if (p->const_context) {
     e->kind = EK_CONST_DATA;
+    if (EMIT) {
+      e->data = image_end(p, image, type_align(p, st));
+    }
   } else if (EMIT) {
     e->kind = EK_ADDR;
     e->base = temp;
@@ -3826,6 +3839,48 @@ static void image_extend(Parser* p, u32 size) {
   p->image.num = size;
 }
 
+// Starts an image of size zero bytes at the end of p->image, and returns its
+// offset. Images of nested literals are built after the one that contains
+// them, and removed when they're done.
+static u32 image_begin(Parser* p, u32 size) {
+  u32 base = p->image.num;
+  image_extend(p, base + size);
+  return base;
+}
+
+// Adds the image that starts at base and runs to the end of p->image as data,
+// and removes it from p->image. Its relocations are the ones at or after base,
+// which are all at the end of p->image_relocs.
+static DataId image_end(Parser* p, u32 base, u32 align) {
+  u32 first = p->image_relocs.num;
+  while (first > 0 && p->image_relocs.items[first - 1].off >= base) {
+    --first;
+  }
+  u32 num_relocs = p->image_relocs.num - first;
+  IlReloc* relocs = num_relocs ? &p->image_relocs.items[first] : NULL;
+  for (u32 i = 0; i < num_relocs; ++i) {
+    relocs[i].off -= base;
+  }
+  DataId data =
+      il_data_add(p->ls.ctx, &p->image.items[base], p->image.num - base, align, relocs, num_relocs);
+  p->image.num = base;
+  p->image_relocs.num = first;
+  return data;
+}
+
+// Removes the relocations in [lo, hi) of p->image, before something else is
+// written there.
+static void image_drop_relocs(Parser* p, u32 lo, u32 hi) {
+  u32 kept = 0;
+  for (u32 i = 0; i < p->image_relocs.num; ++i) {
+    IlReloc reloc = p->image_relocs.items[i];
+    if (reloc.off < lo || reloc.off >= hi) {
+      p->image_relocs.items[kept++] = reloc;
+    }
+  }
+  p->image_relocs.num = kept;
+}
+
 // Copies data and its relocations to offset in p->image.
 static void image_add_data(Parser* p, DataId data, u32 offset) {
   const Ctx* ctx = p->ls.ctx;
@@ -3838,8 +3893,10 @@ static void image_add_data(Parser* p, DataId data, u32 offset) {
   }
 }
 
-// Writes defval, the default of a field of type t, at offset in p->image.
+// Writes defval, a constant of type t, at offset in p->image, replacing
+// what's there.
 static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, SrcLoc at) {
+  image_drop_relocs(p, offset, offset + type_size(p, t));
   if (defval->kind == EK_CONST_DATA) {
     image_add_data(p, defval->data, offset);
   } else if (t.u == TY_BOOL) {
@@ -3894,12 +3951,11 @@ static AggId type_agg(Parser* p, TypeId t) {
     type_agg_leaves(p, t, 0, leaves, &num_leaves);
   }
   info->agg = il_agg_add(p->ls.ctx, size, type_align(p, t), leaves, num_leaves);
-  p->image.num = 0;
-  p->image_relocs.num = 0;
-  image_extend(p, size);
-  if (image_add_field(p, t, 0)) {
-    info->image = il_data_add(p->ls.ctx, p->image.items, size, type_align(p, t),
-                              p->image_relocs.items, p->image_relocs.num);
+  u32 base = image_begin(p, size);
+  if (image_add_field(p, t, base)) {
+    info->image = image_end(p, base, type_align(p, t));
+  } else {
+    p->image.num = base;
   }
   return info->agg;
 }

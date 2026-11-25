@@ -131,14 +131,23 @@ DataId il_data_add(Ctx* ctx,
     memcpy(&ctx->databytes.items[ctx->databytes.num], s, len);
     ctx->databytes.num += len;
   }
-  for (u32 i = 0; i < num_relocs; ++i) {
-    ASSERT(i == 0 || relocs[i].off >= relocs[i - 1].off + IL_RELOC_SIZE);
-    ASSERT(relocs[i].off + IL_RELOC_SIZE <= len);
-    ASSERT(memcmp(&s[relocs[i].off], (const u8[IL_RELOC_SIZE]){0}, IL_RELOC_SIZE) == 0);
-  }
   if (num_relocs != 0) {
     vec_reserve(ctx, &ctx->relocs, num_relocs);
-    memcpy(&ctx->relocs.items[ctx->relocs.num], relocs, num_relocs * sizeof(IlReloc));
+    // The copy is kept in order of offset, which the dumper and the overlap
+    // check need. There are only a few, so an insertion sort is enough.
+    IlReloc* dst = &ctx->relocs.items[ctx->relocs.num];
+    for (u32 i = 0; i < num_relocs; ++i) {
+      ASSERT(relocs[i].off + IL_RELOC_SIZE <= len);
+      ASSERT(memcmp(&s[relocs[i].off], (const u8[IL_RELOC_SIZE]){0}, IL_RELOC_SIZE) == 0);
+      u32 j = i;
+      for (; j > 0 && dst[j - 1].off > relocs[i].off; --j) {
+        dst[j] = dst[j - 1];
+      }
+      dst[j] = relocs[i];
+    }
+    for (u32 i = 1; i < num_relocs; ++i) {
+      ASSERT(dst[i].off >= dst[i - 1].off + IL_RELOC_SIZE);
+    }
     ctx->relocs.num += num_relocs;
   }
   return (DataId){ctx->data.num - 1};

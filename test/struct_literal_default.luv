@@ -1,0 +1,53 @@
+# OUT: 4
+# OUT: in
+# OUT: A
+# OUT: B
+# OUT: x
+# OUT: 2nd
+# OUT: 1st
+# OUT: deep
+# OUT: 3
+# OUT: 1st
+# OUT: 2nd
+# OUT: 7
+# OUT: y
+# OUT: B
+# OUT: 4
+struct In:
+    int x = 1
+    str s = "in"
+
+struct Two:
+    str first = "1st"
+    str second = "2nd"
+
+struct Wrap:
+    Two two
+    int n = 7
+
+struct Holder:
+    In a = In(.x=4)
+    Two t = Two(.second="B", .first="A")
+    Two u = Two("x")
+    Wrap w = Wrap(Two(.second="deep"), 3)
+    Wrap plain
+
+def int main():
+    Holder h
+    print h.a.x
+    print h.a.s
+    print h.t.first
+    print h.t.second
+    print h.u.first
+    print h.u.second
+    print h.w.two.first
+    print h.w.two.second
+    print h.w.n
+    print h.plain.two.first
+    print h.plain.two.second
+    print h.plain.n
+    h2 = Holder(.t=Two(.first="y"))
+    print h2.t.first
+    print h.t.second
+    print h2.a.x
+    return 0

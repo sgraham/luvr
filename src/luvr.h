@@ -1034,8 +1034,7 @@ Ref il_const_sym(IlFunc* f, u32 sym);
 Ref il_const_data(IlFunc* f, DataId data);
 
 // Returns a copy of the len bytes at s, which will be placed at a multiple of
-// align. relocs must be in order of offset, and the bytes under each one in s
-// must be zero.
+// align. relocs are unordered, and the bytes under each one in s must be zero.
 DataId il_data_add(Ctx* ctx,
                    const u8* s,
                    u32 len,
