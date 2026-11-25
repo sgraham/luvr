@@ -1,0 +1,21 @@
+# OUT: hi
+# OUT: there
+# OUT: yes
+# OUT:
+# OUT: direct
+def show(str s):
+    print s
+
+def str pick(bool b):
+    if b:
+        return "yes"
+    return ""
+
+def int main():
+    str a = "hi"
+    show(a)
+    show("there")
+    show(pick(true))
+    show(pick(false))
+    print "direct"
+    return 0

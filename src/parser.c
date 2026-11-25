@@ -1599,17 +1599,9 @@ static Ref emit_agg_addr(Parser* p, const ExpDesc* e, SrcLoc at) {
     return emit_addr(p, e);
   }
   if (e->kind == EK_CONST_DATA) {
-    // A string literal is only data and a length until it's used as a str
-    // value, and then it's built in a new temporary. It can't be a constant
-    // image in the data, because the pointer to the bytes would need a
-    // relocation.
-    AggId agg = type_agg(p, ty_str);
-    Ref temp = il_slot_addr(&p->il, il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED}));
-    Ref len = il_const_int(&p->il, IT_I64, p->ls.ctx->data.items[e->data.u].len);
-    il_emit(&p->il, OP_STORE, IT_I64, il_const_data(&p->il, e->data),
-            emit_offset_addr(p, temp, p->str_data_offset));
-    il_emit(&p->il, OP_STORE, IT_I64, len, emit_offset_addr(p, temp, p->str_len_offset));
-    return temp;
+    // Every use of the address only reads through it, so constant data is
+    // used in place.
+    return il_const_data(&p->il, e->data);
   }
   error_at(p, at, "This expression isn't supported yet.");
 }
@@ -1689,9 +1681,14 @@ static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
   Ref args[2];
   u32 nargs = 1;
   if (t.u == TY_STR && e->kind == EK_CONST_DATA) {
-    // A literal is printed from its data, without building a str.
-    args[0] = il_const_data(&p->il, e->data);
-    args[1] = il_const_int(&p->il, IT_I64, p->ls.ctx->data.items[e->data.u].len);
+    // A constant str is printed from the bytes that its image refers to,
+    // without loading from the image.
+    const Ctx* ctx = p->ls.ctx;
+    const IlData* image = &ctx->data.items[e->data.u];
+    ASSERT(image->relocs_num == 1);
+    DataId bytes = ctx->relocs.items[image->relocs_first].target;
+    args[0] = il_const_data(&p->il, bytes);
+    args[1] = il_const_int(&p->il, IT_I64, ctx->data.items[bytes.u].len);
     nargs = 2;
   } else if (t.u == TY_STR) {
     Ref addr = emit_agg_addr(p, e, at);
@@ -2877,6 +2874,24 @@ static void len_call(Parser* p, ExpDesc* e) {
   }
 }
 
+// Writes the low size bytes of bits to dst. Every target is little-endian.
+static void store_le(u8* dst, u64 bits, u32 size) {
+  for (u32 i = 0; i < size; ++i) {
+    dst[i] = (u8)(bits >> (8 * i));
+  }
+}
+
+// Adds the bytes of a string literal, and the image of a str that refers to
+// them.
+static DataId emit_str_data(Parser* p, const u8* s, u32 len) {
+  DataId bytes = il_data_add(p->ls.ctx, s, len, 1, NULL, 0);
+  u8 image[16] = {0};
+  ASSERT(type_size(p, ty_str) == sizeof(image));
+  store_le(&image[p->str_len_offset], len, 8);
+  IlReloc reloc = {p->str_data_offset, bytes};
+  return il_data_add(p->ls.ctx, image, sizeof(image), type_align(p, ty_str), &reloc, 1);
+}
+
 // primary -> literal | string | name | TypeName | '(' expr ')'
 //          | list | dict | sizeof | alignof | offsetof | cast | len_call
 //          followed by postfix
@@ -2910,7 +2925,7 @@ static void primary(Parser* p, ExpDesc* e) {
       if (EMIT) {
         u32 len;
         const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-        e->data = il_data_add(p->ls.ctx, s, len, 1, NULL, 0);
+        e->data = emit_str_data(p, s, len);
       }
       next(p);
       break;
@@ -3824,15 +3839,11 @@ static void image_extend(Parser* p, u32 size) {
 }
 
 // Writes defval, the default of a field of type t, at offset in p->image.
-// Every target is little-endian.
 static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, SrcLoc at) {
   if (t.u == TY_BOOL) {
     p->image.items[offset] = defval->cv.b;
   } else if (type_is_integer(t)) {
-    u64 bits = (u64)defval->cv.i;
-    for (u32 i = 0; i < type_size(p, t); ++i) {
-      p->image.items[offset + i] = (u8)(bits >> (8 * i));
-    }
+    store_le(&p->image.items[offset], (u64)defval->cv.i, type_size(p, t));
   } else if (!type_is_pointer(p, t)) {
     error_at(p, at, "This field default isn't supported yet.");
   }
