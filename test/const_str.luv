@@ -1,0 +1,9 @@
+# OUT: hi
+# OUT: bye
+GREETING = "hi"
+
+def int main():
+    str FAREWELL = "bye"
+    print GREETING
+    print FAREWELL
+    return 0

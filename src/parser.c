@@ -538,7 +538,7 @@ static void declare_global(Parser* p, NameId name, GlobalInfo info) {
 // Out of line, since uses of constants are rare compared to variables.
 static NOINLINE void load_named_const(ExpDesc* e, const NamedConst* c) {
   e->type = c->type;
-  e->kind = EK_CONST;
+  e->kind = c->type.u == TY_STR ? EK_CONST_DATA : EK_CONST;
   e->cv = c->cv;
 }
 
@@ -3096,8 +3096,11 @@ static void declare_const(Parser* p,
                           TypeId t,
                           const ExpDesc* v,
                           SrcLoc value_at) {
-  if (v->kind != EK_CONST) {
+  if (!exp_is_const(v)) {
     error_at(p, value_at, "Expected a constant expression.");
+  }
+  if (EMIT && v->kind == EK_CONST_DATA) {
+    error_at(p, value_at, "This constant isn't supported yet.");
   }
   NamedConst c = {t, v->cv};
   if (type_is_float(t) && type_is_integer(v->type)) {
