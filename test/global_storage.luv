@@ -1,0 +1,69 @@
+# OUT: 3
+# OUT: 0
+# OUT: false
+# OUT: -2
+# OUT: 4
+# OUT: 5
+# OUT: 9
+# OUT: hello
+# OUT: bye
+# OUT: point
+# OUT: 1
+# OUT: 7
+# OUT: 3
+# OUT: new
+# OUT: 0
+# OUT: 7
+# OUT: 0
+# OUT: 1
+struct Point:
+    int x = 1
+    int y
+    str name = "point"
+
+count = 3
+int zeroed
+bool flag
+i8 small = -2
+*int ptr
+greeting = "hello"
+Point pt
+Point other = Point(.x=7, .name="other")
+[4]int buf
+[100000]u8 big
+
+def bump():
+    global count
+    count = count + 1
+
+def int main():
+    print count
+    print zeroed
+    print flag
+    print small
+    bump()
+    print count
+    bump()
+    print count
+    global ptr
+    ptr = &count
+    ptr[0] = 9
+    print count
+    print greeting
+    global greeting
+    greeting = "bye"
+    print greeting
+    print pt.name
+    print pt.x
+    pt.x = 7
+    print pt.x
+    global pt
+    pt = Point(3, 4, "new")
+    print pt.x
+    print pt.name
+    print buf[2]
+    buf[2] = 7
+    print buf[2]
+    print big[99999]
+    print other.x - 6
+    return 0

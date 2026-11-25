@@ -183,9 +183,10 @@ struct GlobalFunc {
 
 #define FUNC_NO_SYM UINT32_MAX
 
-// A module's global variable.
+// A module's global variable. data is its storage, only when EMIT.
 struct GlobalVar {
   TypeId type;
+  DataId data;
 };
 
 // A parameter or local variable of the function being parsed, or of one that
@@ -344,7 +345,8 @@ static AggId type_agg(Parser* p, TypeId t);
 static DataId emit_str_data(Parser* p, const u8* s, u32 len);
 static void image_extend(Parser* p, u32 size);
 static u32 image_begin(Parser* p, u32 size);
-static DataId image_end(Parser* p, u32 base, u32 align);
+static DataId image_end(Parser* p, u32 base, u32 align, bool writable);
+static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, SrcLoc at);
 static bool image_add_field(Parser* p, TypeId t, u32 offset);
 static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, SrcLoc at);
 static Flow stat(Parser* p);
@@ -557,10 +559,26 @@ static void declare_global(Parser* p, NameId name, GlobalInfo info) {
   namemap_set(p->ls.ctx, &p->mod->globals, name, info);
 }
 
-static void declare_global_var(Parser* p, NameId name, TypeId t) {
+// v is the global's initial value, or NULL if it doesn't have one.
+static void declare_global_var(Parser* p, NameId name, TypeId t, const ExpDesc* v, SrcLoc at) {
+  GlobalVar g = {t, {DATA_NONE}};
+  if (EMIT) {
+    g.data = emit_global_data(p, t, v, at);
+  }
   u32 idx = p->global_vars.num;
-  *vec_push(p->ls.ctx, &p->global_vars) = (GlobalVar){t};
+  *vec_push(p->ls.ctx, &p->global_vars) = g;
   declare_global(p, name, GK_VAR | (idx << GLOBAL_KIND_BITS));
+}
+
+// Makes e a use of the global variable that info refers to.
+static void load_global_var(Parser* p, ExpDesc* e, GlobalInfo info) {
+  const GlobalVar* g = &p->global_vars.items[info >> GLOBAL_KIND_BITS];
+  e->type = g->type;
+  if (EMIT) {
+    e->kind = EK_ADDR;
+    e->base = il_const_data(&p->il, g->data);
+    e->offset = 0;
+  }
 }
 
 // Out of line, since uses of constants are rare compared to variables.
@@ -2298,7 +2316,7 @@ static void list_literal(Parser* p, ExpDesc* e) {
   if (is_array && p->const_context) {
     e->kind = EK_CONST_DATA;
     if (EMIT) {
-      e->data = image_end(p, image, type_align(p, expected));
+      e->data = image_end(p, image, type_align(p, expected), /*writable=*/false);
     }
   } else if (EMIT && is_array) {
     e->kind = EK_ADDR;
@@ -2642,7 +2660,7 @@ static void struct_args(Parser* p, ExpDesc* e) {
   if (p->const_context) {
     e->kind = EK_CONST_DATA;
     if (EMIT) {
-      e->data = image_end(p, image, type_align(p, st));
+      e->data = image_end(p, image, type_align(p, st), /*writable=*/false);
     }
   } else if (EMIT) {
     e->kind = EK_ADDR;
@@ -3043,7 +3061,7 @@ static void primary(Parser* p, ExpDesc* e) {
           e->type = p->global_funcs.items[member >> GLOBAL_KIND_BITS].type;
           check_function_called(p, e, member_at);
         } else if (member_kind == GK_VAR) {
-          e->type = p->global_vars.items[member >> GLOBAL_KIND_BITS].type;
+          load_global_var(p, e, member);
         }
         break;
       }
@@ -3075,11 +3093,16 @@ static void primary(Parser* p, ExpDesc* e) {
         } else if (EMIT && l->kind == LK_PARAM) {
           e->kind = EK_REF;
           e->ref = l->ref;
+        } else if (EMIT && l->kind == LK_GLOBAL) {
+          GlobalInfo global = module_global_info(p->mod, name);
+          if ((GlobalKind)(global & GLOBAL_KIND_MASK) == GK_VAR) {
+            load_global_var(p, e, global);
+          }
         }
       } else if (kind == GK_CONST) {
         load_named_const(p, e, &p->global_consts.items[info >> GLOBAL_KIND_BITS]);
       } else if (kind == GK_VAR) {
-        e->type = p->global_vars.items[info >> GLOBAL_KIND_BITS].type;
+        load_global_var(p, e, info);
       } else if (kind == GK_FUNC) {
         const GlobalFunc* gf = &p->global_funcs.items[info >> GLOBAL_KIND_BITS];
         e->type = gf->type;
@@ -3265,7 +3288,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
     error_at(p, p->ls.pos.t.loc, "A constant needs a value.");
   }
   if (toplevel) {
-    declare_global_var(p, name, t);
+    declare_global_var(p, name, t, has_value ? &v : NULL, value_at);
   } else {
     declare_if_new(p, name, at, t);
     if (EMIT) {
@@ -3393,7 +3416,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           error_at(p, value_at, "Expected a constant expression.");
         }
         if (toplevel) {
-          declare_global_var(p, name, t);
+          declare_global_var(p, name, t, &v, value_at);
         } else {
           if (!loc) {
             loc = declare_local(p, name, at, LK_VAR);
@@ -3402,7 +3425,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
               loc->slot = emit_local_slot(p, t, name, at);
             }
           }
-          if (EMIT) {
+          if (EMIT && loc->kind == LK_GLOBAL) {
+            emit_assign_to_addr(p, &exp, &v, value_at);
+          } else if (EMIT) {
             emit_assign_to_local(p, loc, &v, value_at);
           }
         }
@@ -3437,9 +3462,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
 static void simple_stat(Parser* p) {
   if (EMIT) {
     il_source_pos(&p->il, p->ls.pos.t.loc);
-    if (T(p) != TK_RETURN && T(p) != TK_PASS && T(p) != TK_PRINT && T(p) != TK_BREAK &&
-        T(p) != TK_CONTINUE && !is_builtin_type(T(p)) && T(p) != TK_NAME && T(p) != TK_TYPENAME &&
-        T(p) != TK_STAR && T(p) != TK_LSQUARE) {
+    if (T(p) == TK_CHECK || T(p) == TK_NONLOCAL) {
       error_at(p, p->ls.pos.t.loc, "This statement isn't supported yet.");
     }
   }
@@ -3930,7 +3953,7 @@ static u32 image_begin(Parser* p, u32 size) {
 // Adds the image that starts at base and runs to the end of p->image as data,
 // and removes it from p->image. Its relocations are the ones at or after base,
 // which are all at the end of p->image_relocs.
-static DataId image_end(Parser* p, u32 base, u32 align) {
+static DataId image_end(Parser* p, u32 base, u32 align, bool writable) {
   u32 first = p->image_relocs.num;
   while (first > 0 && p->image_relocs.items[first - 1].off >= base) {
     --first;
@@ -3940,8 +3963,8 @@ static DataId image_end(Parser* p, u32 base, u32 align) {
   for (u32 i = 0; i < num_relocs; ++i) {
     relocs[i].off -= base;
   }
-  DataId data = il_data_add(p->ls.ctx, &p->image.items[base], p->image.num - base, align,
-                            /*writable=*/false, relocs, num_relocs);
+  DataId data = il_data_add(p->ls.ctx, &p->image.items[base], p->image.num - base, align, writable,
+                            relocs, num_relocs);
   p->image.num = base;
   p->image_relocs.num = first;
   return data;
@@ -3983,7 +4006,7 @@ static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offs
   } else if (type_is_integer(t)) {
     store_le(&p->image.items[offset], (u64)defval->cv.i, type_size(p, t));
   } else if (!type_is_pointer(p, t)) {
-    error_at(p, at, "This field default isn't supported yet.");
+    error_at(p, at, "This constant isn't supported yet.");
   }
 }
 
@@ -4015,6 +4038,25 @@ static bool image_add_field(Parser* p, TypeId t, u32 offset) {
   return true;
 }
 
+// Adds the storage of a global of type t, which starts as v, or if v is NULL,
+// as t's default. Otherwise it's all zeros which is handled separately and not
+// stored.
+static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, SrcLoc at) {
+  if (!type_has_layout(p, t)) {
+    error_at(p, at, "This global isn't supported yet.");
+  }
+  u32 size = type_size(p, t);
+  u32 align = type_align(p, t);
+  u32 base = image_begin(p, size);
+  if (v) {
+    image_add_const(p, t, v, base, at);
+  } else if (!image_add_field(p, t, base)) {
+    p->image.num = base;
+    return il_data_add_zero(p->ls.ctx, size, align, /*writable=*/true);
+  }
+  return image_end(p, base, align, /*writable=*/true);
+}
+
 // Returns the AggId of a struct or array type t. A struct's was added at the
 // end of its definition. An array's is added the first time it's needed.
 static AggId type_agg(Parser* p, TypeId t) {
@@ -4032,7 +4074,7 @@ static AggId type_agg(Parser* p, TypeId t) {
   info->agg = il_agg_add(p->ls.ctx, size, type_align(p, t), leaves, num_leaves);
   u32 base = image_begin(p, size);
   if (image_add_field(p, t, base)) {
-    info->image = image_end(p, base, type_align(p, t));
+    info->image = image_end(p, base, type_align(p, t), /*writable=*/false);
   } else {
     p->image.num = base;
   }
