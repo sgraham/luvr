@@ -255,6 +255,9 @@ struct Parser {
   // field rather than a parameter so that primary() is the only caller of
   // postfix(), which keeps it inlined there.
   TypeId literal_expected;
+  // Set while parsing an expression that has to be a constant, so that struct
+  // literals are constant data instead of stores into a temporary.
+  bool const_context;
   bool in_foreign;  // in a foreign function's signature
   // The offsets of the prelude str's _data and _len, which are both 8 bytes.
   // Set at the end of its definition.
@@ -536,9 +539,9 @@ static void declare_global(Parser* p, NameId name, GlobalInfo info) {
 }
 
 // Out of line, since uses of constants are rare compared to variables.
-static NOINLINE void load_named_const(ExpDesc* e, const NamedConst* c) {
+static NOINLINE void load_named_const(Parser* p, ExpDesc* e, const NamedConst* c) {
   e->type = c->type;
-  e->kind = c->type.u == TY_STR ? EK_CONST_DATA : EK_CONST;
+  e->kind = type_is_aggregate(p, c->type) ? EK_CONST_DATA : EK_CONST;
   e->cv = c->cv;
 }
 
@@ -2496,6 +2499,9 @@ static void struct_args(Parser* p, ExpDesc* e) {
   // The literal is built in a temporary, because most uses of it, such as an
   // argument or a field of another literal, have nowhere else to build it.
   Ref temp = 0;
+  if (EMIT && p->const_context) {
+    error_at(p, at, "This struct literal isn't supported yet.");
+  }
   if (EMIT) {
     if (!has_fields || !type_has_layout(p, st)) {
       error_at(p, at, "This struct literal isn't supported yet.");
@@ -2552,6 +2558,9 @@ static void struct_args(Parser* p, ExpDesc* e) {
       ExpDesc arg;
       expr_expect(p, f ? f->type : ty_unknown, &arg);
       check_not_void(p, &arg, arg_at);
+      if (p->const_context && !exp_is_const(&arg)) {
+        error_at(p, arg_at, "Expected a constant expression.");
+      }
       if (f && !assignable(p, arg.type, f->type)) {
         const Name* n = name_of(p, f->name);
         error_at(p, arg_at, "Argument %u is %s, but field '%.*s' is %s.", num_args,
@@ -2571,7 +2580,9 @@ static void struct_args(Parser* p, ExpDesc* e) {
   }
   check_match(p, TK_RPAREN, TK_LPAREN, at);
   e->shape = SH_STRUCT_LITERAL;
-  if (EMIT) {
+  if (p->const_context) {
+    e->kind = EK_CONST_DATA;
+  } else if (EMIT) {
     e->kind = EK_ADDR;
     e->base = temp;
     e->offset = 0;
@@ -2931,7 +2942,7 @@ static void primary(Parser* p, ExpDesc* e) {
         if (member_kind == GK_TYPE) {
           e->type = global_type(member);
         } else if (member_kind == GK_CONST) {
-          load_named_const(e, &p->global_consts.items[member >> GLOBAL_KIND_BITS]);
+          load_named_const(p, e, &p->global_consts.items[member >> GLOBAL_KIND_BITS]);
         } else if (member_kind == GK_FUNC) {
           e->type = p->global_funcs.items[member >> GLOBAL_KIND_BITS].type;
           check_function_called(p, e, member_at);
@@ -2954,7 +2965,7 @@ static void primary(Parser* p, ExpDesc* e) {
         const Local* l = (const Local*)n->binding;
         e->type = l->type;
         if (l->kind == LK_CONST) {
-          load_named_const(e, &p->local_consts[l - p->locals]);
+          load_named_const(p, e, &p->local_consts[l - p->locals]);
         }
         if (EMIT && l->kind == LK_VAR) {
           e->kind = EK_LOCAL;
@@ -2968,7 +2979,7 @@ static void primary(Parser* p, ExpDesc* e) {
           e->ref = l->ref;
         }
       } else if (kind == GK_CONST) {
-        load_named_const(e, &p->global_consts.items[info >> GLOBAL_KIND_BITS]);
+        load_named_const(p, e, &p->global_consts.items[info >> GLOBAL_KIND_BITS]);
       } else if (kind == GK_FUNC) {
         const GlobalFunc* gf = &p->global_funcs.items[info >> GLOBAL_KIND_BITS];
         e->type = gf->type;
@@ -3135,7 +3146,9 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
   bool has_value = optional(p, TK_EQ);
   if (has_value) {
     value_at = p->ls.pos.t.loc;
+    p->const_context = toplevel;
     expr_expect(p, t, &v);
+    p->const_context = false;
     check_assign(p, t, &v, value_at);
     if (is_const) {
       declare_const(p, name, at, toplevel, t, &v, value_at);
@@ -3247,7 +3260,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       // function.
       bool to_existing = not_augassign && (!declares || loc);
       ExpDesc v;
+      p->const_context = toplevel;
       expr_expect(p, to_existing ? exp.type : ty_unknown, &v);
+      p->const_context = false;
       if (to_existing) {
         check_assign(p, exp.type, &v, value_at);
       } else if (!not_augassign) {

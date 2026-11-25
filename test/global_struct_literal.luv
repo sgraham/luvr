@@ -1,0 +1,16 @@
+# RET: 0
+struct Inner:
+    int a
+    str s
+
+struct Outer:
+    Inner inner
+    int n = 5
+
+origin = Inner(1, "one")
+Outer nested = Outer(Inner(.s="two"), 3)
+ORIGIN = Inner(2, "const")
+copy = ORIGIN
+
+def int main():
+    return 0

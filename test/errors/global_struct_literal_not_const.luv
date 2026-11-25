@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:9:18:point = Point(1, count)
+# CERR: {ssss}                       ^ error: Expected a constant expression.
+struct Point:
+    int x
+    int y
+
+count = 3
+point = Point(1, count)
