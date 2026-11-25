@@ -231,8 +231,10 @@ struct Parser {
   VEC(TypeInfo) types;  // by TypeId, with unused entries for the FixedTypes
   VEC(TypeId) param_types;
   VEC(Field) fields;
-  // The image of the struct whose body is being parsed. Only used when EMIT.
+  // The image of the struct whose body is being parsed, and its relocations in
+  // order of offset. Only used when EMIT.
   VEC(u8) image;
+  VEC(IlReloc) image_relocs;
   // Each [N]T, by a hash of N and T. The slot's val is the TypeId.
   HashTable array_types;
   // The prelude's globals by NameId, for names below prelude_name_end. See
@@ -3836,25 +3838,43 @@ static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offs
   }
 }
 
+// Copies data and its relocations to offset in p->image.
+static void image_add_data(Parser* p, DataId data, u32 offset) {
+  const Ctx* ctx = p->ls.ctx;
+  const IlData* d = &ctx->data.items[data.u];
+  memcpy(&p->image.items[offset], &ctx->databytes.items[d->off], d->len);
+  for (u32 i = 0; i < d->relocs_num; ++i) {
+    IlReloc reloc = ctx->relocs.items[d->relocs_first + i];
+    reloc.off += offset;
+    *vec_push(p->ls.ctx, &p->image_relocs) = reloc;
+  }
+}
+
 // Copies the images of any structs in a field of type t to offset in
 // p->image. Returns whether there were any.
 static bool image_add_field(Parser* p, TypeId t, u32 offset) {
   if (type_is_array(p, t)) {
     const TypeInfo* info = type_info(p, t);
+    u32 first_reloc = p->image_relocs.num;
     if (info->count == 0 || !image_add_field(p, info->elem, offset)) {
       return false;
     }
+    u32 end_reloc = p->image_relocs.num;
     u32 elem_size = type_size(p, info->elem);
     for (u32 i = 1; i < info->count; ++i) {
       memcpy(&p->image.items[offset + i * elem_size], &p->image.items[offset], elem_size);
+      for (u32 j = first_reloc; j < end_reloc; ++j) {
+        IlReloc reloc = p->image_relocs.items[j];
+        reloc.off += i * elem_size;
+        *vec_push(p->ls.ctx, &p->image_relocs) = reloc;
+      }
     }
     return true;
   }
   if (!type_is_struct(p, t) || type_info(p, t)->image.u == DATA_NONE) {
     return false;
   }
-  const IlData* d = &p->ls.ctx->data.items[type_info(p, t)->image.u];
-  memcpy(&p->image.items[offset], &p->ls.ctx->databytes.items[d->off], d->len);
+  image_add_data(p, type_info(p, t)->image, offset);
   return true;
 }
 
@@ -3874,9 +3894,11 @@ static AggId type_agg(Parser* p, TypeId t) {
   }
   info->agg = il_agg_add(p->ls.ctx, size, type_align(p, t), leaves, num_leaves);
   p->image.num = 0;
+  p->image_relocs.num = 0;
   image_extend(p, size);
   if (image_add_field(p, t, 0)) {
-    info->image = il_data_add(p->ls.ctx, p->image.items, size, type_align(p, t), NULL, 0);
+    info->image = il_data_add(p->ls.ctx, p->image.items, size, type_align(p, t),
+                              p->image_relocs.items, p->image_relocs.num);
   }
   return info->agg;
 }
@@ -3898,6 +3920,7 @@ static void struct_body(Parser* p, TypeId st) {
   bool known = true;
   bool has_image = false;
   p->image.num = 0;
+  p->image_relocs.num = 0;
   for (;;) {
     SrcLoc type_at = p->ls.pos.t.loc;
     TypeId t = type(p);
@@ -3966,7 +3989,8 @@ static void struct_body(Parser* p, TypeId st) {
     info->agg = il_agg_add(p->ls.ctx, size, align, leaves, num_leaves);
     if (EMIT && has_image) {
       image_extend(p, size);
-      info->image = il_data_add(p->ls.ctx, p->image.items, size, align, NULL, 0);
+      info->image = il_data_add(p->ls.ctx, p->image.items, size, align, p->image_relocs.items,
+                                p->image_relocs.num);
     }
   }
 }
@@ -4342,6 +4366,7 @@ static void parse_end(Parser* p) {
   free(p->param_types.items);
   free(p->fields.items);
   free(p->image.items);
+  free(p->image_relocs.items);
   hashtable_free(&p->array_types);
   free(p);
 }
