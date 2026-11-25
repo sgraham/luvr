@@ -1,0 +1,14 @@
+# OUT: 4
+# OUT: 2
+struct Inner:
+    int x
+
+struct Outer:
+    Inner inner = Inner(.x=4)
+
+def int main():
+    ORIGIN = Inner(2)
+    Outer o
+    print o.inner.x
+    print ORIGIN.x
+    return 0

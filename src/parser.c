@@ -3146,7 +3146,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
   bool has_value = optional(p, TK_EQ);
   if (has_value) {
     value_at = p->ls.pos.t.loc;
-    p->const_context = toplevel;
+    p->const_context = toplevel || is_const;
     expr_expect(p, t, &v);
     p->const_context = false;
     check_assign(p, t, &v, value_at);
@@ -3260,7 +3260,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       // function.
       bool to_existing = not_augassign && (!declares || loc);
       ExpDesc v;
-      p->const_context = toplevel;
+      p->const_context = toplevel || (declares && name_of(p, name)->is_const);
       expr_expect(p, to_existing ? exp.type : ty_unknown, &v);
       p->const_context = false;
       if (to_existing) {
@@ -3923,7 +3923,9 @@ static void struct_body(Parser* p, TypeId st) {
     if (optional(p, TK_EQ)) {
       SrcLoc value_at = p->ls.pos.t.loc;
       ExpDesc v;
+      p->const_context = true;
       subexpr(p, -1, &v);
+      p->const_context = false;
       check_assign(p, t, &v, value_at);
       if (!exp_is_const(&v)) {
         error_at(p, value_at, "Expected a constant expression.");
