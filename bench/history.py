@@ -380,7 +380,14 @@ def measure_commits(args, settings, inputs, log):
                         print(f"  {inp.name} {mode}: {note}", flush=True)
         finally:
             shutil.rmtree(work, ignore_errors=True)
-        log["entries"] = [e for e in log["entries"] if e["commit"] != sha] + [asdict(entry)]
+        # A commit that's measured again keeps its place, so that the log's diff
+        # only shows the changed numbers.
+        entries = log["entries"]
+        old = next((k for k, e in enumerate(entries) if e["commit"] == sha), None)
+        if old is None:
+            entries.append(asdict(entry))
+        else:
+            entries[old] = asdict(entry)
         save_log(args.log, log)
 
 
