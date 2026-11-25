@@ -201,7 +201,7 @@ static int run_file(Ctx* ctx,
   *total_tokens += ntok;
   *total_bytes += len;
   *total_time += t1 - t0;
-  // buf isn't freed because interned names point into it.
+  free(buf);
   return 0;
 }
 
