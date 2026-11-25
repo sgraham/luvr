@@ -319,25 +319,42 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   }
 }
 
+static bool il_data_is_text(const u8* bytes, u32 len) {
+  for (u32 i = 0; i < len; ++i) {
+    u8 c = bytes[i];
+    if ((c < ' ' || c > '~') && c != '\n' && c != '\t') {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Data is a quoted string when it's all text, and otherwise hex bytes.
 void il_dump_data(const Ctx* ctx, u32 i, FILE* out) {
   const IlData* d = &ctx->data.items[i];
-  fprintf(out, "data @.dat%u ", i);
+  const u8* bytes = &ctx->databytes.items[d->off];
+  fprintf(out, "data @.dat%u", i);
   if (d->align > 1) {
-    fprintf(out, "align %u ", d->align);
+    fprintf(out, " align %u", d->align);
   }
-  fputc('"', out);
+  if (!il_data_is_text(bytes, d->len)) {
+    for (u32 j = 0; j < d->len; ++j) {
+      fprintf(out, " %02x", bytes[j]);
+    }
+    fputc('\n', out);
+    return;
+  }
+  fputs(" \"", out);
   for (u32 j = 0; j < d->len; ++j) {
-    u8 c = ctx->databytes.items[d->off + j];
+    u8 c = bytes[j];
     if (c == '"' || c == '\\') {
       fprintf(out, "\\%c", c);
     } else if (c == '\n') {
       fputs("\\n", out);
     } else if (c == '\t') {
       fputs("\\t", out);
-    } else if (c >= ' ' && c <= '~') {
-      fputc(c, out);
     } else {
-      fprintf(out, "\\x%02x", c);
+      fputc(c, out);
     }
   }
   fputs("\"\n", out);

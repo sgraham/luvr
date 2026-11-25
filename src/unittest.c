@@ -276,23 +276,25 @@ static void test_il_data(void) {
   il_init_test(&f, &ctx, IT_VOID);
   u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
   DataId hi = il_data_add(&ctx, (const u8*)"hi", 2, 1);
-  DataId escaped = il_data_add(&ctx, (const u8*)"\"\\\n\t\x00\x7f\xff~ ", 9, 1);
+  DataId escaped = il_data_add(&ctx, (const u8*)"\"\\\n\t~ ", 6, 1);
   il_data_add(&ctx, NULL, 0, 1);
+  il_data_add(&ctx, (const u8*)"a\x00\x7f\xff", 4, 1);
   static const u8 image[] = {1, 0, 0, 0, 0, 0, 0, 0};
   il_data_add(&ctx, image, 8, 8);
   il_block_start(&f, il_block_declare(&f));
-  Ref args[] = {il_const_data(&f, escaped), il_const_int(&f, IT_I64, 9), il_const_data(&f, hi),
+  Ref args[] = {il_const_data(&f, escaped), il_const_int(&f, IT_I64, 6), il_const_data(&f, hi),
                 il_const_int(&f, IT_I64, 2)};
   il_call(&f, IT_VOID, il_const_sym(&f, sym), args, 4);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);
   expect_il_dump(&f, "",
                  "data @.dat0 \"hi\"\n"
-                 "data @.dat1 \"\\\"\\\\\\n\\t\\x00\\x7f\\xff~ \"\n"
+                 "data @.dat1 \"\\\"\\\\\\n\\t~ \"\n"
                  "data @.dat2 \"\"\n"
-                 "data @.dat3 align 8 \"\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\"\n"
+                 "data @.dat3 61 00 7f ff\n"
+                 "data @.dat4 align 8 01 00 00 00 00 00 00 00\n"
                  "func @f\n"
                  ":0\n"
-                 "  CALL @g, @.dat1, 9, @.dat0, 2\n"
+                 "  CALL @g, @.dat1, 6, @.dat0, 2\n"
                  "  RET\n",
                  "test_il_data");
   il_free(&f);

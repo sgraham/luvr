@@ -152,14 +152,17 @@ def parse(text):
             continue
         try:
             if line.startswith("data "):
-                # data @.dat0 [align 8] "bytes"
+                # data @.dat0 [align 8] "bytes", or data @.dat1 [align 8] 01 02
                 _, name, s = line.split(None, 2)
                 align = 1
                 if s.startswith("align "):
                     _, align, s = s.split(None, 2)
                     align = int(align)
-                # The escapes are a subset of a Python bytes literal's.
-                b = ast.literal_eval("b" + s)
+                if s.startswith('"'):
+                    # The escapes are a subset of a Python bytes literal's.
+                    b = ast.literal_eval("b" + s)
+                else:
+                    b = bytes(int(tok, 16) for tok in s.split())
                 addr = alloc(mem, len(b), align)
                 mem.bytes[addr:addr + len(b)] = b
                 data[name[1:]] = addr
