@@ -3910,7 +3910,7 @@ static void struct_body(Parser* p, TypeId st) {
       ExpDesc v;
       subexpr(p, -1, &v);
       check_assign(p, t, &v, value_at);
-      if (v.kind != EK_CONST) {
+      if (!exp_is_const(&v)) {
         error_at(p, value_at, "Expected a constant expression.");
       }
       if (EMIT && known) {

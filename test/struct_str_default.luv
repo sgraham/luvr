@@ -1,0 +1,11 @@
+# OUT: entry
+# OUT: 3
+struct Item:
+    str label = "entry"
+    int n = 3
+
+def int main():
+    Item item
+    print item.label
+    print item.n
+    return 0
