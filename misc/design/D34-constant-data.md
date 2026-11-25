@@ -255,3 +255,27 @@ images like the rest.
 - Global lists are errors for now.
 - The expected type is a parameter of `expr_expect()`, only used when a
   literal starts the expression.
+
+## Later (2026-11-25)
+
+- **Folding through aggregate constants.** A field or element of a named
+  aggregate constant (`LIMITS.max`, `PRIMES[2]`) is read from its image
+  with a `LOAD`, so it isn't a compile-time constant, and can't be used
+  where one is required, such as an array size or another constant's
+  initializer. A table of limits referred to by name is a reasonable thing
+  to want, so this can be added when someone needs it, by reading the
+  scalar from the image's bytes and giving `EK_CONST`.
+- **An explicit array literal form.** A top-level array literal only gets
+  its type from a declaration (`[3]int XS = [1, 2, 3]`), since with no
+  expected type `XS = [1, 2, 3]` is a list. The same goes for a literal
+  in parentheses, as an operand (`[1, 2, 3][i]`), or passed to `print` or
+  `len`. A prefix could make a literal an array of exactly the elements
+  written, such as `$[1, 2, 3]` or `@[1, 2, 3]` (both unused by the lexer).
+  The element type would come from the first element, as for a list, so
+  `$[1u8, 2, 3]` is `[3]u8`. It has to be a prefix, since the parser is
+  single pass, and in a function body an array's elements are stored as
+  they're parsed. A suffix like `[1, 2, 3]u8` would only be seen after
+  that. `[3]int(1, 2, 3)`, like a struct literal's `Type(args)`, was also
+  considered, but needs a lookahead past `[N]T(`, because `[3]` is also a
+  list literal. `!` is left for a possible error union type. The
+  contextual form would stay.

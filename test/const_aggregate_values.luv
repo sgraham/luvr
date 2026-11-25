@@ -1,0 +1,46 @@
+# OUT: hi
+# OUT: hi
+# OUT: 1
+# OUT: 2
+# OUT: 3
+# OUT: 5
+# OUT: local
+# OUT: hi
+# OUT: 1
+# OUT: 4
+struct Point:
+    int x
+    int y
+
+GREETING = "hi"
+HELLO = GREETING
+ORIGIN = Point(1, 2)
+[3]int PRIMES = [2, 3, 5]
+
+struct Named:
+    str name = GREETING
+    Point at = ORIGIN
+
+def show(Point pt):
+    print pt.x
+    print pt.y
+
+def Point origin():
+    return ORIGIN
+
+def int main():
+    print GREETING
+    print HELLO
+    show(origin())
+    ps = PRIMES
+    print ps[1]
+    print ps[2]
+    LOCAL = "local"
+    print LOCAL
+    Named nm
+    print nm.name
+    print nm.at.x
+    FAR = Point(4, 5)
+    pt = FAR
+    print pt.x
+    return 0

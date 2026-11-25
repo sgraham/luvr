@@ -167,7 +167,10 @@ struct Field {
 // to reduce unnecessarily large searches.
 struct NamedConst {
   TypeId type;
-  ConstValue cv;
+  union {
+    ConstValue cv;  // a scalar
+    DataId data;    // an aggregate's image, only when EMIT
+  };
 };
 
 // A top-level function. Its sym is FUNC_NO_SYM in the checking build, and
@@ -549,8 +552,15 @@ static void declare_global(Parser* p, NameId name, GlobalInfo info) {
 // Out of line, since uses of constants are rare compared to variables.
 static NOINLINE void load_named_const(Parser* p, ExpDesc* e, const NamedConst* c) {
   e->type = c->type;
-  e->kind = type_is_aggregate(p, c->type) ? EK_CONST_DATA : EK_CONST;
-  e->cv = c->cv;
+  if (type_is_aggregate(p, c->type)) {
+    e->kind = EK_CONST_DATA;
+    if (EMIT) {
+      e->data = c->data;
+    }
+  } else {
+    e->kind = EK_CONST;
+    e->cv = c->cv;
+  }
 }
 
 // Returns whether e's value is known at compile time, either in e itself or
@@ -3153,10 +3163,14 @@ static void declare_const(Parser* p,
   if (!exp_is_const(v)) {
     error_at(p, value_at, "Expected a constant expression.");
   }
-  if (EMIT && v->kind == EK_CONST_DATA) {
-    error_at(p, value_at, "This constant isn't supported yet.");
+  NamedConst c = {.type = t};
+  if (v->kind == EK_CONST_DATA) {
+    if (EMIT) {
+      c.data = v->data;
+    }
+  } else {
+    c.cv = v->cv;
   }
-  NamedConst c = {t, v->cv};
   if (type_is_float(t) && type_is_integer(v->type)) {
     c.cv.f = (double)v->cv.i;
   } else if (t.u == TY_F32) {
