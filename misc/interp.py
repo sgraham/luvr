@@ -35,9 +35,19 @@ class Operand:
 # All of the program's memory: data, then the frames of the calls that are
 # running. Address 0 is never used, so that it can be null.
 @dataclass
+class ReadOnly:
+    start: int
+    end: int
+    name: str  # the data's symbol name
+
+
+@dataclass
 class Memory:
     bytes: bytearray
     top: int  # the first unused address
+    # The ro data, which is an error to write to, as it would be in a
+    # read-only section.
+    readonly: list
 
 
 @dataclass
@@ -131,20 +141,28 @@ def load(mem, addr, ty):
     return int.from_bytes(mem.bytes[addr:addr + n], "little", signed=ty[0] == "i")
 
 
+# Every write to memory goes through here.
+def write(mem, addr, b):
+    for r in mem.readonly:
+        if addr < r.end and r.start < addr + len(b):
+            raise Error(f"write to read-only data @{r.name}")
+    mem.bytes[addr:addr + len(b)] = b
+
+
 # Values are kept in the signed range of their type, except after ZEXT32, so
 # only the low bits are stored.
 def store(mem, addr, ty, v):
     if ty not in INT_SIZES:
         raise Error(f"STORE {ty} isn't supported yet")
     n = INT_SIZES[ty]
-    mem.bytes[addr:addr + n] = (v & ((1 << (8 * n)) - 1)).to_bytes(n, "little")
+    write(mem, addr, (v & ((1 << (8 * n)) - 1)).to_bytes(n, "little"))
 
 
 def parse(text):
     funcs = {}
     data = {}
     aggs = {}
-    mem = Memory(bytearray(), 8)
+    mem = Memory(bytearray(), 8, [])
     f = None
     for lineno, raw in enumerate(text.split("\n"), 1):
         line = raw.strip()
@@ -158,8 +176,7 @@ def parse(text):
                 #       where @.dat0 is its 8-byte address
                 #   data @.dat2 rw align 8 zero 16
                 # Data is always dumped after the data it refers to.
-                # All memory is writable here, so ro and rw are the same.
-                _, name, _, _, align, s = line.split(None, 5)
+                _, name, access, _, align, s = line.split(None, 5)
                 align = int(align)
                 b = bytearray()
                 if s.startswith("zero "):
@@ -178,6 +195,8 @@ def parse(text):
                 addr = alloc(mem, len(b), align)
                 mem.bytes[addr:addr + len(b)] = b
                 data[name[1:]] = addr
+                if access == "ro":
+                    mem.readonly.append(ReadOnly(addr, addr + len(b), name[1:]))
             elif line.startswith("agg "):
                 # agg #0 size 16 align 8 sse0, where the ABI bits are only
                 # needed by a back end.
@@ -294,7 +313,7 @@ def run(prog, f, args, result_dst):
             src = value_of(values, prog, ins.operands[0])
             agg = prog.aggs[ins.operands[1].val]
             addr = alloc(mem, agg.size, agg.align)
-            mem.bytes[addr:addr + agg.size] = mem.bytes[src:src + agg.size]
+            write(mem, addr, mem.bytes[src:src + agg.size])
             values[ins.result] = addr
             continue
         if ins.op == "SLOT":
@@ -310,12 +329,12 @@ def run(prog, f, args, result_dst):
         if ins.op == "ZERO":
             addr = value_of(values, prog, ins.operands[0])
             size = prog.aggs[ins.operands[1].val].size
-            mem.bytes[addr:addr + size] = bytes(size)
+            write(mem, addr, bytes(size))
             continue
         if ins.op == "COPY":
             dst, src = (value_of(values, prog, o) for o in ins.operands[:2])
             size = prog.aggs[ins.operands[2].val].size
-            mem.bytes[dst:dst + size] = mem.bytes[src:src + size]
+            write(mem, dst, mem.bytes[src:src + size])
             continue
         if ins.op in ARITH:
             a, b = (value_of(values, prog, o) for o in ins.operands)
@@ -366,7 +385,7 @@ def run(prog, f, args, result_dst):
             # destination here, before that frame is freed.
             src = value_of(values, prog, ins.operands[0])
             size = prog.aggs[int(f.ret[1:])].size
-            mem.bytes[result_dst:result_dst + size] = mem.bytes[src:src + size]
+            write(mem, result_dst, mem.bytes[src:src + size])
             mem.top = frame_base
             return None
         if ins.op == "RET":
