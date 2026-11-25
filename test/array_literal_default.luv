@@ -1,0 +1,46 @@
+# OUT: 1
+# OUT: 3
+# OUT: b
+# OUT: 4
+# OUT: -1
+# OUT: 5
+# OUT: in
+# OUT: 1
+# OUT: two
+# OUT: 8
+# OUT: 9
+# OUT: c
+# OUT: 3
+struct In:
+    int x = 1
+    str s = "in"
+
+struct Box:
+    [2]int vals = [6, 7]
+    str tag = "box"
+
+struct Holder:
+    [3]int nums = [1, 2, 3]
+    [2]str names = ["a", "b"]
+    [2][2]i8 grid = [[1, 2], [3, 4]]
+    i8 after = -1
+    [2]In ins = [In(.x=5), In(.s="two")]
+    Box box = Box(.vals=[8, 9])
+
+def int main():
+    Holder h
+    print h.nums[0]
+    print h.nums[2]
+    print h.names[1]
+    print h.grid[1][1]
+    print h.after
+    print h.ins[0].x
+    print h.ins[0].s
+    print h.ins[1].x
+    print h.ins[1].s
+    print h.box.vals[0]
+    print h.box.vals[1]
+    h2 = Holder(.names=["c", "d"])
+    print h2.names[0]
+    print h2.nums[2]
+    return 0

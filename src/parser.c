@@ -331,6 +331,7 @@ static u32 array_size(Parser* p);
 static IlType il_mem_type_of(Parser* p, TypeId t);
 static AggId type_agg(Parser* p, TypeId t);
 static DataId emit_str_data(Parser* p, const u8* s, u32 len);
+static void image_extend(Parser* p, u32 size);
 static u32 image_begin(Parser* p, u32 size);
 static DataId image_end(Parser* p, u32 base, u32 align);
 static bool image_add_field(Parser* p, TypeId t, u32 offset);
@@ -813,6 +814,7 @@ static TypeId type_pointer_to(Parser* p, TypeId t) {
 
 static bool type_has_layout(Parser* p, TypeId t);
 static u32 type_size(Parser* p, TypeId t);
+static u32 type_align(Parser* p, TypeId t);
 
 // [count]elem, which is at `at` for errors. Like pointers, an array of an
 // unknown type is unknown.
@@ -2168,8 +2170,9 @@ static void comprehension(Parser* p, const LexPos* elem, SrcLoc at) {
 }
 
 // An element of a list or array literal, checked against `elem` if it's known.
-// When emitting an array, it's stored at temp + offset.
-static void list_element(Parser* p, TypeId elem, Ref temp, u32 offset) {
+// When emitting an array, it's stored at temp + offset, or in a constant
+// context, written at image + offset in p->image.
+static void list_element(Parser* p, TypeId elem, Ref temp, u32 image, u32 offset) {
   SrcLoc at = p->ls.pos.t.loc;
   ExpDesc v;
   expr_expect(p, elem, &v);
@@ -2179,7 +2182,12 @@ static void list_element(Parser* p, TypeId elem, Ref temp, u32 offset) {
   if (p->const_context && !exp_is_const(&v)) {
     error_at(p, at, "Expected a constant expression.");
   }
-  if (EMIT && temp) {
+  if (EMIT && p->const_context) {
+    // The image grows with each element, so that too many elements are an
+    // error after the literal rather than a write past its end.
+    image_extend(p, image + offset + type_size(p, elem));
+    image_add_const(p, elem, &v, image + offset, at);
+  } else if (EMIT && temp) {
     ExpDesc dst = {.type = elem, .kind = EK_ADDR, .base = temp, .offset = offset};
     emit_assign_to_addr(p, &dst, &v, at);
   }
@@ -2214,28 +2222,31 @@ static void list_literal(Parser* p, ExpDesc* e) {
     }
     lex_rewind(&p->ls, &elem);
   }
-  // Every element is stored, so the temporary doesn't need initializing.
+  // Every element is stored, so the temporary doesn't need initializing. In a
+  // constant context, the literal is built as an image in p->image instead.
   Ref temp = 0;
+  u32 image = 0;
   u32 elem_size = 0;
-  if (EMIT && is_array && p->const_context) {
-    error_at(p, at, "This array literal isn't supported yet.");
-  }
   if (EMIT && is_array) {
     if (!type_has_layout(p, expected)) {
       error_at(p, at, "This array literal isn't supported yet.");
     }
-    temp = il_slot_addr(&p->il,
-                        il_slot_add_agg(&p->il, type_agg(p, expected), (NameId){IL_SLOT_UNNAMED}));
+    if (p->const_context) {
+      image = image_begin(p, 0);
+    } else {
+      temp = il_slot_addr(
+          &p->il, il_slot_add_agg(&p->il, type_agg(p, expected), (NameId){IL_SLOT_UNNAMED}));
+    }
     elem_size = type_size(p, elem_type);
   }
   if (T(p) != TK_RSQUARE) {
-    list_element(p, elem_type, temp, 0);
+    list_element(p, elem_type, temp, image, 0);
     count = 1;
     while (optional(p, TK_COMMA)) {
       if (T(p) == TK_RSQUARE) {
         break;  // trailing comma
       }
-      list_element(p, elem_type, temp, count * elem_size);
+      list_element(p, elem_type, temp, image, count * elem_size);
       ++count;
     }
   }
@@ -2249,6 +2260,9 @@ static void list_literal(Parser* p, ExpDesc* e) {
   }
   if (is_array && p->const_context) {
     e->kind = EK_CONST_DATA;
+    if (EMIT) {
+      e->data = image_end(p, image, type_align(p, expected));
+    }
   } else if (EMIT && is_array) {
     e->kind = EK_ADDR;
     e->base = temp;
