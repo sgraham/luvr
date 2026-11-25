@@ -289,12 +289,12 @@ typedef enum Flow {
 
 // Where an expression's value is.
 typedef enum ExpKind {
-  EK_REF,    // the result of an instruction or constant, in ExpDesc.ref
-  EK_CONST,  // in ExpDesc.cv
-  EK_LOCAL,  // in ExpDesc.slot, not loaded yet
-  EK_ADDR,   // in memory at ExpDesc.base + ExpDesc.offset, not loaded yet
-  EK_STR,    // a string literal, whose bytes are Ctx.data at ExpDesc.data
-  EK_FUNC,   // a function, whose symbol is ExpDesc.sym
+  EK_REF,         // the result of an instruction or constant, in ExpDesc.ref
+  EK_CONST,       // in ExpDesc.cv
+  EK_LOCAL,       // in ExpDesc.slot, not loaded yet
+  EK_ADDR,        // in memory at ExpDesc.base + ExpDesc.offset, not loaded yet
+  EK_CONST_DATA,  // in Ctx.data at ExpDesc.data. Only string literals so far.
+  EK_FUNC,        // a function, whose symbol is ExpDesc.sym
 } ExpKind;
 
 // What is known about an expression that has been parsed but not yet emitted.
@@ -305,7 +305,7 @@ struct ExpDesc {
   union {
     SlotId slot;  // EK_LOCAL
     Ref ref;      // EK_REF
-    DataId data;  // EK_STR
+    DataId data;  // EK_CONST_DATA
     u32 sym;      // EK_FUNC
     struct {      // EK_ADDR
       Ref base;
@@ -1587,7 +1587,7 @@ static Ref emit_agg_addr(Parser* p, const ExpDesc* e, SrcLoc at) {
   if (e->kind == EK_ADDR) {
     return emit_addr(p, e);
   }
-  if (e->kind == EK_STR) {
+  if (e->kind == EK_CONST_DATA) {
     // A string literal is only data and a length until it's used as a str
     // value, and then it's built in a new temporary. It can't be a constant
     // image in the data, because the pointer to the bytes would need a
@@ -1677,7 +1677,7 @@ static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
   }
   Ref args[2];
   u32 nargs = 1;
-  if (t.u == TY_STR && e->kind == EK_STR) {
+  if (t.u == TY_STR && e->kind == EK_CONST_DATA) {
     // A literal is printed from its data, without building a str.
     args[0] = il_const_data(&p->il, e->data);
     args[1] = il_const_int(&p->il, IT_I64, p->ls.ctx->data.items[e->data.u].len);
@@ -2879,7 +2879,7 @@ static void primary(Parser* p, ExpDesc* e) {
       if (EMIT) {
         u32 len;
         const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-        e->kind = EK_STR;
+        e->kind = EK_CONST_DATA;
         e->data = il_data_add(p->ls.ctx, s, len, 1);
       }
       next(p);

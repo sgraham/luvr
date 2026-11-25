@@ -63,16 +63,17 @@ its `# OUT:` and `# RET:` headers are checked ([D29](D29-test-targets.md)).
 | `EK_CONST` | a constant in `cv` |
 | `EK_LOCAL` | in a slot, not loaded yet |
 | `EK_ADDR` | in memory at `base + offset`, not loaded yet |
-| `EK_STR` | a string literal, by its index in `Ctx.data` |
+| `EK_CONST_DATA` | constant data, by its index in `Ctx.data` (only string literals so far) |
 | `EK_FUNC` | a function, by its symbol |
 
 Delaying the load of `EK_LOCAL` and `EK_ADDR` lets `x = y` be a `LOAD` and
 a `STORE`, lets `&x` use the address without a load, and lets a field of a
-field add its offset without any instruction. `EK_STR` stays unemitted
-until it's used. `print` of a literal uses its data directly, and any other
-use builds a `str` in a temporary. A `Ref` of 0 is never valid, so an
-expression that wasn't emitted (`exp_unemitted`) is an error if it's used,
-rather than reusing a stale value.
+field add its offset without any instruction. A string literal
+(`EK_CONST_DATA`) stays unemitted until it's used. `print` of a literal
+uses its data directly, and any other use builds a `str` in a temporary.
+A `Ref` of 0 is never valid, so an expression that wasn't emitted
+(`exp_unemitted`) is an error if it's used, rather than reusing a stale
+value.
 
 The emission helpers are in `parser.c`, named `emit_*`, such as
 `emit_to_ref` (make `e` one value of type `t`), `emit_agg_addr`,
