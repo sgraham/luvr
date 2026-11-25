@@ -275,31 +275,33 @@ static void test_il_data(void) {
   IlFunc f;
   il_init_test(&f, &ctx, IT_VOID);
   u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
-  DataId hi = il_data_add(&ctx, (const u8*)"hi", 2, 1, NULL, 0);
-  DataId escaped = il_data_add(&ctx, (const u8*)"\"\\\n\t~ ", 6, 1, NULL, 0);
-  il_data_add(&ctx, NULL, 0, 1, NULL, 0);
-  il_data_add(&ctx, (const u8*)"a\x00\x7f\xff", 4, 1, NULL, 0);
+  DataId hi = il_data_add(&ctx, (const u8*)"hi", 2, 1, /*writable=*/false, NULL, 0);
+  DataId escaped = il_data_add(&ctx, (const u8*)"\"\\\n\t~ ", 6, 1, /*writable=*/false, NULL, 0);
+  il_data_add(&ctx, NULL, 0, 1, /*writable=*/false, NULL, 0);
+  il_data_add(&ctx, (const u8*)"a\x00\x7f\xff", 4, 1, /*writable=*/false, NULL, 0);
   static const u8 image[] = {1, 0, 0, 0, 0, 0, 0, 0};
-  il_data_add(&ctx, image, 8, 8, NULL, 0);
+  il_data_add(&ctx, image, 8, 8, /*writable=*/true, NULL, 0);
   static const u8 str_image[16] = {[8] = 2};
   IlReloc str_relocs[] = {{0, hi}};
-  il_data_add(&ctx, str_image, 16, 8, str_relocs, COUNTOF(str_relocs));
+  il_data_add(&ctx, str_image, 16, 8, /*writable=*/false, str_relocs, COUNTOF(str_relocs));
   static const u8 two_image[24] = {1, 2, 3, 4, 5, 6, 7, 8};
   IlReloc two_relocs[] = {{16, hi}, {8, escaped}};
-  il_data_add(&ctx, two_image, 24, 8, two_relocs, COUNTOF(two_relocs));
+  il_data_add(&ctx, two_image, 24, 8, /*writable=*/false, two_relocs, COUNTOF(two_relocs));
+  il_data_add_zero(&ctx, 4000, 8, /*writable=*/true);
   il_block_start(&f, il_block_declare(&f));
   Ref args[] = {il_const_data(&f, escaped), il_const_int(&f, IT_I64, 6), il_const_data(&f, hi),
                 il_const_int(&f, IT_I64, 2)};
   il_call(&f, IT_VOID, il_const_sym(&f, sym), args, 4);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);
   expect_il_dump(&f, "",
-                 "data @.dat0 \"hi\"\n"
-                 "data @.dat1 \"\\\"\\\\\\n\\t~ \"\n"
-                 "data @.dat2 \"\"\n"
-                 "data @.dat3 61 00 7f ff\n"
-                 "data @.dat4 align 8 01 00 00 00 00 00 00 00\n"
-                 "data @.dat5 align 8 @.dat0 02 00 00 00 00 00 00 00\n"
-                 "data @.dat6 align 8 01 02 03 04 05 06 07 08 @.dat1 @.dat0\n"
+                 "data @.dat0 ro align 1 \"hi\"\n"
+                 "data @.dat1 ro align 1 \"\\\"\\\\\\n\\t~ \"\n"
+                 "data @.dat2 ro align 1 \"\"\n"
+                 "data @.dat3 ro align 1 61 00 7f ff\n"
+                 "data @.dat4 rw align 8 01 00 00 00 00 00 00 00\n"
+                 "data @.dat5 ro align 8 @.dat0 02 00 00 00 00 00 00 00\n"
+                 "data @.dat6 ro align 8 01 02 03 04 05 06 07 08 @.dat1 @.dat0\n"
+                 "data @.dat7 rw align 8 zero 4000\n"
                  "func @f\n"
                  ":0\n"
                  "  CALL @g, @.dat1, 6, @.dat0, 2\n"
@@ -386,8 +388,8 @@ static void test_il_agg_slot(void) {
   il_call(&f, IT_VOID, il_const_sym(&f, sym), &arg, 1);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);
   expect_il_dump(&f, "",
-                 "agg #0 16 8\n"
-                 "agg #1 16 8 sse0 sse1 hfa_f64\n"
+                 "agg #0 size 16 align 8\n"
+                 "agg #1 size 16 align 8 sse0 sse1 hfa_f64\n"
                  "func @f\n"
                  "  slot $0 #0 s\n"
                  "  slot $1 #0\n"
@@ -420,7 +422,7 @@ static void test_il_agg_result(void) {
   il_call(&f, IT_VOID, il_const_sym(&f, sym), args, 2);
   il_emit(&f, OP_RET, IT_AGG, addr, 0);
   expect_il_dump(&f, "",
-                 "agg #0 16 8\n"
+                 "agg #0 size 16 align 8\n"
                  "func #0 @f\n"
                  "  slot $0 #0\n"
                  ":0\n"

@@ -204,8 +204,8 @@ def int main():
 ```
 
 ```
-data @.dat0 "big "
-data @.dat1 align 8 @.dat0 04 00 00 00 00 00 00 00
+data @.dat0 ro align 1 "big "
+data @.dat1 ro align 8 @.dat0 04 00 00 00 00 00 00 00
 
 func i64 @add
 :0
@@ -237,18 +237,20 @@ func i64 @main
   when the layout is added, and `data` lines before the next function.
   Inside a function, `slot` lines come first, then a label line `:n` for
   each block, followed by its instructions.
-- `agg #N size align [sse0] [sse1] [hfa_f32|hfa_f64]` is an aggregate
+- `agg #N size S align A [sse0] [sse1] [hfa_f32|hfa_f64]` is an aggregate
   layout ([D31](D31-aggregates.md)). Elsewhere `#N` refers to it: an
   aggregate slot is `slot $n #N`, a function that returns one is
   `func #N @name`, and `COPY`, `ZERO`, `ARGAGG`, `PARAMAGG` and
   `RESULTAGG` have it as their last operand.
-- A `data` line is `data @.datN [align N] "bytes"` when there are no
-  relocations and every byte is printable, `\n` or `\t`. Otherwise it's
-  `data @.datN [align N]` followed by each byte as two hex digits, with
-  `@.datM` in place of the 8 bytes of a relocation to that data
+- A `data` line is `data @.datN ro|rw align N` and then its contents.
+  `ro` or `rw` says whether it's read-only or writable, such as a
+  global's storage, and both it and the alignment are always written, so
+  that the lines line up. The contents are `"bytes"` when there are no
+  relocations and every byte is printable, `\n` or `\t`, `zero N` for N
+  zero bytes, and otherwise each byte as two hex digits, with `@.datM` in
+  place of the 8 bytes of a relocation to that data
   ([D34](D34-constant-data.md)). A string literal is its bytes, then a
-  `str` image that refers to them. The alignment is only printed when it's
-  more than 1. Data only refers to data before it.
+  `str` image that refers to them. Data only refers to data before it.
 - An instruction is `[%n =] OP [type] operand, operand, ...`. The type is
   left out when it's `void`, for `SLOT`, which is always an `i64` address,
   and for the aggregate operations. Types are a fixed set of words that no

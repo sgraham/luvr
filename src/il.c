@@ -118,14 +118,15 @@ DataId il_data_add(Ctx* ctx,
                    const u8* s,
                    u32 len,
                    u32 align,
+                   bool writable,
                    const IlReloc* relocs,
                    u32 num_relocs) {
-  IlData* d = vec_push(ctx, &ctx->data);
-  d->off = ctx->databytes.num;
-  d->len = len;
-  d->align = align;
-  d->relocs_first = ctx->relocs.num;
-  d->relocs_num = num_relocs;
+  *vec_push(ctx, &ctx->data) = (IlData){.off = ctx->databytes.num,
+                                        .len = len,
+                                        .align = align,
+                                        .relocs_first = ctx->relocs.num,
+                                        .relocs_num = num_relocs,
+                                        .writable = writable};
   if (len != 0) {
     vec_reserve(ctx, &ctx->databytes, len);
     memcpy(&ctx->databytes.items[ctx->databytes.num], s, len);
@@ -150,6 +151,15 @@ DataId il_data_add(Ctx* ctx,
     }
     ctx->relocs.num += num_relocs;
   }
+  return (DataId){ctx->data.num - 1};
+}
+
+DataId il_data_add_zero(Ctx* ctx, u32 len, u32 align, bool writable) {
+  *vec_push(ctx, &ctx->data) = (IlData){.len = len,
+                                        .align = align,
+                                        .relocs_first = ctx->relocs.num,
+                                        .writable = writable,
+                                        .zero = true};
   return (DataId){ctx->data.num - 1};
 }
 
@@ -358,11 +368,12 @@ static bool il_data_is_text(const u8* bytes, u32 len) {
 // Data is a quoted string when it's all text, and otherwise hex bytes.
 void il_dump_data(const Ctx* ctx, u32 i, FILE* out) {
   const IlData* d = &ctx->data.items[i];
-  const u8* bytes = &ctx->databytes.items[d->off];
-  fprintf(out, "data @.dat%u", i);
-  if (d->align > 1) {
-    fprintf(out, " align %u", d->align);
+  fprintf(out, "data @.dat%u %s align %u", i, d->writable ? "rw" : "ro", d->align);
+  if (d->zero) {
+    fprintf(out, " zero %u\n", d->len);
+    return;
   }
+  const u8* bytes = &ctx->databytes.items[d->off];
   if (d->relocs_num != 0 || !il_data_is_text(bytes, d->len)) {
     u32 reloc = d->relocs_first;
     u32 reloc_end = reloc + d->relocs_num;
@@ -396,7 +407,7 @@ void il_dump_data(const Ctx* ctx, u32 i, FILE* out) {
 
 void il_dump_agg(const Ctx* ctx, u32 i, FILE* out) {
   const AggInfo* agg = &ctx->aggs.items[i];
-  fprintf(out, "agg #%u %u %u", i, agg->size, 1u << agg->align_log2);
+  fprintf(out, "agg #%u size %u align %u", i, agg->size, 1u << agg->align_log2);
   static const char* const abi_names[] = {"sse0", "sse1", "hfa_f32", "hfa_f64"};
   for (u32 bit = 0; bit < COUNTOF(abi_names); ++bit) {
     if (agg->abi & (1u << bit)) {

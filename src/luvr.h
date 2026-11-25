@@ -968,11 +968,13 @@ struct IlFunc {
 #define IL_BLOCK_NONE UINT32_MAX
 
 struct IlData {
-  u32 off;  // into Ctx.databytes
+  u32 off;  // into Ctx.databytes, unless zero
   u32 len;
   u32 align;
   u32 relocs_first;  // into Ctx.relocs
   u32 relocs_num;
+  bool writable;  // in writable memory, such as a global's storage
+  bool zero;      // len zero bytes, which aren't stored in Ctx.databytes
 };
 
 // The IL_RELOC_SIZE bytes at off in an IlData are the address of target. The
@@ -1039,8 +1041,12 @@ DataId il_data_add(Ctx* ctx,
                    const u8* s,
                    u32 len,
                    u32 align,
+                   bool writable,
                    const IlReloc* relocs,
                    u32 num_relocs);
+
+// Returns data of len zero bytes, which will be placed at a multiple of align.
+DataId il_data_add_zero(Ctx* ctx, u32 len, u32 align, bool writable);
 
 // Emits a CALL followed by an EXT for each two of the n args. ty is IT_VOID
 // if the call has no result.

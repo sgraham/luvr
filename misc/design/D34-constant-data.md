@@ -119,14 +119,15 @@ could work the same way.
   into the middle of another data item.
 - **Decided (2026-11-24):** data is dumped as a sequence of bytes, as it
   is now, with a second way of writing it that can include relocations:
-  `data @.dat1 align 8 @.dat0 05 00 00 00 00 00 00 00` for a `str`. A
+  `data @.dat1 ro align 8 @.dat0 05 00 00 00 00 00 00 00` for a `str`. A
   token starting with `@` is an 8-byte relocation to that data, and any
   other token is one byte in two lowercase hex digits. Data without
   relocations whose bytes are all printable (or `\n`, `\t`) stays a quoted
-  string, `data @.dat0 "hello"`, and anything else uses the hex form. There
-  are no sizes, padding or fills, since a back end only needs bytes and
-  relocations. Nothing is inserted before a relocation, so in
-  `data @.dat6 01 02 03 @.dat5` the relocation is at offset 3, unaligned,
+  string, `data @.dat0 ro align 1 "hello"`, and anything else uses the
+  hex form. There are no sizes, padding or fills, since a back end only
+  needs bytes and relocations, except that data that's all zeros is
+  `zero N` (2026-11-25), for globals without an initializer. Nothing is inserted before a relocation, so in
+  `data @.dat6 ro align 1 01 02 03 @.dat5` the relocation is at offset 3, unaligned,
   which is probably an error. The bytes are little-endian, so the image
   builder is slightly target specific. The alternatives were sized items with assembler names
   (`dq @.dat0 dq 5`) and QBE's typed items (`{ l @.dat0, l 5 }`), which
@@ -143,7 +144,9 @@ could work the same way.
 - Read-only and writable data: images and string bytes never change, but a
   global's storage does. **Decided (2026-11-24): a flag on `IlData`** that
   chooses `.rodata` or `.data`. A global's initial image is the global's
-  storage itself, as in C.
+  storage itself, as in C. It's dumped as `ro` or `rw` after the name.
+  From 2026-11-25, `ro`/`rw` and `align N` are always written, so every
+  `data` line starts with the same fields and only the contents differ.
 
 [D25](D25-backend.md)'s backend already plans code and data in sections
 with relocation records, so these relocations go straight through.

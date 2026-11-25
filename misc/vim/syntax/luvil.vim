@@ -5,7 +5,7 @@ endif
 
 syn case match
 
-syn keyword     luvilKeyword     agg align data func slot
+syn keyword     luvilKeyword     agg data func slot
 hi def link     luvilKeyword     Keyword
 
 syn keyword     luvilType        void i8 u8 i16 u16 i32 i64 f32 f64 sym
@@ -29,8 +29,12 @@ hi def link     luvilSym         Function
 hi def link     luvilBlock       Label
 hi def link     luvilAgg         Type
 
-" Hex bytes and ABI bits only appear in data and agg lines, and elsewhere they
-" could be names.
+" The words and hex bytes of data and agg lines only appear there, and
+" elsewhere they could be names.
+syn match       luvilDataWord    /\(^data\>.*\)\@<=\<\(ro\|rw\|align\|zero\)\>/
+syn match       luvilAggWord     /\(^agg\>.*\)\@<=\<\(size\|align\)\>/
+hi def link     luvilDataWord    Keyword
+hi def link     luvilAggWord     Keyword
 syn match       luvilHex         /\(^data\>.*\)\@<=\<\x\x\>/
 hi def link     luvilHex         Number
 syn match       luvilAggAbi      /\(^agg\>.*\)\@<=\<\(sse[01]\|hfa_f32\|hfa_f64\)\>/

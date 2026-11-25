@@ -2951,12 +2951,13 @@ static void store_le(u8* dst, u64 bits, u32 size) {
 // Adds the bytes of a string literal, and the image of a str that refers to
 // them.
 static DataId emit_str_data(Parser* p, const u8* s, u32 len) {
-  DataId bytes = il_data_add(p->ls.ctx, s, len, 1, NULL, 0);
+  DataId bytes = il_data_add(p->ls.ctx, s, len, 1, /*writable=*/false, NULL, 0);
   u8 image[16] = {0};
   ASSERT(type_size(p, ty_str) == sizeof(image));
   store_le(&image[p->str_len_offset], len, 8);
   IlReloc reloc = {p->str_data_offset, bytes};
-  return il_data_add(p->ls.ctx, image, sizeof(image), type_align(p, ty_str), &reloc, 1);
+  return il_data_add(p->ls.ctx, image, sizeof(image), type_align(p, ty_str), /*writable=*/false,
+                     &reloc, 1);
 }
 
 // primary -> literal | string | name | TypeName | '(' expr ')'
@@ -3939,8 +3940,8 @@ static DataId image_end(Parser* p, u32 base, u32 align) {
   for (u32 i = 0; i < num_relocs; ++i) {
     relocs[i].off -= base;
   }
-  DataId data =
-      il_data_add(p->ls.ctx, &p->image.items[base], p->image.num - base, align, relocs, num_relocs);
+  DataId data = il_data_add(p->ls.ctx, &p->image.items[base], p->image.num - base, align,
+                            /*writable=*/false, relocs, num_relocs);
   p->image.num = base;
   p->image_relocs.num = first;
   return data;
@@ -4124,8 +4125,8 @@ static void struct_body(Parser* p, TypeId st) {
     info->agg = il_agg_add(p->ls.ctx, size, align, leaves, num_leaves);
     if (EMIT && has_image) {
       image_extend(p, size);
-      info->image = il_data_add(p->ls.ctx, p->image.items, size, align, p->image_relocs.items,
-                                p->image_relocs.num);
+      info->image = il_data_add(p->ls.ctx, p->image.items, size, align, /*writable=*/false,
+                                p->image_relocs.items, p->image_relocs.num);
     }
   }
 }

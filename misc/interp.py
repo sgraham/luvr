@@ -152,16 +152,19 @@ def parse(text):
             continue
         try:
             if line.startswith("data "):
-                # data @.dat0 [align 8] "bytes", or data @.dat1 [align 8] 01 @.dat0,
-                # where @.dat0 is its 8-byte address. Data is always dumped
-                # after the data it refers to.
-                _, name, s = line.split(None, 2)
-                align = 1
-                if s.startswith("align "):
-                    _, align, s = s.split(None, 2)
-                    align = int(align)
+                # Examples:
+                #   data @.dat0 ro align 1 "bytes"
+                #   data @.dat1 ro align 8 01 @.dat0,
+                #       where @.dat0 is its 8-byte address
+                #   data @.dat2 rw align 8 zero 16
+                # Data is always dumped after the data it refers to.
+                # All memory is writable here, so ro and rw are the same.
+                _, name, _, _, align, s = line.split(None, 5)
+                align = int(align)
                 b = bytearray()
-                if s.startswith('"'):
+                if s.startswith("zero "):
+                    b += bytes(int(s.split()[1]))
+                elif s.startswith('"'):
                     # The escapes are a subset of a Python bytes literal's.
                     b += ast.literal_eval("b" + s)
                 else:
@@ -176,9 +179,9 @@ def parse(text):
                 mem.bytes[addr:addr + len(b)] = b
                 data[name[1:]] = addr
             elif line.startswith("agg "):
-                # agg #0 16 8 sse0, with the size, alignment, and ABI bits,
-                # which only a back end needs.
-                _, name, size, align, *_ = line.split()
+                # agg #0 size 16 align 8 sse0, where the ABI bits are only
+                # needed by a back end.
+                _, name, _, size, _, align, *_ = line.split()
                 aggs[int(name[1:])] = Agg(int(size), int(align))
             elif line.startswith("func "):
                 # func i64 @main, func #1 @f when it returns agg #1, or func @f
