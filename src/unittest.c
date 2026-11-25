@@ -275,12 +275,18 @@ static void test_il_data(void) {
   IlFunc f;
   il_init_test(&f, &ctx, IT_VOID);
   u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
-  DataId hi = il_data_add(&ctx, (const u8*)"hi", 2, 1);
-  DataId escaped = il_data_add(&ctx, (const u8*)"\"\\\n\t~ ", 6, 1);
-  il_data_add(&ctx, NULL, 0, 1);
-  il_data_add(&ctx, (const u8*)"a\x00\x7f\xff", 4, 1);
+  DataId hi = il_data_add(&ctx, (const u8*)"hi", 2, 1, NULL, 0);
+  DataId escaped = il_data_add(&ctx, (const u8*)"\"\\\n\t~ ", 6, 1, NULL, 0);
+  il_data_add(&ctx, NULL, 0, 1, NULL, 0);
+  il_data_add(&ctx, (const u8*)"a\x00\x7f\xff", 4, 1, NULL, 0);
   static const u8 image[] = {1, 0, 0, 0, 0, 0, 0, 0};
-  il_data_add(&ctx, image, 8, 8);
+  il_data_add(&ctx, image, 8, 8, NULL, 0);
+  static const u8 str_image[16] = {[8] = 2};
+  IlReloc str_relocs[] = {{0, hi}};
+  il_data_add(&ctx, str_image, 16, 8, str_relocs, COUNTOF(str_relocs));
+  static const u8 two_image[24] = {1, 2, 3, 4, 5, 6, 7, 8};
+  IlReloc two_relocs[] = {{8, escaped}, {16, hi}};
+  il_data_add(&ctx, two_image, 24, 8, two_relocs, COUNTOF(two_relocs));
   il_block_start(&f, il_block_declare(&f));
   Ref args[] = {il_const_data(&f, escaped), il_const_int(&f, IT_I64, 6), il_const_data(&f, hi),
                 il_const_int(&f, IT_I64, 2)};
@@ -292,6 +298,8 @@ static void test_il_data(void) {
                  "data @.dat2 \"\"\n"
                  "data @.dat3 61 00 7f ff\n"
                  "data @.dat4 align 8 01 00 00 00 00 00 00 00\n"
+                 "data @.dat5 align 8 @.dat0 02 00 00 00 00 00 00 00\n"
+                 "data @.dat6 align 8 01 02 03 04 05 06 07 08 @.dat1 @.dat0\n"
                  "func @f\n"
                  ":0\n"
                  "  CALL @g, @.dat1, 6, @.dat0, 2\n"

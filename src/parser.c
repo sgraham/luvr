@@ -1717,7 +1717,7 @@ static void emit_print_str_piece(Parser* p) {
   if (len == 0) {
     return;
   }
-  Ref args[] = {il_const_data(&p->il, il_data_add(p->ls.ctx, s, len, 1)),
+  Ref args[] = {il_const_data(&p->il, il_data_add(p->ls.ctx, s, len, 1, NULL, 0)),
                 il_const_int(&p->il, IT_I64, len)};
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_str), args, 2);
 }
@@ -2908,7 +2908,7 @@ static void primary(Parser* p, ExpDesc* e) {
       if (EMIT) {
         u32 len;
         const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-        e->data = il_data_add(p->ls.ctx, s, len, 1);
+        e->data = il_data_add(p->ls.ctx, s, len, 1, NULL, 0);
       }
       next(p);
       break;
@@ -3876,7 +3876,7 @@ static AggId type_agg(Parser* p, TypeId t) {
   p->image.num = 0;
   image_extend(p, size);
   if (image_add_field(p, t, 0)) {
-    info->image = il_data_add(p->ls.ctx, p->image.items, size, type_align(p, t));
+    info->image = il_data_add(p->ls.ctx, p->image.items, size, type_align(p, t), NULL, 0);
   }
   return info->agg;
 }
@@ -3966,7 +3966,7 @@ static void struct_body(Parser* p, TypeId st) {
     info->agg = il_agg_add(p->ls.ctx, size, align, leaves, num_leaves);
     if (EMIT && has_image) {
       image_extend(p, size);
-      info->image = il_data_add(p->ls.ctx, p->image.items, size, align);
+      info->image = il_data_add(p->ls.ctx, p->image.items, size, align, NULL, 0);
     }
   }
 }

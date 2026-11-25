@@ -29,6 +29,7 @@ void ctx_free(Ctx* ctx) {
   free(ctx->syms.items);
   free(ctx->data.items);
   free(ctx->databytes.items);
+  free(ctx->relocs.items);
   free(ctx->aggs.items);
   for (u32 i = 0; i < ctx->modules.num; ++i) {
     Module* m = ctx->modules.items[i];

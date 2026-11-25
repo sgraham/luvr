@@ -11,6 +11,7 @@ typedef struct HashSlot HashSlot;
 typedef struct HashTable HashTable;
 typedef struct IlData IlData;
 typedef struct IlFunc IlFunc;
+typedef struct IlReloc IlReloc;
 typedef struct IlSlot IlSlot;
 typedef struct IlSourcePos IlSourcePos;
 typedef struct LexPos LexPos;
@@ -517,6 +518,7 @@ struct Ctx {
   // by index.
   VEC(IlData) data;
   VEC(u8) databytes;
+  VEC(IlReloc) relocs;
   // The number of entries of data that have been printed as IL text.
   u32 data_printed;
 
@@ -969,7 +971,18 @@ struct IlData {
   u32 off;  // into Ctx.databytes
   u32 len;
   u32 align;
+  u32 relocs_first;  // into Ctx.relocs
+  u32 relocs_num;
 };
+
+// The IL_RELOC_SIZE bytes at off in an IlData are the address of target. The
+// bytes in the image are zero until the data is placed in memory.
+struct IlReloc {
+  u32 off;
+  DataId target;
+};
+
+#define IL_RELOC_SIZE 8
 
 // A DataId.u for no data.
 #define DATA_NONE UINT32_MAX
@@ -1020,9 +1033,15 @@ Ref il_const_sym(IlFunc* f, u32 sym);
 
 Ref il_const_data(IlFunc* f, DataId data);
 
-// Returns a copy of the n bytes at s, which will be
-// placed at a multiple of align.
-DataId il_data_add(Ctx* ctx, const u8* s, u32 n, u32 align);
+// Returns a copy of the len bytes at s, which will be placed at a multiple of
+// align. relocs must be in order of offset, and the bytes under each one in s
+// must be zero.
+DataId il_data_add(Ctx* ctx,
+                   const u8* s,
+                   u32 len,
+                   u32 align,
+                   const IlReloc* relocs,
+                   u32 num_relocs);
 
 // Emits a CALL followed by an EXT for each two of the n args. ty is IT_VOID
 // if the call has no result.

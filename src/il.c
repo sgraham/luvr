@@ -114,15 +114,32 @@ Ref il_const_data(IlFunc* f, DataId data) {
   return il_const(f, IT_DATA, data.u);
 }
 
-DataId il_data_add(Ctx* ctx, const u8* s, u32 n, u32 align) {
+DataId il_data_add(Ctx* ctx,
+                   const u8* s,
+                   u32 len,
+                   u32 align,
+                   const IlReloc* relocs,
+                   u32 num_relocs) {
   IlData* d = vec_push(ctx, &ctx->data);
   d->off = ctx->databytes.num;
-  d->len = n;
+  d->len = len;
   d->align = align;
-  if (n != 0) {
-    vec_reserve(ctx, &ctx->databytes, n);
-    memcpy(&ctx->databytes.items[ctx->databytes.num], s, n);
-    ctx->databytes.num += n;
+  d->relocs_first = ctx->relocs.num;
+  d->relocs_num = num_relocs;
+  if (len != 0) {
+    vec_reserve(ctx, &ctx->databytes, len);
+    memcpy(&ctx->databytes.items[ctx->databytes.num], s, len);
+    ctx->databytes.num += len;
+  }
+  for (u32 i = 0; i < num_relocs; ++i) {
+    ASSERT(i == 0 || relocs[i].off >= relocs[i - 1].off + IL_RELOC_SIZE);
+    ASSERT(relocs[i].off + IL_RELOC_SIZE <= len);
+    ASSERT(memcmp(&s[relocs[i].off], (const u8[IL_RELOC_SIZE]){0}, IL_RELOC_SIZE) == 0);
+  }
+  if (num_relocs != 0) {
+    vec_reserve(ctx, &ctx->relocs, num_relocs);
+    memcpy(&ctx->relocs.items[ctx->relocs.num], relocs, num_relocs * sizeof(IlReloc));
+    ctx->relocs.num += num_relocs;
   }
   return (DataId){ctx->data.num - 1};
 }
@@ -337,9 +354,17 @@ void il_dump_data(const Ctx* ctx, u32 i, FILE* out) {
   if (d->align > 1) {
     fprintf(out, " align %u", d->align);
   }
-  if (!il_data_is_text(bytes, d->len)) {
+  if (d->relocs_num != 0 || !il_data_is_text(bytes, d->len)) {
+    u32 reloc = d->relocs_first;
+    u32 reloc_end = reloc + d->relocs_num;
     for (u32 j = 0; j < d->len; ++j) {
-      fprintf(out, " %02x", bytes[j]);
+      if (reloc != reloc_end && ctx->relocs.items[reloc].off == j) {
+        fprintf(out, " @.dat%u", ctx->relocs.items[reloc].target.u);
+        j += IL_RELOC_SIZE - 1;
+        ++reloc;
+      } else {
+        fprintf(out, " %02x", bytes[j]);
+      }
     }
     fputc('\n', out);
     return;
