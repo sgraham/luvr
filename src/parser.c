@@ -17,6 +17,7 @@ typedef union ConstValue ConstValue;
 typedef struct ExpDesc ExpDesc;
 typedef struct Field Field;
 typedef struct GlobalFunc GlobalFunc;
+typedef struct GlobalVar GlobalVar;
 typedef struct Local Local;
 typedef struct LogicalJoin LogicalJoin;
 typedef struct Loop Loop;
@@ -182,6 +183,11 @@ struct GlobalFunc {
 
 #define FUNC_NO_SYM UINT32_MAX
 
+// A module's global variable.
+struct GlobalVar {
+  TypeId type;
+};
+
 // A parameter or local variable of the function being parsed, or of one that
 // encloses it.
 struct Local {
@@ -211,9 +217,10 @@ typedef enum GlobalKind {
 } GlobalKind;
 
 // GlobalInfo is a GlobalKind in the low bits. The higher bits are the index of
-// the value in Parser.global_consts for GK_CONST, and in Parser.global_funcs
-// for GK_FUNC. For GK_TYPE, they're the TypeId, which is TY_UNKNOWN for a
-// generic struct, since each instantiation will be a different type.
+// the value in Parser.global_consts for GK_CONST, in Parser.global_funcs for
+// GK_FUNC, and in Parser.global_vars for GK_VAR. For GK_TYPE, they're the
+// TypeId, which is TY_UNKNOWN for a generic struct, since each instantiation
+// will be a different type.
 #define GLOBAL_KIND_BITS 3
 #define GLOBAL_KIND_MASK ((1u << GLOBAL_KIND_BITS) - 1)
 
@@ -231,6 +238,7 @@ struct Parser {
   NamedConst local_consts[MAX_LOCALS];  // for LK_CONST locals, by index in locals
   VEC(NamedConst) global_consts;
   VEC(GlobalFunc) global_funcs;
+  VEC(GlobalVar) global_vars;
   VEC(TypeInfo) types;  // by TypeId, with unused entries for the FixedTypes
   VEC(TypeId) param_types;
   VEC(Field) fields;
@@ -547,6 +555,12 @@ static GlobalInfo global_info(Parser* p, NameId name) {
 
 static void declare_global(Parser* p, NameId name, GlobalInfo info) {
   namemap_set(p->ls.ctx, &p->mod->globals, name, info);
+}
+
+static void declare_global_var(Parser* p, NameId name, TypeId t) {
+  u32 idx = p->global_vars.num;
+  *vec_push(p->ls.ctx, &p->global_vars) = (GlobalVar){t};
+  declare_global(p, name, GK_VAR | (idx << GLOBAL_KIND_BITS));
 }
 
 // Out of line, since uses of constants are rare compared to variables.
@@ -3027,6 +3041,8 @@ static void primary(Parser* p, ExpDesc* e) {
         } else if (member_kind == GK_FUNC) {
           e->type = p->global_funcs.items[member >> GLOBAL_KIND_BITS].type;
           check_function_called(p, e, member_at);
+        } else if (member_kind == GK_VAR) {
+          e->type = p->global_vars.items[member >> GLOBAL_KIND_BITS].type;
         }
         break;
       }
@@ -3061,6 +3077,8 @@ static void primary(Parser* p, ExpDesc* e) {
         }
       } else if (kind == GK_CONST) {
         load_named_const(p, e, &p->global_consts.items[info >> GLOBAL_KIND_BITS]);
+      } else if (kind == GK_VAR) {
+        e->type = p->global_vars.items[info >> GLOBAL_KIND_BITS].type;
       } else if (kind == GK_FUNC) {
         const GlobalFunc* gf = &p->global_funcs.items[info >> GLOBAL_KIND_BITS];
         e->type = gf->type;
@@ -3246,7 +3264,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
     error_at(p, p->ls.pos.t.loc, "A constant needs a value.");
   }
   if (toplevel) {
-    declare_global(p, name, GK_VAR);
+    declare_global_var(p, name, t);
   } else {
     declare_if_new(p, name, at, t);
     if (EMIT) {
@@ -3374,7 +3392,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           error_at(p, value_at, "Expected a constant expression.");
         }
         if (toplevel) {
-          declare_global(p, name, GK_VAR);
+          declare_global_var(p, name, t);
         } else {
           if (!loc) {
             loc = declare_local(p, name, at, LK_VAR);
@@ -3506,11 +3524,15 @@ static void simple_stat(Parser* p) {
       for (;;) {
         SrcLoc at;
         NameId name = expect_name(p, "variable name", &at);
-        if (global_kind(p, name) == GK_NONE) {
+        GlobalInfo info = module_global_info(p->mod, name);
+        if ((GlobalKind)(info & GLOBAL_KIND_MASK) == GK_NONE) {
           const Name* n = name_of(p, name);
           error_at(p, at, "Undefined global '%.*s'.", (int)n->len, (const char*)n->str);
         }
-        declare_local(p, name, at, LK_GLOBAL);
+        Local* l = declare_local(p, name, at, LK_GLOBAL);
+        if ((GlobalKind)(info & GLOBAL_KIND_MASK) == GK_VAR) {
+          l->type = p->global_vars.items[info >> GLOBAL_KIND_BITS].type;
+        }
         if (!optional(p, TK_COMMA)) {
           break;
         }
@@ -4474,6 +4496,7 @@ static void parse_end(Parser* p) {
   }
   free(p->prelude_globals);
   free(p->global_consts.items);
+  free(p->global_vars.items);
   free(p->global_funcs.items);
   free(p->types.items);
   free(p->param_types.items);
