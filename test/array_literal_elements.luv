@@ -1,0 +1,28 @@
+# OUT: 3
+# OUT: 4
+# OUT: 6
+# OUT: -1
+# OUT: 7
+# OUT: true
+# OUT: efg
+# OUT: abcd
+struct Point:
+    i16 x
+    i16 y = 7
+    bool lit
+
+def int main():
+    [2][3]int grid = [[1, 2, 3], [4, 5, 6]]
+    print grid[0][2]
+    print grid[1][0]
+    print grid[1][2]
+
+    [2]Point pts = [Point(1, 2), Point(-1, .lit=true)]
+    print pts[1].x
+    print pts[1].y
+    print pts[1].lit
+
+    [2]str strs = ["abcd", "efg"]
+    print strs[1]
+    print strs[0]
+    return 0
