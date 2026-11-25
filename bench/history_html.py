@@ -17,9 +17,11 @@ import json
 import os
 
 # Changes smaller than these are shown as noise. Instructions barely vary
-# between runs, cycles and branch misses a little more. Times also use their
-# own stddev, see delta() in the page.
-NOISE_PCT = {"instructions": 0.1, "cycles": 0.75, "branch_misses": 1.0, "time": 1.0}
+# between runs, cycles and branch misses a little more. Times also use the
+# standard error of their means, see delta() in the page. Times vary more
+# between commits than between runs of one commit, because of heat and code
+# layout, so their floor is higher.
+NOISE_PCT = {"instructions": 0.1, "cycles": 0.75, "branch_misses": 1.0, "time": 2.0}
 
 REPO_URL = "https://github.com/sgraham/luvr"
 
@@ -39,6 +41,7 @@ def cell(bench, tokens):
         "ok": True,
         "time": times["mean_s"],
         "time_sd": times["stddev_s"],
+        "time_runs": times["runs"],
         "instructions": counter("instructions"),
         "cycles": counter("cycles"),
         "branch_misses": counter("branch-misses"),
@@ -277,8 +280,12 @@ function delta(metric, cur, prev) {
   if (!cur || !prev || !cur.ok || !prev.ok || cur[metric] == null || !prev[metric]) return null;
   const pct = (cur[metric] - prev[metric]) / prev[metric] * 100;
   let noise = DATA.noise[metric];
+  // A time is the mean of several runs, so it's uncertain by the standard
+  // error, not by the stddev of single runs. A change is noise if it's within
+  // two of the larger one.
   if (metric === "time") {
-    noise = Math.max(noise, 200 * Math.max(cur.time_sd, prev.time_sd) / prev.time);
+    const se = c => c.time_sd / Math.sqrt(c.time_runs);
+    noise = Math.max(noise, 200 * Math.max(se(cur), se(prev)) / prev.time);
   }
   return {pct, cls: Math.abs(pct) < noise ? "muted" : pct > 0 ? "bad" : "good"};
 }
