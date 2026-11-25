@@ -3,10 +3,12 @@
 
   python3 bench/history_html.py [--log bench/history.json] [--out out/history.html]
 
-The page has a section per input and mode, each with line charts of the main
-counters over the commits, and a table of every commit, newest first, with the
-change from the previous measured commit. The data is embedded in the page, so
-it can be opened directly from disk.
+The page has a section per input and mode. Each has a small sparkline per
+counter, with changes outside the noise marked, then a full width chart of one
+selected counter that can be zoomed to a range of commits, and a table of every
+commit, newest first, with the change from the previous measured commit.
+Sections with fewer than two successful runs only show the table. The data is
+embedded in the page, so it can be opened directly from disk.
 """
 
 import argparse
@@ -18,6 +20,8 @@ import os
 # between runs, cycles and branch misses a little more. Times also use their
 # own stddev, see delta() in the page.
 NOISE_PCT = {"instructions": 0.1, "cycles": 0.75, "branch_misses": 1.0, "time": 1.0}
+
+REPO_URL = "https://github.com/sgraham/luvr"
 
 
 def cell(bench, tokens):
@@ -87,6 +91,7 @@ def main():
         "rows": rows,
         "keys": keys,
         "noise": NOISE_PCT,
+        "repo": REPO_URL,
         "inputs": log["inputs"],
         "machine": latest["machine"] if latest else {},
         "toolchain": latest["toolchain"] if latest else {},
@@ -148,22 +153,47 @@ h1 { font-size: 20px; margin: 0 0 4px; }
 h2 { font-size: 16px; margin: 32px 0 12px; }
 .meta { color: var(--text-secondary); font-size: 13px; }
 .meta code { font-size: 12px; }
-.charts {
+.tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
 }
-.chart {
+@media (max-width: 760px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px 6px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.tile:hover { border-color: var(--text-muted); }
+.tile.sel { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); }
+.tile .th { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); }
+.tile .tv { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile svg { display: block; width: 100%; height: 40px; margin-top: 4px; }
+.big {
+  margin-top: 10px;
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px 6px;
   position: relative;
 }
-.chart h3 { font-size: 13px; font-weight: 600; margin: 0; }
-.chart .latest { font-size: 12px; color: var(--text-secondary); }
-.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
-.chart svg text { fill: var(--text-muted); font-size: 10px; }
+.bighead { display: flex; align-items: baseline; gap: 12px; font-size: 12px; color: var(--text-muted); }
+.bighead b { font-size: 13px; color: var(--text-primary); }
+.bighead button {
+  font: inherit;
+  color: var(--series-1);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.big svg { display: block; user-select: none; cursor: crosshair; }
+.big svg text { fill: var(--text-muted); font-size: 10.5px; }
 .tip {
   position: absolute;
   pointer-events: none;
@@ -173,11 +203,18 @@ h2 { font-size: 16px; margin: 32px 0 12px; }
   padding: 6px 8px;
   font-size: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  max-width: 280px;
+  max-width: 340px;
   display: none;
   z-index: 2;
 }
+.tip.pinned { pointer-events: auto; border-color: var(--series-1); }
 .tip .sub { color: var(--text-secondary); }
+.tip table { width: auto; margin-top: 4px; font-size: 12px; }
+.tip td { padding: 1px 6px 1px 0; border: none; }
+a { color: var(--series-1); text-decoration: none; }
+a:hover { text-decoration: underline; }
+details { margin-top: 4px; }
+details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
 .tablewrap {
   margin-top: 12px;
   overflow-x: auto;
@@ -189,6 +226,7 @@ table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 th, td { padding: 5px 7px; text-align: right; white-space: nowrap; }
 th { color: var(--text-secondary); font-weight: 600; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface-1); }
 td { border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+tr.hl td { background: var(--grid); }
 td.l, th.l { text-align: left; }
 td.subject { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 td.muted, span.muted { color: var(--text-muted); }
@@ -213,6 +251,8 @@ const METRICS = [
 ];
 for (const m of METRICS) m.fmt = (v, dp = m.dp) => (v / m.scale).toFixed(dp) + m.unit;
 
+const NS = "http://www.w3.org/2000/svg";
+
 // Enough decimals that neighbouring axis ticks, `step` apart, don't print the
 // same.
 function axisDp(m, step) {
@@ -221,6 +261,14 @@ function axisDp(m, step) {
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
+}
+
+function commitLink(r) {
+  return `<a href="${esc(DATA.repo)}/commit/${esc(r.commit)}" target="_blank" rel="noopener"><code>${esc(r.short)}</code></a>`;
+}
+
+function rowId(key, r) {
+  return "row-" + key.replace(/\W/g, "_") + "-" + r.short;
 }
 
 // The change from prev to cur in percent, and whether it's outside the noise.
@@ -242,6 +290,37 @@ function deltaHtml(d) {
   return `<span class="${d.cls}">${arrow}${sign}${d.pct.toFixed(2)}%</span>`;
 }
 
+// The successful measurements of one metric, each with its change from the
+// previous successful one, which may be several commits earlier.
+function points(key, metric) {
+  const pts = [];
+  let prev = null;
+  DATA.rows.forEach((r, i) => {
+    const c = r.cells[key];
+    if (!c || !c.ok || c[metric] == null) return;
+    const p = {i, v: c[metric], r, c, d: delta(metric, c, prev && prev.c)};
+    pts.push(p);
+    prev = p;
+  });
+  return pts;
+}
+
+// A gap in the line where a commit failed or wasn't measured.
+function linePath(pts, x, y) {
+  let d = "", prevI = -2;
+  for (const p of pts) {
+    d += (p.i === prevI + 1 ? "L" : "M") + x(p.i).toFixed(1) + "," + y(p.v).toFixed(1);
+    prevI = p.i;
+  }
+  return d;
+}
+
+function vrange(pts) {
+  let lo = Math.min(...pts.map(p => p.v)), hi = Math.max(...pts.map(p => p.v));
+  const pad = (hi - lo) * 0.1 || hi * 0.01 || 1;
+  return [lo - pad, hi + pad];
+}
+
 function renderMeta() {
   const m = DATA.machine, t = DATA.toolchain, s = DATA.settings;
   const inputs = Object.values(DATA.inputs).map(i =>
@@ -250,94 +329,207 @@ function renderMeta() {
     `${DATA.rows.length} commits. ${esc(m.cpu_model || "")}, CPU ${s.cpu} pinned, boost ${esc(m.boost)}, ` +
     `${esc(m.energy_performance_preference || m.governor || "")}. ${esc(t.clang || "")}. ` +
     `perf stat &times;${s.perf_runs}, hyperfine &times;${s.hyperfine_runs} after ${s.hyperfine_warmup} warmups.<br>` +
-    `Inputs: ${inputs}.`;
+    `Inputs: ${inputs}. Marked points are changes outside the noise.`;
 }
 
-function chart(container, key, metric) {
-  const pts = [];
-  DATA.rows.forEach((r, i) => {
-    const c = r.cells[key];
-    if (c && c.ok && c[metric.key] != null) pts.push({i, v: c[metric.key], r, c});
-  });
-  if (!pts.length) return;
-  const div = document.createElement("div");
-  div.className = "chart";
-  const last = pts[pts.length - 1];
-  div.innerHTML = `<h3>${metric.label}</h3><div class="latest">latest ${metric.fmt(last.v)} at <code>${esc(last.r.short)}</code></div>`;
-  container.appendChild(div);
-
-  const W = 320, H = 150, L = 44, R = 8, T = 10, B = 18;
-  const n = Math.max(DATA.rows.length - 1, 1);
-  let lo = Math.min(...pts.map(p => p.v)), hi = Math.max(...pts.map(p => p.v));
-  const pad = (hi - lo) * 0.1 || hi * 0.01 || 1;
-  lo -= pad; hi += pad;
-  const x = i => L + (W - L - R) * (DATA.rows.length === 1 ? 0.5 : i / n);
-  const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+// Draws a significant change as a dot in its direction's colour.
+function marks(pts, x, y, r) {
   let s = "";
-  const dp = axisDp(metric, (hi - lo) / 3);
-  for (let k = 0; k <= 3; k++) {
-    const v = lo + (hi - lo) * k / 3;
-    s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
-    s += `<text x="${L - 6}" y="${y(v) + 3}" text-anchor="end">${metric.fmt(v, dp)}</text>`;
-  }
-  s += `<text x="${L}" y="${H - 4}">${esc(DATA.rows[0].short)}</text>`;
-  s += `<text x="${W - R}" y="${H - 4}" text-anchor="end">${esc(DATA.rows[DATA.rows.length - 1].short)}</text>`;
-  // A gap in the line where a commit failed or wasn't measured.
-  let d = "", prevI = -2;
   for (const p of pts) {
-    d += (p.i === prevI + 1 ? "L" : "M") + x(p.i).toFixed(1) + "," + y(p.v).toFixed(1);
-    prevI = p.i;
-  }
-  s += `<path d="${d}" fill="none" stroke="var(--series-1)" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>`;
-  for (const p of pts) {
-    if (pts.length < 40 || p === last) {
-      s += `<circle cx="${x(p.i)}" cy="${y(p.v)}" r="2.5" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="1"/>`;
+    if (p.d && p.d.cls !== "muted") {
+      s += `<circle cx="${x(p.i).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="${r}" fill="var(--${p.d.cls})" stroke="var(--surface-1)" stroke-width="1"/>`;
     }
   }
-  s += `<line class="cross" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--text-muted)" stroke-width="1" vector-effect="non-scaling-stroke" visibility="hidden"/>`;
-  s += `<circle class="dot" r="4" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2" visibility="hidden"/>`;
-  svg.innerHTML = s;
-  div.appendChild(svg);
+  return s;
+}
 
+function tile(sec, metric) {
+  const pts = points(sec.key, metric.key);
+  const btn = document.createElement("button");
+  btn.className = "tile";
+  if (!pts.length) {
+    btn.innerHTML = `<div class="th"><span>${metric.label}</span></div><div class="tv muted">-</div>`;
+    return btn;
+  }
+  const last = pts[pts.length - 1];
+  const H = 40;
+  const [lo, hi] = vrange(pts);
+  const n = Math.max(DATA.rows.length - 1, 1);
+  const y = v => 3 + (H - 6) * (1 - (v - lo) / (hi - lo));
+  btn.innerHTML = `<div class="th"><span>${metric.label}</span>${deltaHtml(last.d)}</div>` +
+    `<div class="tv">${metric.fmt(last.v)}</div><svg></svg>`;
+  const svg = btn.querySelector("svg");
+  sec.redraw.push(() => {
+    const W = svg.clientWidth || 240;
+    const x = i => 3 + (W - 6) * i / n;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.innerHTML = `<path d="${linePath(pts, x, y)}" fill="none" stroke="var(--series-1)" stroke-width="1.5" stroke-linejoin="round"/>` +
+      marks(pts, x, y, 2.5);
+  });
+  btn.addEventListener("click", () => {
+    sec.metric = metric.key;
+    sec.pinned = null;
+    renderSection(sec);
+  });
+  btn.dataset.metric = metric.key;
+  return btn;
+}
+
+function tipHtml(sec, p, metric) {
+  let s = `<b>${metric.fmt(p.v)}</b> ${deltaHtml(p.d)}<br>${commitLink(p.r)} ${esc(p.r.date)}<br><span class="sub">${esc(p.r.subject)}</span><table>`;
+  for (const m of METRICS) {
+    const q = sec.pts[m.key].find(q => q.i === p.i);
+    if (q) s += `<tr><td class="l muted">${m.label}</td><td>${m.fmt(q.v)}</td><td>${deltaHtml(q.d)}</td></tr>`;
+  }
+  s += "</table>";
+  if (sec.pinned) {
+    s += `<a href="${esc(DATA.repo)}/commit/${esc(p.r.commit)}" target="_blank" rel="noopener">diff on GitHub</a> &middot; <a href="#${rowId(sec.key, p.r)}">table row</a>`;
+  }
+  return s;
+}
+
+function bigChart(sec) {
+  const metric = METRICS.find(m => m.key === sec.metric);
+  const all = sec.pts[metric.key];
+  const box = sec.big;
+  const zoomed = sec.i0 > 0 || sec.i1 < DATA.rows.length - 1;
+  box.innerHTML = `<div class="bighead"><b>${metric.label}</b><span>drag to zoom, click a point to pin it</span>` +
+    (zoomed ? `<button>reset zoom</button>` : "") + `</div>`;
+  if (zoomed) {
+    box.querySelector("button").addEventListener("click", () => {
+      sec.i0 = 0;
+      sec.i1 = DATA.rows.length - 1;
+      bigChart(sec);
+    });
+  }
+  const pts = all.filter(p => p.i >= sec.i0 && p.i <= sec.i1);
+  if (!pts.length) return;
+  const W = Math.max(box.clientWidth - 24, 300), H = 300, L = 64, R = 12, T = 10, B = 26;
+  const span = Math.max(sec.i1 - sec.i0, 1);
+  const x = i => L + (W - L - R) * (i - sec.i0) / span;
+  const xinv = px => sec.i0 + (px - L) / (W - L - R) * span;
+  const [lo, hi] = vrange(pts);
+  const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  let s = "";
+  const dp = axisDp(metric, (hi - lo) / 5);
+  for (let k = 0; k <= 5; k++) {
+    const v = lo + (hi - lo) * k / 5;
+    s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
+    s += `<text x="${L - 6}" y="${y(v) + 3.5}" text-anchor="end">${metric.fmt(v, dp)}</text>`;
+  }
+  const step = Math.max(1, Math.ceil(span / ((W - L - R) / 64)));
+  for (let i = sec.i0; i <= sec.i1; i += step) {
+    s += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(DATA.rows[i].short)}</text>`;
+  }
+  s += `<path d="${linePath(pts, x, y)}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"/>`;
+  if (pts.length < (W - L - R) / 6) {
+    for (const p of pts) s += `<circle cx="${x(p.i)}" cy="${y(p.v)}" r="2" fill="var(--series-1)"/>`;
+  }
+  s += marks(pts, x, y, 4);
+  s += `<rect class="brush" y="${T}" height="${H - T - B}" fill="var(--series-1)" fill-opacity="0.12" visibility="hidden"/>`;
+  s += `<line class="cross" y1="${T}" y2="${H - B}" stroke="var(--text-muted)" visibility="hidden"/>`;
+  s += `<circle class="dot" r="5" fill="none" stroke="var(--text-primary)" stroke-width="2" visibility="hidden"/>`;
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
+  svg.innerHTML = s;
+  box.appendChild(svg);
   const tip = document.createElement("div");
   tip.className = "tip";
-  div.appendChild(tip);
-  const cross = svg.querySelector(".cross"), dot = svg.querySelector(".dot");
-  svg.addEventListener("mousemove", ev => {
-    const box = svg.getBoundingClientRect();
-    const sx = (ev.clientX - box.left) / box.width * W;
+  box.appendChild(tip);
+  const cross = svg.querySelector(".cross"), dot = svg.querySelector(".dot"), brush = svg.querySelector(".brush");
+
+  const nearest = px => {
     let best = pts[0];
-    for (const p of pts) if (Math.abs(x(p.i) - sx) < Math.abs(x(best.i) - sx)) best = p;
-    cross.setAttribute("x1", x(best.i)); cross.setAttribute("x2", x(best.i));
+    for (const p of pts) if (Math.abs(x(p.i) - px) < Math.abs(x(best.i) - px)) best = p;
+    return best;
+  };
+  const show = p => {
+    cross.setAttribute("x1", x(p.i));
+    cross.setAttribute("x2", x(p.i));
     cross.setAttribute("visibility", "visible");
-    dot.setAttribute("cx", x(best.i)); dot.setAttribute("cy", y(best.v));
+    dot.setAttribute("cx", x(p.i));
+    dot.setAttribute("cy", y(p.v));
     dot.setAttribute("visibility", "visible");
-    const prev = pts[pts.indexOf(best) - 1];
-    const dl = prev ? delta(metric.key, best.c, prev.c) : null;
-    tip.innerHTML = `<b>${metric.fmt(best.v)}</b> ${deltaHtml(dl)}<br><code>${esc(best.r.short)}</code> ${esc(best.r.date)}<br><span class="sub">${esc(best.r.subject)}</span>`;
+    tip.className = sec.pinned ? "tip pinned" : "tip";
+    tip.innerHTML = tipHtml(sec, p, metric);
     tip.style.display = "block";
-    const px = (x(best.i) / W) * box.width + svg.offsetLeft;
-    tip.style.left = Math.min(px + 12, div.clientWidth - tip.offsetWidth - 4) + "px";
-    tip.style.top = (svg.offsetTop + 8) + "px";
-  });
-  svg.addEventListener("mouseleave", () => {
+    // SVG elements don't have offsetLeft/offsetTop.
+    const sb = svg.getBoundingClientRect(), bb = box.getBoundingClientRect();
+    const px = x(p.i) + sb.left - bb.left;
+    tip.style.left = (px + 14 + tip.offsetWidth < box.clientWidth ? px + 14 : px - 14 - tip.offsetWidth) + "px";
+    tip.style.top = (sb.top - bb.top + 8) + "px";
+  };
+  const hide = () => {
     tip.style.display = "none";
     cross.setAttribute("visibility", "hidden");
     dot.setAttribute("visibility", "hidden");
+  };
+  const highlight = () => {
+    for (const tr of sec.el.querySelectorAll("tr.hl")) tr.classList.remove("hl");
+    if (sec.pinned) document.getElementById(rowId(sec.key, sec.pinned.r))?.classList.add("hl");
+  };
+  const pinned = sec.pinned && pts.find(p => p.i === sec.pinned.i);
+  if (pinned) show(pinned);
+
+  const local = ev => ev.clientX - svg.getBoundingClientRect().left;
+  let dragFrom = null;
+  svg.addEventListener("mousedown", ev => {
+    dragFrom = local(ev);
+    ev.preventDefault();
+  });
+  svg.addEventListener("mousemove", ev => {
+    const px = local(ev);
+    if (dragFrom != null && Math.abs(px - dragFrom) > 4) {
+      brush.setAttribute("x", Math.min(px, dragFrom));
+      brush.setAttribute("width", Math.abs(px - dragFrom));
+      brush.setAttribute("visibility", "visible");
+      return;
+    }
+    if (!sec.pinned) show(nearest(px));
+  });
+  window.addEventListener("mouseup", function up(ev) {
+    if (!svg.isConnected) {
+      window.removeEventListener("mouseup", up);
+      return;
+    }
+    if (dragFrom == null) return;
+    const px = local(ev), from = dragFrom;
+    dragFrom = null;
+    brush.setAttribute("visibility", "hidden");
+    if (Math.abs(px - from) > 4) {
+      const a = Math.max(sec.i0, Math.floor(xinv(Math.min(px, from))));
+      const b = Math.min(sec.i1, Math.ceil(xinv(Math.max(px, from))));
+      if (b > a) {
+        sec.i0 = a;
+        sec.i1 = b;
+        bigChart(sec);
+      }
+      return;
+    }
+    const p = nearest(px);
+    sec.pinned = sec.pinned && sec.pinned.i === p.i ? null : p;
+    highlight();
+    show(p);
+  });
+  svg.addEventListener("dblclick", () => {
+    sec.i0 = 0;
+    sec.i1 = DATA.rows.length - 1;
+    bigChart(sec);
+  });
+  svg.addEventListener("mouseleave", () => {
+    if (dragFrom == null && !sec.pinned) hide();
   });
 }
 
-function table(container, key) {
+function table(key) {
   const head = ["Commit", "Date", "Subject", "Time", "", "Instructions", "", "Cycles", "", "Branch misses", "", "IPC", "GHz", "Mtok/s", "RSS", "Temp"];
   let s = "<table><thead><tr>" + head.map((h, k) => `<th class="${k < 3 ? "l" : ""}">${h}</th>`).join("") + "</tr></thead><tbody>";
   let prevCell = null;
   const out = [];
   for (const r of DATA.rows) {
     const c = r.cells[key];
-    let tds = `<td class="l"><code>${esc(r.short)}</code></td><td class="l muted">${esc(r.date)}</td><td class="l subject" title="${esc(r.subject)}">${esc(r.subject)}</td>`;
+    let tds = `<td class="l">${commitLink(r)}</td><td class="l muted">${esc(r.date)}</td><td class="l subject" title="${esc(r.subject)}">${esc(r.subject)}</td>`;
     if (!r.build_ok) {
       tds += `<td class="l fail" colspan="13">build failed: ${esc(r.build_error)}</td>`;
     } else if (!c) {
@@ -353,27 +545,63 @@ function table(container, key) {
       tds += `<td>${c.rss_mb.toFixed(0)} MB</td><td class="muted">${c.temp[0] ? c.temp[0].toFixed(0) + "&rarr;" + c.temp[1].toFixed(0) + "&deg;C" : "-"}</td>`;
       prevCell = c;
     }
-    out.push(`<tr>${tds}</tr>`);
+    out.push(`<tr id="${rowId(key, r)}">${tds}</tr>`);
   }
   s += out.reverse().join("") + "</tbody></table>";
   const wrap = document.createElement("div");
   wrap.className = "tablewrap";
   wrap.innerHTML = s;
-  container.appendChild(wrap);
+  return wrap;
+}
+
+function renderSection(sec) {
+  for (const t of sec.tiles.children) t.classList.toggle("sel", t.dataset.metric === sec.metric);
+  bigChart(sec);
 }
 
 renderMeta();
 const sections = document.getElementById("sections");
+const live = [];
 for (const key of DATA.keys) {
+  const el = document.createElement("section");
+  sections.appendChild(el);
   const h = document.createElement("h2");
   h.textContent = key;
-  sections.appendChild(h);
-  const charts = document.createElement("div");
-  charts.className = "charts";
-  sections.appendChild(charts);
-  for (const m of METRICS) chart(charts, key, m);
-  table(sections, key);
+  el.appendChild(h);
+  const sec = {key, el, metric: "time", i0: 0, i1: DATA.rows.length - 1, pinned: null, redraw: [], pts: {}};
+  for (const m of METRICS) sec.pts[m.key] = points(key, m.key);
+  const ok = sec.pts.time.length;
+  if (ok < 2) {
+    const last = DATA.rows[DATA.rows.length - 1].cells[key];
+    const why = last && !last.ok ? `, latest failed: ${esc(last.error)}` : "";
+    const det = document.createElement("details");
+    det.innerHTML = `<summary>${ok} successful run${ok === 1 ? "" : "s"} of ${DATA.rows.length}${why}</summary>`;
+    det.appendChild(table(key));
+    el.appendChild(det);
+    continue;
+  }
+  sec.tiles = document.createElement("div");
+  sec.tiles.className = "tiles";
+  el.appendChild(sec.tiles);
+  for (const m of METRICS) sec.tiles.appendChild(tile(sec, m));
+  sec.big = document.createElement("div");
+  sec.big.className = "big";
+  el.appendChild(sec.big);
+  el.appendChild(table(key));
+  live.push(sec);
 }
+function redrawAll() {
+  for (const sec of live) {
+    for (const f of sec.redraw) f();
+    renderSection(sec);
+  }
+}
+redrawAll();
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(redrawAll, 100);
+});
 </script>
 </body>
 </html>
