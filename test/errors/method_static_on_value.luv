@@ -1,0 +1,12 @@
+# CRET: 1
+# CERR: {self}:12:11:    t = s.new(2)
+# CERR: {ssss}                 ^ error: Static method 'new' can't be called on a value.
+struct Stuff:
+    int a
+
+on Stuff def Stuff new(int a):
+    return Stuff(a)
+
+def main():
+    s = Stuff(1)
+    t = s.new(2)

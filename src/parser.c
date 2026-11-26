@@ -195,10 +195,12 @@ struct GlobalFunc {
 #define FUNC_NO_SYM UINT32_MAX
 
 // A method of a struct. receiver is the struct, not self's pointer type.
+// Static methods don't have self.
 struct Method {
   TypeId receiver;
   NameId name;
   TypeId type;
+  bool has_self;
 };
 
 // A module's global variable. data is its storage.
@@ -3425,6 +3427,11 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
 
 // Makes e, the receiver, the result of calling method on it.
 static void method_call(Parser* p, ExpDesc* e, const Method* method, SrcLoc name_at) {
+  if (!method->has_self) {
+    const Name* n = name_of(p, method->name);
+    error_at(p, name_at, "Static method '%.*s' can't be called on a value.", (int)n->len,
+             (const char*)n->str);
+  }
   if (EMIT) {
     error_at(p, name_at, "Method calls aren't supported yet.");
   }
@@ -4226,7 +4233,12 @@ static void emit_func_sym(Parser* p, GlobalFunc* gf, NameId name) {
 #endif
 }
 
-static void declare_method(Parser* p, TypeId receiver, NameId name, SrcLoc at, TypeId ft) {
+static void declare_method(Parser* p,
+                           TypeId receiver,
+                           NameId name,
+                           SrcLoc at,
+                           TypeId ft,
+                           bool has_self) {
   u32 tag = method_tag(receiver, name);
   HashSlot* slot = method_slot(p, receiver, name, tag);
   if (slot->tag != 0) {
@@ -4235,7 +4247,8 @@ static void declare_method(Parser* p, TypeId receiver, NameId name, SrcLoc at, T
              type_str(p, receiver));
   }
   u32 idx = p->methods.num;
-  *vec_push(p->ls.ctx, &p->methods) = (Method){.receiver = receiver, .name = name, .type = ft};
+  *vec_push(p->ls.ctx, &p->methods) =
+      (Method){.receiver = receiver, .name = name, .type = ft, .has_self = has_self};
   hashtable_insert(p->ls.ctx, &p->method_index, slot, tag, idx);
 }
 
@@ -4286,8 +4299,6 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
     } else {
       declare_if_new(p, name, at, ft);
     }
-  } else if (p->receiver.u != TY_UNKNOWN) {
-    declare_method(p, p->receiver, name, at, ft);
   }
   if (T(p) == TK_LBRACE) {
     error_at(p, p->ls.pos.t.loc, "Functions can't have type parameters, only structs.");
@@ -4297,6 +4308,7 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
 
   SrcLoc lparen = p->ls.pos.t.loc;
   check(p, TK_LPAREN);
+  bool has_self = false;
   if (T(p) != TK_RPAREN) {
     bool first = true;
     for (;;) {
@@ -4310,6 +4322,7 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
           name = expect_name(p, "parameter name", &at);
         } else if (is_method && first) {
           t = p->self_type;
+          has_self = true;
         } else {
           error_at(p, p->ls.pos.t.loc, "Parameter needs a type.");
         }
@@ -4327,6 +4340,11 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
     }
   }
   check_match(p, TK_RPAREN, TK_LPAREN, lparen);
+  // A method is declared after its parameters, because whether it's static
+  // depends on its first one.
+  if (is_method && p->receiver.u != TY_UNKNOWN) {
+    declare_method(p, p->receiver, *func_name, *name_at, ft, has_self);
+  }
   return outer;
 }
 
