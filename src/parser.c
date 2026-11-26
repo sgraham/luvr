@@ -1705,11 +1705,48 @@ static void emit_agg_init(Parser* p, Ref addr, TypeId t) {
   }
 }
 
-static SlotId emit_local_slot(Parser* p, TypeId t, NameId name, SrcLoc at) {
-  if (type_is_aggregate(p, t) && type_has_layout(p, t)) {
-    return il_slot_add_agg(&p->il, type_agg(p, t), name);
+// l's type has to be set first.
+static void emit_local_slot(Parser* p, Local* l, SrcLoc at) {
+  if (!EMIT) {
+    return;
   }
-  return il_slot_add(&p->il, il_type_of(p, t, at), name);
+  if (type_is_aggregate(p, l->type) && type_has_layout(p, l->type)) {
+    l->slot = il_slot_add_agg(&p->il, type_agg(p, l->type), l->name);
+  } else {
+    l->slot = il_slot_add(&p->il, il_type_of(p, l->type, at), l->name);
+  }
+}
+
+// Makes e a use of l, whose type is already in e. A constant is loaded
+// separately, since it's the same in both builds.
+static void emit_local_use(Parser* p, ExpDesc* e, const Local* l, NameId name) {
+  if (!EMIT) {
+    return;
+  }
+  if (l->kind == LK_VAR) {
+    e->kind = EK_LOCAL;
+    e->slot = l->slot;
+  } else if (l->kind == LK_PARAM && type_is_aggregate(p, l->type)) {
+    e->kind = EK_ADDR;
+    e->base = l->ref;
+    e->offset = 0;
+  } else if (l->kind == LK_PARAM) {
+    e->kind = EK_REF;
+    e->ref = l->ref;
+  } else if (l->kind == LK_GLOBAL) {
+    GlobalInfo global = module_global_info(p->mod, name);
+    if ((GlobalKind)(global & GLOBAL_KIND_MASK) == GK_VAR) {
+      load_global_var(p, e, global);
+    }
+  }
+}
+
+static void emit_func_use(ExpDesc* e, const GlobalFunc* gf) {
+  if (!EMIT || gf->sym == FUNC_NO_SYM) {
+    return;
+  }
+  e->kind = EK_FUNC;
+  e->sym = gf->sym;
 }
 
 // Integers narrower than 64 bits are i32s. Extends v to i64 if it's narrower.
@@ -3089,22 +3126,7 @@ static void primary(Parser* p, ExpDesc* e) {
         if (l->kind == LK_CONST) {
           load_named_const(p, e, &p->local_consts[l - p->locals]);
         }
-        if (EMIT && l->kind == LK_VAR) {
-          e->kind = EK_LOCAL;
-          e->slot = l->slot;
-        } else if (EMIT && l->kind == LK_PARAM && type_is_aggregate(p, l->type)) {
-          e->kind = EK_ADDR;
-          e->base = l->ref;
-          e->offset = 0;
-        } else if (EMIT && l->kind == LK_PARAM) {
-          e->kind = EK_REF;
-          e->ref = l->ref;
-        } else if (EMIT && l->kind == LK_GLOBAL) {
-          GlobalInfo global = module_global_info(p->mod, name);
-          if ((GlobalKind)(global & GLOBAL_KIND_MASK) == GK_VAR) {
-            load_global_var(p, e, global);
-          }
-        }
+        emit_local_use(p, e, l, name);
       } else if (kind == GK_CONST) {
         load_named_const(p, e, &p->global_consts.items[info >> GLOBAL_KIND_BITS]);
       } else if (kind == GK_VAR) {
@@ -3112,10 +3134,7 @@ static void primary(Parser* p, ExpDesc* e) {
       } else if (kind == GK_FUNC) {
         const GlobalFunc* gf = &p->global_funcs.items[info >> GLOBAL_KIND_BITS];
         e->type = gf->type;
-        if (EMIT && gf->sym != FUNC_NO_SYM) {
-          e->kind = EK_FUNC;
-          e->sym = gf->sym;
-        }
+        emit_func_use(e, gf);
       }
       if (type_is_created(e->type)) {
         check_function_called(p, e, at);
@@ -3301,7 +3320,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
     declare_if_new(p, name, at, t);
     if (EMIT) {
       Local* l = lookup_in_func(p, name);
-      l->slot = emit_local_slot(p, t, name, at);
+      emit_local_slot(p, l, at);
       if (!has_value && type_is_aggregate(p, t)) {
         emit_agg_init(p, il_slot_addr(&p->il, l->slot), t);
         return;
@@ -3430,9 +3449,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           if (!loc) {
             loc = declare_local(p, name, at, LK_VAR);
             loc->type = t;
-            if (EMIT) {
-              loc->slot = emit_local_slot(p, t, name, at);
-            }
+            emit_local_slot(p, loc, at);
           }
           if (EMIT && loc->kind == LK_GLOBAL) {
             emit_assign_to_addr(p, &exp, &v, value_at);
