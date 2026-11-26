@@ -828,10 +828,18 @@ typedef enum IlOperand {
 //   hidden pointer, or loads into the result registers.
 //
 // A shift only uses the low bits of its count, which can be an integer of
-// either width. DIV and REM truncate toward zero. Dividing by zero, or the
-// minimum signed value by -1, isn't defined. SEXT8, ZEXT8, SEXT16 and ZEXT16
-// extend the low bits of an i32 to all of it, so that narrow arithmetic wraps
-// at its own width. FEXT extends an f32 to f64.
+// either width.
+//
+// DIV and REM truncate toward zero. Dividing by zero, or the
+// minimum signed value by -1, isn't defined.
+//
+// On floats, ADD, SUB, MUL, DIV and NEG are the IEEE 754 operations, rounded to
+// the instruction's type.
+//
+// FEXT extends an f32 to f64.
+//
+// SEXT8, ZEXT8, SEXT16 and ZEXT16 extend the low bits of an i32 to all of it,
+// so that narrow arithmetic wraps at its own width.
 #define IL_OPS(X)              \
   X(ADD, REF, REF, true)       \
   X(SUB, REF, REF, true)       \

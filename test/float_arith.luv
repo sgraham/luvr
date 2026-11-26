@@ -1,0 +1,34 @@
+# OUT: 4.000000
+# OUT: -1.000000
+# OUT: 3.750000
+# OUT: 0.600000
+# OUT: -1.500000
+# OUT: 16777216.000000
+# OUT: 16777218.000000
+# OUT: 0.333333
+# OUT: 4.500000
+# OUT: inf
+# OUT: -inf
+
+# Float +, -, *, / and unary '-' on values that aren't constants. f32 results
+# are rounded to f32.
+def int main():
+    f64 a = 1.5
+    f64 b = 2.5
+    print a + b
+    print a - b
+    print a * b
+    print a / b
+    print -a
+    f32 big = 16777216
+    print big + 1
+    print big + 2
+    f32 third = 1
+    third /= 3
+    print third
+    x = a * 2 + 1.5
+    print x
+    f64 zero = 0
+    print a / zero
+    print -a / zero
+    return 0

@@ -9,6 +9,7 @@
 # The exit status is main's return value, as it would be for a native program.
 
 import ast
+import math
 import struct
 import sys
 from dataclasses import dataclass
@@ -310,6 +311,30 @@ ARITH = {
     "SAR": lambda n, a, b: a >> (b & (n - 1)),
 }
 
+
+# Python raises on a zero divisor, where IEEE 754 gives an infinity or NaN.
+def float_div(a, b):
+    if b != 0:
+        return a / b
+    if a == 0 or math.isnan(a):
+        return math.nan
+    return math.copysign(math.inf, a) * math.copysign(1, b)
+
+
+FLOAT_ARITH = {
+    "ADD": lambda a, b: a + b,
+    "SUB": lambda a, b: a - b,
+    "MUL": lambda a, b: a * b,
+    "DIV": float_div,
+}
+
+
+# Constant operands are read as f64, so f32 operands are rounded as well as
+# results.
+def float_value(ty, v):
+    return round_to_f32(v) if ty == "f32" else v
+
+
 # Extensions of the low bits of an i32 to all of it.
 NARROW = {"SEXT8": (8, True), "ZEXT8": (8, False), "SEXT16": (16, True), "ZEXT16": (16, False)}
 
@@ -392,6 +417,10 @@ def run(prog, f, args, result_dst):
             size = prog.aggs[ins.operands[2].val].size
             write(mem, dst, mem.bytes[src:src + size])
             continue
+        if ins.ty in FLOAT_FORMATS and ins.op in FLOAT_ARITH:
+            a, b = (float_value(ins.ty, value_of(values, prog, o)) for o in ins.operands)
+            values[ins.result] = float_value(ins.ty, FLOAT_ARITH[ins.op](a, b))
+            continue
         if ins.op in ARITH:
             a, b = (value_of(values, prog, o) for o in ins.operands)
             values[ins.result] = wrap(ins.ty, ARITH[ins.op](BITS[ins.ty], a, b))
@@ -403,6 +432,9 @@ def run(prog, f, args, result_dst):
         if ins.op in UNSIGNED_COMPARE:
             a, b = (unsigned(BITS[ins.ty], value_of(values, prog, o)) for o in ins.operands)
             values[ins.result] = int(COMPARE[UNSIGNED_COMPARE[ins.op]](a, b))
+            continue
+        if ins.op == "NEG" and ins.ty in FLOAT_FORMATS:
+            values[ins.result] = -float_value(ins.ty, value_of(values, prog, ins.operands[0]))
             continue
         if ins.op == "NEG":
             values[ins.result] = wrap(ins.ty, -value_of(values, prog, ins.operands[0]))

@@ -2052,7 +2052,8 @@ static void emit_arith(Parser* p,
                        SrcLoc rhs_at,
                        SrcLoc at) {
 #if EMIT
-  if (!type_is_integer(t)) {
+  // t can also be unknown, or str for concatenation, which isn't emitted yet.
+  if (!type_is_integer(t) && !type_is_float(t)) {
     exp_mark_unsupported(e);
     return;
   }
@@ -2062,7 +2063,9 @@ static void emit_arith(Parser* p,
   IlOp il_op = il_arith_op(op, type_is_unsigned(t));
   Ref v = il_emit(&p->il, il_op, il_type_of(p, t, at), left, right);
   // The other ops can't take an in range value out of range.
-  if (il_op == OP_ADD || il_op == OP_SUB || il_op == OP_MUL || il_op == OP_DIV || il_op == OP_SHL) {
+  bool can_carry =
+      il_op == OP_ADD || il_op == OP_SUB || il_op == OP_MUL || il_op == OP_DIV || il_op == OP_SHL;
+  if (can_carry && type_is_integer(t)) {
     v = emit_extend_narrow(p, v, t);
   }
   e->kind = EK_REF;
@@ -2105,28 +2108,34 @@ static void emit_addr_of(Parser* p, ExpDesc* e) {
 #endif
 }
 
-// Makes e the unary '-' or '~' of the integer e, unless it can't be emitted
-// yet.
-static void emit_unary_arith(Parser* p, bool neg, ExpDesc* e, SrcLoc at) {
+// Makes e the unary '-' of the signed integer or float e.
+static void emit_neg(Parser* p, ExpDesc* e, SrcLoc at) {
 #if EMIT
   TypeId t = e->type;
-  if (!type_is_integer(t)) {
-    exp_mark_unsupported(e);
-    return;
-  }
   IlType ty = il_type_of(p, t, at);
-  Ref v = emit_to_ref(p, e, t, at);
-  if (neg) {
-    v = emit_extend_narrow(p, il_emit(&p->il, OP_NEG, ty, v, 0), t);
-  } else {
-    // Only the bits of t's width are flipped, so that a narrow unsigned
-    // value stays zero-extended.
-    int bits = type_int_bits(t);
-    u64 mask = type_is_unsigned(t) && bits < 32 ? (1ull << bits) - 1 : ~0ull;
-    v = il_emit(&p->il, OP_XOR, ty, v, il_const_int(&p->il, ty, mask));
+  Ref v = il_emit(&p->il, OP_NEG, ty, emit_to_ref(p, e, t, at), 0);
+  if (type_is_integer(t)) {
+    v = emit_extend_narrow(p, v, t);
   }
   e->kind = EK_REF;
   e->ref = v;
+#else
+  exp_mark_non_const(e);
+#endif
+}
+
+// Makes e the '~' of the integer e.
+static void emit_complement(Parser* p, ExpDesc* e, SrcLoc at) {
+#if EMIT
+  TypeId t = e->type;
+  IlType ty = il_type_of(p, t, at);
+  // Only the bits of t's width are flipped, so that a narrow unsigned value
+  // stays zero-extended.
+  int bits = type_int_bits(t);
+  u64 mask = type_is_unsigned(t) && bits < 32 ? (1ull << bits) - 1 : ~0ull;
+  Ref v = emit_to_ref(p, e, t, at);
+  e->ref = il_emit(&p->il, OP_XOR, ty, v, il_const_int(&p->il, ty, mask));
+  e->kind = EK_REF;
 #else
   exp_mark_non_const(e);
 #endif
@@ -2147,7 +2156,11 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, SrcLoc at) {
     error_at(p, at, "'~' expects an integer, not %s.", type_str(p, t));
   }
   if (e->kind != EK_CONST) {
-    emit_unary_arith(p, neg, e, at);
+    if (neg) {
+      emit_neg(p, e, at);
+    } else {
+      emit_complement(p, e, at);
+    }
     return;
   }
   if (type_is_float(t)) {
