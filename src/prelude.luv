@@ -9,6 +9,10 @@ struct str:
     int _len
 
 
+# Not implemented yet. Calls are checked, but can't be emitted.
+on str foreign str join(self, []str parts)
+
+
 ### struct Range:
 ###     int start
 ###     int stop

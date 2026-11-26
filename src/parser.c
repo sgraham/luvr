@@ -286,8 +286,11 @@ struct Parser {
   // Bit c - 'A' is set for each type parameter declared by the current
   // struct's list or method's receiver.
   u32 type_params;
-  // The type of the current method's self, or ty_unknown if it isn't known
-  // yet, as for generic and builtin receivers.
+  // The current method's receiver, and the type of its self. Both are
+  // ty_unknown if they aren't known yet, as for generic receivers and builtin
+  // receivers other than str. self is usually a pointer to the receiver, but
+  // receivers that can't be modified in place, like str, get self by value.
+  TypeId receiver;
   TypeId self_type;
   TypeId ret_type;  // of the current function
   Loop* loop;       // the current function's innermost loop, or NULL
@@ -3471,15 +3474,11 @@ static void postfix(Parser* p, ExpDesc* e) {
             method_call(p, e, method, name_at);
             break;
           }
-          // str's methods aren't recorded, because self isn't typed for
-          // builtin receivers. Their calls aren't checked.
-          if (base.u != TY_STR) {
-            method_error(p, base, name, name_at);
-          }
+          method_error(p, base, name, name_at);
         }
         // Emitting changes e's kind, so the shape is found first. self isn't
-        // typed yet for generic and builtin receivers, but it will be a
-        // pointer, so its fields are assignable.
+        // typed yet for generic receivers, but it will be a pointer, so its
+        // fields are assignable.
         bool through_pointer =
             type_is_pointer(p, e->type) || (e->shape == SH_PARAM && e->type.u == TY_UNKNOWN);
         Shape shape = through_pointer ? SH_LVALUE : exp_part_shape(e);
@@ -4287,10 +4286,8 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
     } else {
       declare_if_new(p, name, at, ft);
     }
-  } else if (type_is_pointer(p, p->self_type)) {
-    // Methods of generic and builtin receivers aren't recorded, because their
-    // self_type isn't known.
-    declare_method(p, type_info(p, p->self_type)->pointee, name, at, ft);
+  } else if (p->receiver.u != TY_UNKNOWN) {
+    declare_method(p, p->receiver, name, at, ft);
   }
   if (T(p) == TK_LBRACE) {
     error_at(p, p->ls.pos.t.loc, "Functions can't have type parameters, only structs.");
@@ -4820,9 +4817,9 @@ static void receiver_param(Parser* p) {
   type_param(p);
 }
 
-// Returns the type of self. A method on a struct gets a pointer to it, since
-// xyz.f(5) is Xyz.f(&xyz, 5). self isn't typed yet for generic and builtin
-// receivers.
+// Returns the type that the method is recorded under, or ty_unknown for
+// generic receivers and builtin receivers other than str, which aren't
+// recorded yet.
 static TypeId receiver(Parser* p) {
   SrcLoc at = p->ls.pos.t.loc;
   switch (T(p)) {
@@ -4830,7 +4827,7 @@ static TypeId receiver(Parser* p) {
       TypeId t = check_type_name(p);
       next(p);
       if (T(p) != TK_LBRACE) {
-        return t.u == TY_UNKNOWN ? t : type_pointer_to(p, t);
+        return t;
       }
       SrcLoc brace = p->ls.pos.t.loc;
       next(p);
@@ -4861,6 +4858,9 @@ static TypeId receiver(Parser* p) {
       error_at(p, at, "Methods can't be defined on pointer types.");
     case TK_NAME:
       error_at(p, at, "Methods can only be defined in the type's own module.");
+    case TK_STR:
+      next(p);
+      return ty_str;
     default:
       if (!is_builtin_type(T(p))) {
         error_expected(p, "type to define methods on");
@@ -4884,7 +4884,15 @@ static void toplevel_stat(Parser* p) {
       return;
     case TK_ON:
       next(p);
-      p->self_type = receiver(p);
+      p->receiver = receiver(p);
+      // A method on a struct gets a pointer to it, since xyz.f(5) is
+      // Xyz.f(&xyz, 5). A str can't be modified in place, so a pointer
+      // would only add a store and loads.
+      if (p->receiver.u == TY_STR) {
+        p->self_type = ty_str;
+      } else {
+        p->self_type = type_pointer_to(p, p->receiver);
+      }
       if (optional(p, TK_FOREIGN)) {
         foreign_decl(p, /*is_method=*/true);
       } else {

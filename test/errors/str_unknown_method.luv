@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:6:7:    s.frob()
+# CERR: {ssss}           ^ error: 'frob' isn't a method of str.
+def main():
+    s = "x"
+    s.frob()
