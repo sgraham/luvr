@@ -3158,39 +3158,54 @@ static void struct_args(Parser* p, ExpDesc* e) {
   emit_literal_end(p, &lit, e, st);
 }
 
+#if EMIT
+// Integers of 32 bits or less are extended in an i32 by their own signedness.
+static Ref emit_int_cast(Parser* p, Ref v, TypeId from, TypeId t) {
+  int from_bits = type_int_bits(from);
+  int to_bits = type_int_bits(t);
+  if (to_bits == 64) {
+    return emit_extend_if_necessary(p, v, from);
+  }
+  if (from_bits == 64) {
+    v = il_emit(&p->il, OP_TRUNC, IT_I32, v, 0);
+  }
+  // A narrower value is already extended correctly for t, unless it's signed
+  // and t isn't.
+  bool is_extended = from_bits < to_bits && (type_is_unsigned(from) || !type_is_unsigned(t));
+  return is_extended ? v : emit_extend_narrow(p, v, t);
+}
+#endif
+
 // Makes e the cast of e to t. A cast between pointers and u64 doesn't change e.
-// Casts between integers and floats aren't emitted yet.
 static void emit_cast(Parser* p, ExpDesc* e, TypeId t, bool is_bitcast, SrcLoc at) {
 #if EMIT
   TypeId from = e->type;
   if (is_bitcast || from.u == t.u) {
     return;
   }
-  if (type_is_float(from) && type_is_float(t)) {
-    IlOp op = t.u == TY_F64 ? OP_FEXT : OP_FTRUNC;
-    e->ref = il_emit(&p->il, op, il_type_of(p, t, at), emit_to_ref(p, e, from, at), 0);
-    e->kind = EK_REF;
-    return;
-  }
-  if (!type_is_integer(from) || !type_is_integer(t)) {
+  // castable() leaves only numbers, apart from unknown types.
+  if (from.u == TY_UNKNOWN || t.u == TY_UNKNOWN) {
     exp_mark_unsupported(e);
     return;
   }
+  IlType ty = il_type_of(p, t, at);
   Ref v = emit_to_ref(p, e, from, at);
-  int from_bits = type_int_bits(from);
-  int to_bits = type_int_bits(t);
-  if (to_bits == 64) {
+  if (type_is_float(from) && type_is_float(t)) {
+    v = il_emit(&p->il, t.u == TY_F64 ? OP_FEXT : OP_FTRUNC, ty, v, 0);
+  } else if (type_is_float(t)) {
+    // ITOF and UTOF only convert from i64, which every integer type other
+    // than u64 fits in as a signed value.
     v = emit_extend_if_necessary(p, v, from);
+    v = il_emit(&p->il, from.u == TY_U64 ? OP_UTOF : OP_ITOF, ty, v, 0);
+  } else if (type_is_float(from)) {
+    // FTOI and FTOU only convert from f64. Extending an f32 is exact.
+    if (from.u == TY_F32) {
+      v = il_emit(&p->il, OP_FEXT, IT_F64, v, 0);
+    }
+    IlOp op = type_is_unsigned(t) ? OP_FTOU : OP_FTOI;
+    v = il_emit(&p->il, op, ty, v, (Ref)type_int_bits(t));
   } else {
-    if (from_bits == 64) {
-      v = il_emit(&p->il, OP_TRUNC, IT_I32, v, 0);
-    }
-    // A narrower value is already extended correctly for t, unless it's
-    // signed and t isn't.
-    bool is_extended = from_bits < to_bits && (type_is_unsigned(from) || !type_is_unsigned(t));
-    if (!is_extended) {
-      v = emit_extend_narrow(p, v, t);
-    }
+    v = emit_int_cast(p, v, from, t);
   }
   e->kind = EK_REF;
   e->ref = v;

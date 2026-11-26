@@ -1,0 +1,59 @@
+# OUT: 3.000000
+# OUT: -2.000000
+# OUT: 255.000000
+# OUT: 4294967295.000000
+# OUT: 18446744073709551616.000000
+# OUT: 16777216.000000
+# OUT: 3
+# OUT: -3
+# OUT: 127
+# OUT: -128
+# OUT: 255
+# OUT: 0
+# OUT: 9223372036854775807
+# OUT: 18446744073709551615
+# OUT: 0
+# OUT: 0
+# OUT: 2
+# OUT: 2147483647
+# OUT: 1152921642045800448.000000
+
+# Casts between integers and floats that aren't constants. Floats are
+# truncated toward zero, and out of range values saturate, with NaN giving 0.
+# An integer is rounded to f32 once, not through an f64.
+def int main():
+    i32 three = 3
+    print cast f64(three)
+    i8 m2 = -2
+    print cast f32(m2)
+    u8 ff = 255
+    print cast f64(ff)
+    u32 u32max = 4294967295
+    print cast f64(u32max)
+    u64 u64max = 18446744073709551615
+    print cast f64(u64max)
+    i64 odd = 16777217
+    print cast f32(odd)
+    f64 pi = 3.9
+    print cast int(pi)
+    print cast i32(-pi)
+    f64 big = 300
+    print cast i8(big)
+    print cast i8(-big)
+    print cast u8(big)
+    print cast u8(-big)
+    f64 huge = 1e300
+    print cast i64(huge)
+    print cast u64(huge)
+    f64 zero = 0
+    nan = zero / zero
+    print cast int(nan)
+    print cast u16(nan)
+    f32 two = 2.5
+    print cast u32(two)
+    print cast i32(huge / zero)
+    # Rounding through an f64 would land exactly halfway between two f32s, and
+    # round down to even.
+    i64 halfway_plus_one = 1152921573326323713
+    print cast f32(halfway_plus_one)
+    return 0

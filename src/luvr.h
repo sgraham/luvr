@@ -846,6 +846,12 @@ typedef enum IlOperand {
 //
 // FTRUNC rounds an f64 to f32, giving an infinity if it's out of range.
 //
+// ITOF and UTOF round an i64 to the instruction's float type, reading it as
+// signed or unsigned. FTOI and FTOU truncate an f64 toward zero to a signed or
+// unsigned integer of b bits, extended to the instruction's type as narrow
+// values are. Out of range values saturate to the nearest end of the range,
+// and NaN gives 0.
+//
 // TRUNC is the low 32 bits of an i64.
 #define IL_OPS(X)              \
   X(ADD, REF, REF, true)       \
@@ -879,6 +885,10 @@ typedef enum IlOperand {
   X(ZEXT16, REF, NONE, true)   \
   X(FEXT, REF, NONE, true)     \
   X(FTRUNC, REF, NONE, true)   \
+  X(ITOF, REF, NONE, true)     \
+  X(UTOF, REF, NONE, true)     \
+  X(FTOI, REF, NUM, true)      \
+  X(FTOU, REF, NUM, true)      \
   X(TRUNC, REF, NONE, true)    \
   X(NEG, REF, NONE, true)      \
   X(SLOT, SLOT, NONE, true)    \

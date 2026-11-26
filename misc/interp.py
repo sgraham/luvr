@@ -334,6 +334,39 @@ FLOAT_ARITH = {
 }
 
 
+# Rounds the integer v to ty, rounding only once.
+#
+# Below 2^53, float(v) is exact, so only round_to_f32 rounds. Above that,
+# float(v) rounds as well, and rounding twice can be wrong. For example,
+# 2^60 + 2^36 + 1 is just over halfway between the f32s 2^60 and 2^60 + 2^37,
+# so it should round up. But float(v) drops the + 1, leaving it exactly
+# halfway, and round_to_f32 then rounds to even, which is down.
+#
+# Rounding to f32 only depends on the top 24 bits, the bit after them, and
+# whether any of the bits below that are set. So v is cut to its top 26 bits,
+# with the lowest one set if any of the bits cut off were. That's exact as a
+# float, so round_to_f32 rounds it once, the same way it would round v.
+def int_to_float(ty, v):
+    if ty == "f64" or abs(v) < 1 << 53:
+        return float_value(ty, float(v))
+    shift = abs(v).bit_length() - 26
+    m = abs(v) >> shift
+    if abs(v) & ((1 << shift) - 1):
+        m |= 1
+    return round_to_f32(math.copysign(float(m) * 2.0**shift, v))
+
+
+# Truncates v toward zero, saturating to lo or hi, and NaN gives 0.
+def float_to_int(v, lo, hi):
+    if math.isnan(v):
+        return 0
+    if v <= lo:
+        return lo
+    if v >= hi:
+        return hi
+    return math.trunc(v)
+
+
 # Constant operands are read as f64, so f32 operands are rounded as well as
 # results.
 def float_value(ty, v):
@@ -455,6 +488,20 @@ def run(prog, f, args, result_dst):
             if signed and v >= 1 << (bits - 1):
                 v -= 1 << bits
             values[ins.result] = v
+            continue
+        if ins.op in ("ITOF", "UTOF"):
+            v = value_of(values, prog, ins.operands[0])
+            if ins.op == "UTOF":
+                v = unsigned(64, v)
+            values[ins.result] = int_to_float(ins.ty, v)
+            continue
+        if ins.op in ("FTOI", "FTOU"):
+            v = value_of(values, prog, ins.operands[0])
+            bits = ins.operands[1].val
+            signed = ins.op == "FTOI"
+            lo = -(1 << (bits - 1)) if signed else 0
+            hi = (1 << (bits - 1)) - 1 if signed else (1 << bits) - 1
+            values[ins.result] = wrap(ins.ty, float_to_int(v, lo, hi))
             continue
         if ins.op == "FTRUNC":
             values[ins.result] = round_to_f32(value_of(values, prog, ins.operands[0]))
