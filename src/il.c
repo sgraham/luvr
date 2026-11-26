@@ -106,6 +106,20 @@ Ref il_const_int(IlFunc* f, IlType ty, u64 v) {
   return il_const(f, ty, v);
 }
 
+Ref il_const_float(IlFunc* f, IlType ty, double v) {
+  ASSERT(ty == IT_F32 || ty == IT_F64);
+  u64 bits;
+  if (ty == IT_F32) {
+    float narrow = (float)v;
+    u32 narrow_bits;
+    memcpy(&narrow_bits, &narrow, sizeof(narrow_bits));
+    bits = narrow_bits;
+  } else {
+    memcpy(&bits, &v, sizeof(bits));
+  }
+  return il_const(f, ty, bits);
+}
+
 Ref il_const_sym(IlFunc* f, u32 sym) {
   return il_const(f, IT_SYM, sym);
 }
@@ -240,6 +254,21 @@ static void il_dump_source_line(const u8* src, SrcLoc loc, FILE* out) {
   fprintf(out, "  ; %.*s\n", (int)(end - start), start);
 }
 
+static void il_dump_float(IlType ty, u64 bits, FILE* out) {
+  double v;
+  if (ty == IT_F32) {
+    u32 narrow_bits = (u32)bits;
+    float narrow;
+    memcpy(&narrow, &narrow_bits, sizeof(narrow));
+    v = narrow;
+  } else {
+    memcpy(&v, &bits, sizeof(v));
+  }
+  char buf[FLOAT_STR_MAX];
+  float_as_str_precise_slow(buf, v, /*is_f32=*/ty == IT_F32);
+  fputs(buf, out);
+}
+
 static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
   if (r & REF_INS) {
     fprintf(out, "%%%u", r & ~REF_INS);
@@ -254,6 +283,10 @@ static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
   }
   if (f->const_types.items[idx] == IT_DATA) {
     fprintf(out, "@.dat%" PRIu64, v);
+    return;
+  }
+  if (f->const_types.items[idx] == IT_F32 || f->const_types.items[idx] == IT_F64) {
+    il_dump_float(f->const_types.items[idx], v, out);
     return;
   }
   fprintf(out, "%" PRId64, (int64_t)v);

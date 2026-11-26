@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:17:    x = cast i8(300.0)
+# CERR: {ssss}                      ^ error: 300.0 doesn't fit in i8.
+def int main():
+    x = cast i8(300.0)
+    return 0

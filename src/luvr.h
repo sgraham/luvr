@@ -460,6 +460,7 @@ typedef void (*AggDoneFn)(Ctx* ctx, AggId agg);
 #define RUNTIME_SYMS(X) \
   X(luv_print_i64)      \
   X(luv_print_u64)      \
+  X(luv_print_f64)      \
   X(luv_print_bool)     \
   X(luv_print_str)      \
   X(luv_print_end)
@@ -541,6 +542,15 @@ void ctx_error_location(const Ctx* ctx, u32* line, u32* col);
 // once ctx_error() has formatted the message. When the space runs out, the
 // result is a fixed string saying so.
 const char* ctx_err_str(Ctx* ctx, const char* fmt, ...);
+
+// %.17g is at most 24 chars, as in -2.2250738585072014e-308.
+#define FLOAT_STR_MAX 32
+
+// Writes the shortest form of v that reads back as the same value, as an f32 if
+// is_f32 is set. It's found by trying each precision in turn, so it's slow.
+// There's always a '.' or an exponent, so that it can't be mistaken for an
+// integer.
+void float_as_str_precise_slow(char buf[FLOAT_STR_MAX], double v, bool is_f32);
 
 // Records the error in ctx and longjmps to ctx->on_error.
 NORETURN void ctx_error(Ctx* ctx,
@@ -1049,6 +1059,9 @@ Ref il_emit(IlFunc* f, IlOp op, IlType ty, Ref a, Ref b);
 // ty is IT_I32 or IT_I64. An i32 constant is stored sign-extended, so that
 // both its signed and unsigned spellings are the same constant.
 Ref il_const_int(IlFunc* f, IlType ty, u64 v);
+
+// ty is IT_F32 or IT_F64. An f32 constant is v rounded to f32.
+Ref il_const_float(IlFunc* f, IlType ty, double v);
 
 Ref il_const_sym(IlFunc* f, u32 sym);
 

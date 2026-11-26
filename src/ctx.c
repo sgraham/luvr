@@ -69,6 +69,30 @@ const char* ctx_err_str(Ctx* ctx, const char* fmt, ...) {
   return s;
 }
 
+void float_as_str_precise_slow(char buf[FLOAT_STR_MAX], double v, bool is_f32) {
+  for (int prec = 1;; ++prec) {
+    snprintf(buf, FLOAT_STR_MAX, "%.*g", prec, v);
+    double back = strtod(buf, NULL);
+    if (prec == 17 || (is_f32 ? (float)back == (float)v : back == v)) {
+      break;
+    }
+  }
+  // %g uses an exponent once it's at least the precision, which turns 300 into
+  // 3e+02. v is an integer then, so the plain form is exact, and it's used
+  // when it isn't longer.
+  char* exp = strchr(buf, 'e');
+  if (exp && exp[1] == '+' && atoi(exp + 2) < 17) {
+    char plain[FLOAT_STR_MAX];
+    snprintf(plain, sizeof(plain), "%.0f.0", v);
+    if (strlen(plain) <= strlen(buf)) {
+      strcpy(buf, plain);
+    }
+  }
+  if (!strpbrk(buf, ".en")) {
+    strcat(buf, ".0");
+  }
+}
+
 void ctx_error(Ctx* ctx, const char* file, const u8* buf, SrcLoc loc, const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);

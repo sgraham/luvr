@@ -1149,16 +1149,8 @@ static const char* int_str(Parser* p, ConstInt v) {
 // The shortest form that reads back as the same double, so that the value
 // shown in errors is the one that was written.
 static const char* float_str(Parser* p, double v) {
-  // %.17g is at most 24 chars, as in -2.2250738585072014e-308.
-  char buf[32];
-  int prec = 1;
-  for (;;) {
-    snprintf(buf, sizeof(buf), "%.*g", prec, v);
-    if (strtod(buf, NULL) == v || prec == 17) {
-      break;
-    }
-    ++prec;
-  }
+  char buf[FLOAT_STR_MAX];
+  float_as_str_precise_slow(buf, v, /*is_f32=*/false);
   return ctx_err_str(p->ls.ctx, "%s", buf);
 }
 
@@ -1703,6 +1695,10 @@ static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, SrcLoc at) {
   if (e->kind == EK_CONST && (type_is_integer(t) || type_is_pointer(p, t))) {
     return il_const_int(&p->il, ty, (u64)e->cv.i);
   }
+  if (e->kind == EK_CONST && type_is_float(t)) {
+    double v = type_is_float(e->type) ? e->cv.f : (double)e->cv.i;
+    return il_const_float(&p->il, ty, v);
+  }
   if (e->kind == EK_LOCAL) {
     Ref addr = il_slot_addr(&p->il, e->slot);
     return il_emit(&p->il, OP_LOAD, ty, addr, 0);
@@ -1890,6 +1886,9 @@ static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
     case TY_U32:
     case TY_U64:
       sym = SYM_luv_print_u64;
+      break;
+    case TY_F64:
+      sym = SYM_luv_print_f64;
       break;
     case TY_STR:
       sym = SYM_luv_print_str;

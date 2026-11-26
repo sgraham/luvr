@@ -9,6 +9,7 @@
 # The exit status is main's return value, as it would be for a native program.
 
 import ast
+import struct
 import sys
 from dataclasses import dataclass
 
@@ -16,6 +17,7 @@ TYPES = {"i8", "u8", "i16", "u16", "i32", "i64", "f32", "f64"}
 
 # Sizes of the integer types in memory. Loads of the narrow ones give i32s.
 INT_SIZES = {"i8": 1, "u8": 1, "i16": 2, "u16": 2, "i32": 4, "i64": 8}
+SCALAR_SIZES = INT_SIZES | {"f32": 4, "f64": 8}
 
 # The first character of an operand says what it is, except for integer
 # constants.
@@ -28,8 +30,9 @@ class Error(Exception):
 
 @dataclass
 class Operand:
-    kind: str  # "int", or a value of OPERAND_KINDS
-    val: int | str  # the n of %n, :n, $n or #n, an integer constant, or a symbol name
+    kind: str  # "int", "float", or a value of OPERAND_KINDS
+    # The n of %n, :n, $n or #n, a constant, or a symbol name.
+    val: int | float | str
 
 
 # All of the program's memory: data, then the frames of the calls that are
@@ -102,6 +105,9 @@ def parse_operand(s):
     if s[0] in OPERAND_KINDS:
         v = s[1:]
         return Operand(OPERAND_KINDS[s[0]], v if s[0] == "@" else int(v))
+    # A float constant always has a '.' or an exponent, or is inf or nan.
+    if any(c in s for c in ".en"):
+        return Operand("float", float(s))
     if s[0].isdigit() or s[0] == "-":
         return Operand("int", int(s))
     raise Error(f"bad operand '{s}'")
@@ -134,7 +140,14 @@ def alloc(mem, size, align):
     return addr
 
 
+# Floats are packed in the target's formats.
+FLOAT_FORMATS = {"f32": "<f", "f64": "<d"}
+
+
 def load(mem, addr, ty):
+    if ty in FLOAT_FORMATS:
+        fmt = FLOAT_FORMATS[ty]
+        return struct.unpack(fmt, mem.bytes[addr:addr + struct.calcsize(fmt)])[0]
     if ty not in INT_SIZES:
         raise Error(f"LOAD {ty} isn't supported yet")
     n = INT_SIZES[ty]
@@ -152,6 +165,9 @@ def write(mem, addr, b):
 # Values are kept in the signed range of their type, except after ZEXT32, so
 # only the low bits are stored.
 def store(mem, addr, ty, v):
+    if ty in FLOAT_FORMATS:
+        write(mem, addr, struct.pack(FLOAT_FORMATS[ty], v))
+        return
     if ty not in INT_SIZES:
         raise Error(f"STORE {ty} isn't supported yet")
     n = INT_SIZES[ty]
@@ -219,7 +235,7 @@ def parse(text):
                     agg = aggs[int(words[2][1:])]
                     size, align = agg.size, agg.align
                 else:
-                    size = align = INT_SIZES[words[2]]
+                    size = align = SCALAR_SIZES[words[2]]
                 f.slots.append(Slot(size, align, words[3] if len(words) > 3 else None))
             elif line.startswith(":"):
                 f.blocks[int(line[1:])] = len(f.ins)
@@ -231,7 +247,7 @@ def parse(text):
 
 
 def value_of(values, prog, operand):
-    if operand.kind == "int":
+    if operand.kind in ("int", "float"):
         return operand.val
     if operand.kind == "ins":
         return values[operand.val]
@@ -319,6 +335,7 @@ def print_str(mem, s):
 RUNTIME = {
     "luv_print_i64": lambda mem, v: sys.stdout.write(str(v)),
     "luv_print_u64": lambda mem, v: sys.stdout.write(str(v & ((1 << 64) - 1))),
+    "luv_print_f64": lambda mem, v: sys.stdout.write("%f" % v),
     "luv_print_bool": lambda mem, v: sys.stdout.write("true" if v else "false"),
     "luv_print_str": print_str,
     "luv_print_end": lambda mem: sys.stdout.write("\n"),
