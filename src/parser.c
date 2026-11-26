@@ -2989,6 +2989,12 @@ static u32 str_field_offset(Parser* p, const char* name) {
   return f->offset;
 }
 
+static NOINLINE NORETURN void method_error(Parser* p, TypeId receiver, NameId name, SrcLoc at) {
+  const Name* n = name_of(p, name);
+  error_at(p, at, "'%.*s' isn't a method of %s.", (int)n->len, (const char*)n->str,
+           type_str(p, receiver));
+}
+
 static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, SrcLoc at) {
   const Name* n = name_of(p, name);
   error_at(p, at, "'%.*s' isn't a field of %s.", (int)n->len, (const char*)n->str, type_str(p, st));
@@ -3456,17 +3462,20 @@ static void postfix(Parser* p, ExpDesc* e) {
         SrcLoc name_at = p->ls.pos.t.loc;
         next(p);
         const Field* f = type_is_struct(p, base) ? struct_field(p, base, name) : NULL;
-        if (type_is_struct(p, base) && !f && T(p) == TK_LPAREN) {
+        if (type_is_struct(p, base) && !f) {
+          if (T(p) != TK_LPAREN) {
+            field_error(p, base, name, name_at);
+          }
           const Method* method = method_find(p, base, name);
           if (method) {
             method_call(p, e, method, name_at);
             break;
           }
-        }
-        // Not every struct's methods are recorded yet, so a name that isn't a
-        // field or method is only an error if it isn't called.
-        if (type_is_struct(p, base) && !f && T(p) != TK_LPAREN) {
-          field_error(p, base, name, name_at);
+          // str's methods aren't recorded, because self isn't typed for
+          // builtin receivers. Their calls aren't checked.
+          if (base.u != TY_STR) {
+            method_error(p, base, name, name_at);
+          }
         }
         // Emitting changes e's kind, so the shape is found first. self isn't
         // typed yet for generic and builtin receivers, but it will be a

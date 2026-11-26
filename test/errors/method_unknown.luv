@@ -1,0 +1,12 @@
+# CRET: 1
+# CERR: {self}:12:7:    s.gett()
+# CERR: {ssss}            ^ error: 'gett' isn't a method of Stuff.
+struct Stuff:
+    int a
+
+on Stuff def int get(self):
+    return self.a
+
+def main():
+    s = Stuff(1)
+    s.gett()

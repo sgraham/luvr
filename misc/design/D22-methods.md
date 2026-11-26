@@ -87,3 +87,22 @@ isn't known is still assignable (`self.length = self.length + 1` in
 `through_pointer` case in postfix field access. Since `xyz.f(5)` is
 `Xyz.f(&xyz, 5)`, `self` will be a `*T`, so its fields are assignable
 through the pointer, and the unknown-type case can be removed.
+
+## The type of self
+
+Decided 2026-11-26. `self` is a pointer for receivers that can be modified
+in place, and a value for those that can't:
+
+- Structs (and List, Dict, and other containers): `*T`, since `xyz.f(5)` is
+  `Xyz.f(&xyz, 5)`. Methods can assign to fields, and large structs aren't
+  copied for each call.
+- Numbers, `bool`, and `str`: `T`. A pointer can't be used to modify them, so
+  it would only add a store and loads. A value receiver also means that
+  rvalues like `(a + b).min(c)` and `"\n".join(parts)` don't need a
+  temporary.
+
+The rule is by type, so there's no syntax for choosing a value receiver.
+Since methods on builtin types are only defined in the prelude, user code
+only ever sees `*T`. The case that loses something is a small read-only user
+struct (such as a `Vec2`), which would be slightly cheaper by value. That's
+left to optimization (or builtin SIMD types) rather than a language choice.
