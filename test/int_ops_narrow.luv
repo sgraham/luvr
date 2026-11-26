@@ -1,0 +1,50 @@
+# OUT: -56
+# OUT: 127
+# OUT: 144
+# OUT: true
+# OUT: 255
+# OUT: -25536
+# OUT: 0
+# OUT: -128
+# OUT: 15
+# OUT: -4
+# OUT: -1
+# OUT: 8571
+# OUT: 15
+# OUT: 15
+# OUT: 4
+
+# Arithmetic on i8, u8, i16, and u16 wrap at their own widths.
+def int main():
+    i8 a = 100
+    print a + a
+    i8 lo = -128
+    print lo - 1
+    u8 c = 200
+    w = c + c
+    print w
+    print w < c
+    u8 d = 3
+    print d - 4
+    i16 e = 200
+    print e * e
+    u16 f = 65535
+    print f + 1
+    i8 one = 1
+    print one << 7
+    u8 ff = 255
+    print ff >> 4
+    i8 neg = -16
+    print neg >> 2
+    i16 r = -7
+    print r % 2
+    u16 ud = 60000
+    print ud / 7
+    i8 m1 = -1
+    print m1 & 15
+    u8 hi = 240
+    print hi ^ 255
+    u8 x = 250
+    x += 10
+    print x
+    return 0

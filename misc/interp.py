@@ -290,6 +290,9 @@ ARITH = {
     "SAR": lambda n, a, b: a >> (b & (n - 1)),
 }
 
+# Extensions of the low bits of an i32 to all of it.
+NARROW = {"SEXT8": (8, True), "ZEXT8": (8, False), "SEXT16": (16, True), "ZEXT16": (16, False)}
+
 # Compares give 0 or 1. The unsigned ones reinterpret the operands at the
 # instruction's width.
 COMPARE = {
@@ -379,6 +382,13 @@ def run(prog, f, args, result_dst):
         if ins.op in UNSIGNED_COMPARE:
             a, b = (unsigned(BITS[ins.ty], value_of(values, prog, o)) for o in ins.operands)
             values[ins.result] = int(COMPARE[UNSIGNED_COMPARE[ins.op]](a, b))
+            continue
+        if ins.op in NARROW:
+            bits, signed = NARROW[ins.op]
+            v = unsigned(bits, value_of(values, prog, ins.operands[0]))
+            if signed and v >= 1 << (bits - 1):
+                v -= 1 << bits
+            values[ins.result] = v
             continue
         if ins.op == "SEXT32":
             values[ins.result] = wrap("i32", value_of(values, prog, ins.operands[0]))

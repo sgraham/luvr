@@ -1855,6 +1855,22 @@ static Ref emit_extend_if_necessary(Parser* p, Ref v, TypeId t) {
 }
 #endif
 
+#if EMIT
+// i8, u8, i16 and u16 are kept extended to i32. Extends the low bits of v
+// again after arithmetic that might have carried into the high bits.
+static Ref emit_extend_narrow(Parser* p, Ref v, TypeId t) {
+  int bits = type_int_bits(t);
+  if (bits == 8) {
+    return il_emit(&p->il, type_is_unsigned(t) ? OP_ZEXT8 : OP_SEXT8, IT_I32, v, 0);
+  }
+  if (bits == 16) {
+    return il_emit(&p->il, type_is_unsigned(t) ? OP_ZEXT16 : OP_SEXT16, IT_I32, v, 0);
+  }
+  return v;
+}
+#endif
+
+
 // Prints e without ending the line.
 static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
 #if EMIT
@@ -2034,8 +2050,7 @@ static void emit_arith(Parser* p,
                        SrcLoc rhs_at,
                        SrcLoc at) {
 #if EMIT
-  // i8, u8, i16 and u16 aren't emitted yet.
-  if (!type_is_integer(t) || type_int_bits(t) < 32) {
+  if (!type_is_integer(t)) {
     exp_mark_unsupported(e);
     return;
   }
@@ -2043,8 +2058,13 @@ static void emit_arith(Parser* p,
   Ref left = emit_to_ref(p, e, t, e_at);
   Ref right = emit_to_ref(p, rhs, is_shift ? type_concrete(rhs->type) : t, rhs_at);
   IlOp il_op = il_arith_op(op, type_is_unsigned(t));
+  Ref v = il_emit(&p->il, il_op, il_type_of(p, t, at), left, right);
+  // The other ops can't take an in range value out of range.
+  if (il_op == OP_ADD || il_op == OP_SUB || il_op == OP_MUL || il_op == OP_DIV || il_op == OP_SHL) {
+    v = emit_extend_narrow(p, v, t);
+  }
   e->kind = EK_REF;
-  e->ref = il_emit(&p->il, il_op, il_type_of(p, t, at), left, right);
+  e->ref = v;
 #else
   exp_mark_non_const(e);
 #endif
