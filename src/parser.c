@@ -13,6 +13,12 @@
 #  define PARSE_FILE parse_file
 #endif
 
+#if !EMIT && COMPILER_CLANG
+// Helpers that only emit have #if EMIT bodies, so their parameters are unused
+// in the checking build.
+#  pragma clang diagnostic ignored "-Wunused-parameter"
+#endif
+
 typedef union ConstValue ConstValue;
 typedef struct ExpDesc ExpDesc;
 typedef struct Field Field;
@@ -2601,9 +2607,75 @@ static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, Src
   error_at(p, at, "'%.*s' isn't a field of %s.", (int)n->len, (const char*)n->str, type_str(p, st));
 }
 
-// Arguments are checked against callee if it's a function type. When EMIT,
-// the arguments are put in args, and the return value is how many there are.
-static u32 call_args(Parser* p, TypeId callee, Ref* args) {
+#if EMIT
+// A call's emitted arguments. A RESULTAGG for an aggregate result is at
+// args[0], and the arguments start at args[first].
+typedef struct CallEmit {
+  Ref args[MAX_CALL_ARGS + 1];
+  u32 first;
+  Ref result;  // the address of an aggregate result's temporary
+} CallEmit;
+#else
+typedef int CallEmit;  // Unused.
+#endif
+
+// An aggregate result is written to a new temporary, and the call's value is
+// the temporary, as for a struct literal. The RESULTAGG of its address goes
+// before the arguments. It's emitted before them, which doesn't matter because
+// the callee only writes to it when it returns.
+static void emit_call_begin(Parser* p, CallEmit* call, TypeId ret) {
+#if EMIT
+  call->first = 0;
+  call->result = 0;
+  if (type_is_aggregate(p, ret) && type_has_layout(p, ret)) {
+    AggId agg = type_agg(p, ret);
+    SlotId temp = il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED});
+    call->result = il_slot_addr(&p->il, temp);
+    call->args[0] = il_emit(&p->il, OP_RESULTAGG, IT_I64, call->result, agg.u);
+    call->first = 1;
+  }
+#endif
+}
+
+// Emits argument e, which is the index'th, and has already been checked
+// against its parameter's type t.
+static void emit_arg(Parser* p, CallEmit* call, u32 index, const ExpDesc* e, TypeId t, SrcLoc at) {
+#if EMIT
+  if (index >= MAX_CALL_ARGS) {
+    error_at(p, at, "Calls can't have more than %d arguments.", MAX_CALL_ARGS);
+  }
+  Ref* arg = &call->args[call->first + index];
+  if (type_is_aggregate(p, t)) {
+    Ref addr = emit_agg_addr(p, e, at);
+    *arg = il_emit(&p->il, OP_ARGAGG, IT_I64, addr, type_agg(p, t).u);
+  } else {
+    *arg = emit_to_ref(p, e, t, at);
+  }
+#endif
+}
+
+// Makes e the result of calling the function e with num_args arguments. e's
+// type has already been changed to the result's.
+static void emit_call_end(Parser* p, const CallEmit* call, ExpDesc* e, u32 num_args, SrcLoc at) {
+#if EMIT
+  Ref sym = il_const_sym(&p->il, e->sym);
+  if (call->first) {
+    il_call(&p->il, IT_VOID, sym, call->args, num_args + 1);
+    e->kind = EK_ADDR;
+    e->base = call->result;
+    e->offset = 0;
+  } else {
+    e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, call->args, num_args);
+    e->kind = EK_REF;
+  }
+#else
+  exp_unemitted(e);
+#endif
+}
+
+// Arguments are checked against callee if it's a function type, and the return
+// value is how many there are.
+static u32 call_args(Parser* p, TypeId callee, CallEmit* call) {
   SrcLoc at = p->ls.pos.t.loc;
   bool is_function = type_is_function(p, callee);
   u32 num_params = is_function ? type_info(p, callee)->num_params : 0;
@@ -2631,17 +2703,7 @@ static u32 call_args(Parser* p, TypeId callee, Ref* args) {
                    type_str(p, e.type), type_str(p, t));
         }
         check_const_conversion(p, t, &e, arg_at);
-        if (EMIT) {
-          if (num_args > MAX_CALL_ARGS) {
-            error_at(p, arg_at, "Calls can't have more than %d arguments.", MAX_CALL_ARGS);
-          }
-          if (type_is_aggregate(p, t)) {
-            Ref addr = emit_agg_addr(p, &e, arg_at);
-            args[num_args - 1] = il_emit(&p->il, OP_ARGAGG, IT_I64, addr, type_agg(p, t).u);
-          } else {
-            args[num_args - 1] = emit_to_ref(p, &e, t, arg_at);
-          }
-        }
+        emit_arg(p, call, num_args - 1, &e, t, arg_at);
       }
       if (!optional(p, TK_COMMA)) {
         break;
@@ -2990,43 +3052,12 @@ static void postfix(Parser* p, ExpDesc* e) {
         }
         TypeId callee = e->type;
         TypeId ret = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
-        bool returns_agg = type_is_aggregate(p, ret) && type_has_layout(p, ret);
-#if EMIT
-        // One more for a RESULTAGG.
-        Ref args[MAX_CALL_ARGS + 1];
-#else
-        Ref* args = NULL;
-#endif
-        Ref* arg_refs = args;
-        Ref result = 0;
-        if (EMIT && returns_agg) {
-          // An aggregate result is written to a new temporary, and the
-          // call's value is the temporary, as for a struct literal. The
-          // RESULTAGG of its address goes before the arguments. It's emitted
-          // before them, which doesn't matter because the callee only writes
-          // to it when it returns.
-          AggId agg = type_agg(p, ret);
-          SlotId temp = il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED});
-          result = il_slot_addr(&p->il, temp);
-          args[0] = il_emit(&p->il, OP_RESULTAGG, IT_I64, result, agg.u);
-          arg_refs = &args[1];
-        }
-        u32 num_args = call_args(p, callee, arg_refs);
+        CallEmit call;
+        emit_call_begin(p, &call, ret);
+        u32 num_args = call_args(p, callee, &call);
         e->shape = SH_CALL;
         e->type = ret;
-        if (EMIT && returns_agg) {
-          Ref sym = il_const_sym(&p->il, e->sym);
-          il_call(&p->il, IT_VOID, sym, args, num_args + 1);
-          e->kind = EK_ADDR;
-          e->base = result;
-          e->offset = 0;
-        } else if (EMIT) {
-          Ref sym = il_const_sym(&p->il, e->sym);
-          e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, args, num_args);
-          e->kind = EK_REF;
-        } else {
-          exp_unemitted(e);
-        }
+        emit_call_end(p, &call, e, num_args, at);
         break;
       }
       case TK_LBRACE:
