@@ -189,6 +189,19 @@ static inline u32 align_up(u32 v, u32 align) {
   return (v + align - 1) & ~(align - 1);
 }
 
+// The bits of v as an f64, or rounded to f32 in the low 32 bits.
+static inline u64 float_bits(double v, bool is_f32) {
+  if (is_f32) {
+    float narrow = (float)v;
+    u32 bits;
+    memcpy(&bits, &narrow, sizeof(bits));
+    return bits;
+  }
+  u64 bits;
+  memcpy(&bits, &v, sizeof(bits));
+  return bits;
+}
+
 // A growable array of T. The elements are items[0..num).
 #define VEC(T) \
   struct {     \

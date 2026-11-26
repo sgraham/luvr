@@ -4503,6 +4503,9 @@ static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offs
     p->image.items[offset] = defval->cv.b;
   } else if (type_is_integer(t)) {
     store_le(&p->image.items[offset], (u64)defval->cv.i, type_size(p, t));
+  } else if (type_is_float(t)) {
+    double v = type_is_float(defval->type) ? defval->cv.f : (double)defval->cv.i;
+    store_le(&p->image.items[offset], float_bits(v, /*is_f32=*/t.u == TY_F32), type_size(p, t));
   } else if (!type_is_pointer(p, t)) {
     error_at(p, at, "This constant isn't supported yet.");
   }

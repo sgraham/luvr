@@ -108,16 +108,7 @@ Ref il_const_int(IlFunc* f, IlType ty, u64 v) {
 
 Ref il_const_float(IlFunc* f, IlType ty, double v) {
   ASSERT(ty == IT_F32 || ty == IT_F64);
-  u64 bits;
-  if (ty == IT_F32) {
-    float narrow = (float)v;
-    u32 narrow_bits;
-    memcpy(&narrow_bits, &narrow, sizeof(narrow_bits));
-    bits = narrow_bits;
-  } else {
-    memcpy(&bits, &v, sizeof(bits));
-  }
-  return il_const(f, ty, bits);
+  return il_const(f, ty, float_bits(v, /*is_f32=*/ty == IT_F32));
 }
 
 Ref il_const_sym(IlFunc* f, u32 sym) {
