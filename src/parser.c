@@ -1599,8 +1599,8 @@ static IlType il_type_of(Parser* p, TypeId t, SrcLoc at) {
   }
 }
 
-// The IL op for an arithmetic operator, or OP_NUM_OPS if it isn't emitted yet.
-static IlOp il_arith_op(BinOpr op) {
+// The IL op for an arithmetic operator on integers.
+static IlOp il_arith_op(BinOpr op, bool is_unsigned) {
   switch (op) {
     case OPR_ADD:
       return OP_ADD;
@@ -1608,9 +1608,22 @@ static IlOp il_arith_op(BinOpr op) {
       return OP_SUB;
     case OPR_MUL:
       return OP_MUL;
+    case OPR_DIV:
+      return is_unsigned ? OP_UDIV : OP_DIV;
+    case OPR_MOD:
+      return is_unsigned ? OP_UREM : OP_REM;
+    case OPR_BAND:
+      return OP_AND;
+    case OPR_BOR:
+      return OP_OR;
     case OPR_BXOR:
       return OP_XOR;
+    case OPR_SHL:
+      return OP_SHL;
+    case OPR_SHR:
+      return is_unsigned ? OP_SHR : OP_SAR;
     default:
+      ASSERT(false && "not an arithmetic operator");
       return OP_NUM_OPS;
   }
 }
@@ -2011,7 +2024,7 @@ static void emit_compare(Parser* p,
 }
 
 // Makes e the result of the arithmetic operator op on e and rhs as t, unless
-// it can't be emitted yet.
+// it can't be emitted yet. A shift count keeps its own type.
 static void emit_arith(Parser* p,
                        BinOpr op,
                        TypeId t,
@@ -2021,14 +2034,17 @@ static void emit_arith(Parser* p,
                        SrcLoc rhs_at,
                        SrcLoc at) {
 #if EMIT
-  if (il_arith_op(op) == OP_NUM_OPS || (t.u != TY_I32 && t.u != TY_I64)) {
+  // i8, u8, i16 and u16 aren't emitted yet.
+  if (!type_is_integer(t) || type_int_bits(t) < 32) {
     exp_mark_unsupported(e);
     return;
   }
+  bool is_shift = op == OPR_SHL || op == OPR_SHR;
   Ref left = emit_to_ref(p, e, t, e_at);
-  Ref right = emit_to_ref(p, rhs, t, rhs_at);
+  Ref right = emit_to_ref(p, rhs, is_shift ? type_concrete(rhs->type) : t, rhs_at);
+  IlOp il_op = il_arith_op(op, type_is_unsigned(t));
   e->kind = EK_REF;
-  e->ref = il_emit(&p->il, il_arith_op(op), il_type_of(p, t, at), left, right);
+  e->ref = il_emit(&p->il, il_op, il_type_of(p, t, at), left, right);
 #else
   exp_mark_non_const(e);
 #endif

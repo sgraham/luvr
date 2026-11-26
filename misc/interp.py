@@ -251,11 +251,43 @@ def wrap(ty, v):
     return v
 
 
+BITS = {"i32": 32, "i64": 64}
+
+
+# Division truncates toward zero, unlike Python's //.
+def div(a, b):
+    if b == 0:
+        raise Error("divide by zero")
+    q = abs(a) // abs(b)
+    return q if (a < 0) == (b < 0) else -q
+
+
+# The remainder has the sign of the dividend.
+def rem(a, b):
+    return a - b * div(a, b)
+
+
+# v reinterpreted as an unsigned integer of n bits.
+def unsigned(n, v):
+    return v & ((1 << n) - 1)
+
+
+# The functions take the instruction's width in bits. A shift only uses the
+# low bits of its count.
 ARITH = {
-    "ADD": lambda a, b: a + b,
-    "SUB": lambda a, b: a - b,
-    "MUL": lambda a, b: a * b,
-    "XOR": lambda a, b: a ^ b,
+    "ADD": lambda n, a, b: a + b,
+    "SUB": lambda n, a, b: a - b,
+    "MUL": lambda n, a, b: a * b,
+    "DIV": lambda n, a, b: div(a, b),
+    "UDIV": lambda n, a, b: div(unsigned(n, a), unsigned(n, b)),
+    "REM": lambda n, a, b: rem(a, b),
+    "UREM": lambda n, a, b: rem(unsigned(n, a), unsigned(n, b)),
+    "AND": lambda n, a, b: a & b,
+    "OR": lambda n, a, b: a | b,
+    "XOR": lambda n, a, b: a ^ b,
+    "SHL": lambda n, a, b: a << (b & (n - 1)),
+    "SHR": lambda n, a, b: unsigned(n, a) >> (b & (n - 1)),
+    "SAR": lambda n, a, b: a >> (b & (n - 1)),
 }
 
 # Compares give 0 or 1. The unsigned ones reinterpret the operands at the
@@ -338,15 +370,14 @@ def run(prog, f, args, result_dst):
             continue
         if ins.op in ARITH:
             a, b = (value_of(values, prog, o) for o in ins.operands)
-            values[ins.result] = wrap(ins.ty, ARITH[ins.op](a, b))
+            values[ins.result] = wrap(ins.ty, ARITH[ins.op](BITS[ins.ty], a, b))
             continue
         if ins.op in COMPARE:
             a, b = (value_of(values, prog, o) for o in ins.operands)
             values[ins.result] = int(COMPARE[ins.op](a, b))
             continue
         if ins.op in UNSIGNED_COMPARE:
-            mask = (1 << {"i32": 32, "i64": 64}[ins.ty]) - 1
-            a, b = (value_of(values, prog, o) & mask for o in ins.operands)
+            a, b = (unsigned(BITS[ins.ty], value_of(values, prog, o)) for o in ins.operands)
             values[ins.result] = int(COMPARE[UNSIGNED_COMPARE[ins.op]](a, b))
             continue
         if ins.op == "SEXT32":

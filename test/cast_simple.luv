@@ -1,10 +1,8 @@
-# OUT: 8
+# OUT: 4
 def int main():
-    i32 x = 123
-    i32 y = 345
-    # TODO: hokey, though fine with current backend. change to a &array[N] once that works.
-    *i32 p = &x
-    *i32 q = &y
+    [2]i32 a = [123, 345]
+    *i32 p = &a[0]
+    *i32 q = &a[1]
     p_int = cast u64(p)
     q_int = cast u64(q)
     print q_int - p_int

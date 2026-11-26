@@ -816,11 +816,24 @@ typedef enum IlOperand {
 // - A function that returns an aggregate has IlFunc.ret IT_AGG, and its RET
 //   has the address of the value to return. That becomes a copy through the
 //   hidden pointer, or loads into the result registers.
+//
+// A shift only uses the low bits of its count, which can be an integer of
+// either width. DIV and REM truncate toward zero. Dividing by zero, or the
+// minimum signed value by -1, isn't defined.
 #define IL_OPS(X)              \
   X(ADD, REF, REF, true)       \
   X(SUB, REF, REF, true)       \
   X(MUL, REF, REF, true)       \
+  X(DIV, REF, REF, true)       \
+  X(UDIV, REF, REF, true)      \
+  X(REM, REF, REF, true)       \
+  X(UREM, REF, REF, true)      \
+  X(AND, REF, REF, true)       \
+  X(OR, REF, REF, true)        \
   X(XOR, REF, REF, true)       \
+  X(SHL, REF, REF, true)       \
+  X(SHR, REF, REF, true)       \
+  X(SAR, REF, REF, true)       \
   X(EQ, REF, REF, true)        \
   X(NE, REF, REF, true)        \
   X(LT, REF, REF, true)        \
