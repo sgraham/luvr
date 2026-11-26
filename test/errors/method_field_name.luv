@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:18:on Stuff def int count(self):
+# CERR: {ssss}                       ^ error: 'count' is already a field of Stuff.
+struct Stuff:
+    int count
+
+on Stuff def int count(self):
+    return self.count

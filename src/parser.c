@@ -4246,6 +4246,11 @@ static void declare_method(Parser* p,
     error_at(p, at, "Duplicate method '%.*s' on %s.", (int)n->len, (const char*)n->str,
              type_str(p, receiver));
   }
+  if (struct_field(p, receiver, name)) {
+    const Name* n = name_of(p, name);
+    error_at(p, at, "'%.*s' is already a field of %s.", (int)n->len, (const char*)n->str,
+             type_str(p, receiver));
+  }
   u32 idx = p->methods.num;
   *vec_push(p->ls.ctx, &p->methods) =
       (Method){.receiver = receiver, .name = name, .type = ft, .has_self = has_self};
