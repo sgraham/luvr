@@ -587,11 +587,11 @@ static void declare_global_var(Parser* p,
 static void load_global_var(Parser* p, ExpDesc* e, GlobalInfo info) {
   const GlobalVar* g = &p->global_vars.items[info >> GLOBAL_KIND_BITS];
   e->type = g->type;
-  if (EMIT) {
-    e->kind = EK_ADDR;
-    e->base = il_const_data(&p->il, g->data);
-    e->offset = 0;
-  }
+#if EMIT
+  e->kind = EK_ADDR;
+  e->base = il_const_data(&p->il, g->data);
+  e->offset = 0;
+#endif
 }
 
 // Out of line, since uses of constants are rare compared to variables.
@@ -661,15 +661,17 @@ static Local* lookup_in_func(Parser* p, NameId name) {
 }
 
 // Declares name in the current function with type t, unless it's already one
-// of the function's locals.
-static void declare_if_new(Parser* p, NameId name, SrcLoc at, TypeId t) {
+// of the function's locals. Returns the local, or NULL at top level.
+static Local* declare_if_new(Parser* p, NameId name, SrcLoc at, TypeId t) {
   if (p->func_depth == 0) {
-    return;
+    return NULL;
   }
-  if (!lookup_in_func(p, name)) {
-    Local* l = declare_local(p, name, at, LK_VAR);
+  Local* l = lookup_in_func(p, name);
+  if (!l) {
+    l = declare_local(p, name, at, LK_VAR);
     l->type = t;
   }
+  return l;
 }
 
 static void pop_locals(Parser* p, u32 base) {
@@ -1625,9 +1627,9 @@ static IlOp il_compare_op(BinOpr op, bool is_unsigned) {
 // rather than using whatever e was before.
 static void exp_unemitted(ExpDesc* e) {
   e->kind = EK_REF;
-  if (EMIT) {
-    e->ref = 0;
-  }
+#if EMIT
+  e->ref = 0;
+#endif
 }
 
 static Ref emit_offset_addr(Parser* p, Ref base, u32 offset) {
@@ -1682,6 +1684,7 @@ static Ref emit_agg_addr(Parser* p, const ExpDesc* e, SrcLoc at) {
 }
 
 static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e, SrcLoc at) {
+#if EMIT
   if (type_is_aggregate(p, dst->type)) {
     Ref src = emit_agg_addr(p, e, at);
     il_copy(&p->il, emit_addr(p, dst), src, type_agg(p, dst->type));
@@ -1689,9 +1692,11 @@ static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e,
   }
   Ref v = emit_to_ref(p, e, dst->type, at);
   il_emit(&p->il, OP_STORE, il_mem_type_of(p, dst->type), v, emit_addr(p, dst));
+#endif
 }
 
 static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, SrcLoc at) {
+#if EMIT
   Ref addr = il_slot_addr(&p->il, l->slot);
   if (type_is_aggregate(p, l->type)) {
     il_copy(&p->il, addr, emit_agg_addr(p, e, at), type_agg(p, l->type));
@@ -1699,10 +1704,12 @@ static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, Sr
   }
   Ref v = emit_to_ref(p, e, l->type, at);
   il_emit(&p->il, OP_STORE, il_type_of(p, l->type, at), v, addr);
+#endif
 }
 
 // Gives the struct or array of type t at addr its initial value.
 static void emit_agg_init(Parser* p, Ref addr, TypeId t) {
+#if EMIT
   AggId agg = type_agg(p, t);
   DataId image = type_info(p, t)->image;
   if (image.u == DATA_NONE) {
@@ -1710,6 +1717,20 @@ static void emit_agg_init(Parser* p, Ref addr, TypeId t) {
   } else {
     il_copy(&p->il, addr, il_const_data(&p->il, image), agg);
   }
+#endif
+}
+
+// Gives the new local l its initial value, which is v, or if v is NULL, the
+// zero or default value of l's type.
+static void emit_local_init(Parser* p, const Local* l, const ExpDesc* v, SrcLoc at) {
+#if EMIT
+  if (!v && type_is_aggregate(p, l->type)) {
+    emit_agg_init(p, il_slot_addr(&p->il, l->slot), l->type);
+    return;
+  }
+  ExpDesc zero = {.type = l->type, .kind = EK_CONST};
+  emit_assign_to_local(p, l, v ? v : &zero, at);
+#endif
 }
 
 // l's type has to be set first.
@@ -3450,19 +3471,9 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
   if (toplevel) {
     declare_global_var(p, name, t, has_value ? &v : NULL, data_mark, value_at);
   } else {
-    declare_if_new(p, name, at, t);
-    if (EMIT) {
-      Local* l = lookup_in_func(p, name);
-      emit_local_slot(p, l, at);
-      if (!has_value && type_is_aggregate(p, t)) {
-        emit_agg_init(p, il_slot_addr(&p->il, l->slot), t);
-        return;
-      }
-      if (!has_value) {
-        v = (ExpDesc){.type = t, .kind = EK_CONST};
-      }
-      emit_assign_to_local(p, l, &v, value_at);
-    }
+    Local* l = declare_if_new(p, name, at, t);
+    emit_local_slot(p, l, at);
+    emit_local_init(p, l, has_value ? &v : NULL, value_at);
   }
 }
 
@@ -3584,13 +3595,13 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
             loc->type = t;
             emit_local_slot(p, loc, at);
           }
-          if (EMIT && loc->kind == LK_GLOBAL) {
+          if (loc->kind == LK_GLOBAL) {
             emit_assign_to_addr(p, &exp, &v, value_at);
-          } else if (EMIT) {
+          } else {
             emit_assign_to_local(p, loc, &v, value_at);
           }
         }
-      } else if (EMIT && stores_field) {
+      } else if (stores_field) {
         emit_assign_to_addr(p, &exp, &v, value_at);
       }
       return;
