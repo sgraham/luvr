@@ -1,0 +1,11 @@
+# CRET: 1
+# CERR: {self}:11:7:    s.set(1)
+# CERR: {ssss}            ^ error: Can't call a method on a non-lvalue.
+struct Stuff:
+    int a
+
+on Stuff def set(self, int v):
+    self.a = v
+
+def f(Stuff s):
+    s.set(1)

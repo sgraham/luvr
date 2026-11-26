@@ -3438,12 +3438,16 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
 }
 
 // Passes the address of e, the receiver, as self, and makes e the method to
-// call. A receiver that's reached through pointers is already in memory. The
-// address of an assignable struct can be taken, but parameters and constants
-// can't be modified through it.
-static void emit_self_arg(Parser* p, CallEmit* call, ExpDesc* e, const Method* method, SrcLoc at) {
+// call. A receiver that's reached through pointers is already in memory, and
+// the address of an assignable struct can be taken. Temporaries aren't
+// supported yet.
+static void emit_self_arg(Parser* p,
+                          CallEmit* call,
+                          ExpDesc* e,
+                          const Method* method,
+                          TypeId self_type,
+                          SrcLoc at) {
 #if EMIT
-  TypeId self_type = p->param_types.items[type_info(p, method->type)->first_param];
   bool through_pointer = type_is_pointer(p, e->type);
   if (method->sym.u == FUNC_NO_SYM || !type_is_pointer(p, self_type) ||
       (!through_pointer && exp_part_shape(e) != SH_LVALUE)) {
@@ -3463,10 +3467,21 @@ static void method_call(Parser* p, ExpDesc* e, const Method* method, SrcLoc name
     error_at(p, name_at, "Static method '%.*s' can't be called on a value.", (int)n->len,
              (const char*)n->str);
   }
+  // When self is a pointer, the method could modify the receiver through it.
+  // Call results and struct literals are temporaries, so they're copied.
+  TypeId self_type = p->param_types.items[type_info(p, method->type)->first_param];
+  if (type_is_pointer(p, self_type) && !type_is_pointer(p, e->type)) {
+    if (exp_is_const(e)) {
+      error_at(p, name_at, "Can't call a method on a constant.");
+    }
+    if (exp_part_shape(e) != SH_LVALUE && e->shape != SH_CALL && e->shape != SH_STRUCT_LITERAL) {
+      error_at(p, name_at, "Can't call a method on a non-lvalue.");
+    }
+  }
   TypeId ret = type_info(p, method->type)->ret;
   CallEmit call;
   emit_call_begin(p, &call, ret);
-  emit_self_arg(p, &call, e, method, name_at);
+  emit_self_arg(p, &call, e, method, self_type, name_at);
   u32 num_args = call_args(p, method->type, /*skip=*/1, &call);
   e->shape = SH_CALL;
   e->type = ret;

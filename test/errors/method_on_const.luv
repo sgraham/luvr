@@ -1,0 +1,14 @@
+# CRET: 1
+# CERR: {self}:14:12:    ORIGIN.set(1)
+# CERR: {ssss}                  ^ error: Can't call a method on a constant.
+struct Point:
+    int x
+    int y
+
+on Point def set(self, int v):
+    self.x = v
+
+ORIGIN = Point(0, 0)
+
+def main():
+    ORIGIN.set(1)
