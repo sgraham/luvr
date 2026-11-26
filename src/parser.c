@@ -1638,13 +1638,30 @@ static IlOp il_compare_op(BinOpr op, bool is_unsigned) {
 }
 #endif
 
-// A value that the emitting build doesn't emit yet. Its ref is 0, which
-// isn't a valid Ref, so that emit_to_ref() gives an error if it's used,
-// rather than using whatever e was before.
-static void exp_unemitted(ExpDesc* e) {
-  e->kind = EK_REF;
 #if EMIT
+// A value that isn't emitted yet. Its ref is 0, which isn't a valid Ref, so
+// that emit_to_ref() gives an error if it's used, rather than using whatever e
+// was before.
+static void exp_mark_unsupported(ExpDesc* e) {
+  e->kind = EK_REF;
   e->ref = 0;
+}
+#else
+// A value that's only known at run time. The checking build only
+// distinguishes constants from everything else, so the kind is EK_REF even
+// though there's no ref.
+static void exp_mark_non_const(ExpDesc* e) {
+  e->kind = EK_REF;
+}
+#endif
+
+// A value whose emission isn't supported yet, which isn't a constant in either
+// build.
+static void emit_unsupported(ExpDesc* e) {
+#if EMIT
+  exp_mark_unsupported(e);
+#else
+  exp_mark_non_const(e);
 #endif
 }
 
@@ -1950,7 +1967,7 @@ static void emit_logical_result(ExpDesc* e, const LogicalJoin* join) {
   e->kind = EK_LOCAL;
   e->slot = join->slot;
 #else
-  exp_unemitted(e);
+  exp_mark_non_const(e);
 #endif
 }
 
@@ -1966,7 +1983,7 @@ static void emit_compare(Parser* p,
 #if EMIT
   bool is_pointer = type_is_pointer(p, t);
   if (t.u != TY_BOOL && !type_is_integer(t) && !is_pointer) {
-    exp_unemitted(e);
+    exp_mark_unsupported(e);
     return;
   }
   Ref left = emit_to_ref(p, e, t, e_at);
@@ -1975,7 +1992,7 @@ static void emit_compare(Parser* p,
   e->kind = EK_REF;
   e->ref = il_emit(&p->il, cmp, il_type_of(p, t, at), left, right);
 #else
-  exp_unemitted(e);
+  exp_mark_non_const(e);
 #endif
 }
 
@@ -1991,7 +2008,7 @@ static void emit_arith(Parser* p,
                        SrcLoc at) {
 #if EMIT
   if (il_arith_op(op) == OP_NUM_OPS || (t.u != TY_I32 && t.u != TY_I64)) {
-    exp_unemitted(e);
+    exp_mark_unsupported(e);
     return;
   }
   Ref left = emit_to_ref(p, e, t, e_at);
@@ -1999,7 +2016,7 @@ static void emit_arith(Parser* p,
   e->kind = EK_REF;
   e->ref = il_emit(&p->il, il_arith_op(op), il_type_of(p, t, at), left, right);
 #else
-  exp_unemitted(e);
+  exp_mark_non_const(e);
 #endif
 }
 
@@ -2007,7 +2024,7 @@ static void emit_arith(Parser* p,
 static void emit_not(Parser* p, ExpDesc* e, SrcLoc at) {
 #if EMIT
   if (e->type.u != TY_BOOL) {
-    exp_unemitted(e);
+    exp_mark_unsupported(e);
     return;
   }
   // A bool is 0 or 1.
@@ -2015,7 +2032,7 @@ static void emit_not(Parser* p, ExpDesc* e, SrcLoc at) {
   e->ref = il_emit(&p->il, OP_XOR, IT_I32, v, il_const_int(&p->il, IT_I32, 1));
   e->kind = EK_REF;
 #else
-  exp_unemitted(e);
+  exp_mark_non_const(e);
 #endif
 }
 
@@ -2029,10 +2046,10 @@ static void emit_addr_of(Parser* p, ExpDesc* e) {
     e->ref = emit_addr(p, e);
     e->kind = EK_REF;
   } else {
-    exp_unemitted(e);
+    exp_mark_unsupported(e);
   }
 #else
-  exp_unemitted(e);
+  exp_mark_non_const(e);
 #endif
 }
 
@@ -2040,7 +2057,7 @@ static void emit_addr_of(Parser* p, ExpDesc* e) {
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, SrcLoc at) {
   TypeId t = e->type;
   if (t.u == TY_UNKNOWN) {
-    exp_unemitted(e);
+    emit_unsupported(e);
     return;
   }
   if (neg && !type_is_integer(t) && !type_is_float(t)) {
@@ -2050,7 +2067,7 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, SrcLoc at) {
     error_at(p, at, "'~' expects an integer, not %s.", type_str(p, t));
   }
   if (e->kind != EK_CONST) {
-    exp_unemitted(e);
+    emit_unsupported(e);
     return;
   }
   if (type_is_float(t)) {
@@ -2193,7 +2210,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start) {
       } else if (logical) {
         emit_logical_result(e, &join);
       } else {
-        exp_unemitted(e);
+        emit_unsupported(e);
       }
       e->type = ty_bool;
     } else if (is_arith) {
@@ -2209,7 +2226,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start) {
       e->type = t;
     } else {
       e->type = ty_unknown;
-      exp_unemitted(e);
+      emit_unsupported(e);
     }
     op = nextop;
   }
@@ -2592,7 +2609,7 @@ static void emit_literal_end(Parser* p, const LiteralEmit* lit, ExpDesc* e, Type
   }
 #else
   if (!p->const_context) {
-    exp_unemitted(e);
+    exp_mark_non_const(e);
   }
 #endif
 }
@@ -2623,7 +2640,6 @@ static void list_literal(Parser* p, ExpDesc* e) {
   u32 depth = p->ls.pos.bracket_depth;
   e->shape = SH_VALUE;
   e->type = ty_unknown;
-  exp_unemitted(e);
   next(p);
   bool is_array = type_is_array(p, expected);
   TypeId elem_type = is_array ? type_info(p, expected)->elem : ty_unknown;
@@ -2636,6 +2652,7 @@ static void list_literal(Parser* p, ExpDesc* e) {
     lex_mark(&p->ls, &elem);
     if (skim_to_for(p, depth)) {
       comprehension(p, &elem, at);
+      emit_unsupported(e);
       return;
     }
     lex_rewind(&p->ls, &elem);
@@ -2669,6 +2686,8 @@ static void list_literal(Parser* p, ExpDesc* e) {
   }
   if (is_array) {
     emit_literal_end(p, &lit, e, expected);
+  } else {
+    emit_unsupported(e);
   }
 }
 
@@ -2908,7 +2927,7 @@ static void emit_call_end(Parser* p, const CallEmit* call, ExpDesc* e, u32 num_a
     e->kind = EK_REF;
   }
 #else
-  exp_unemitted(e);
+  exp_mark_non_const(e);
 #endif
 }
 
@@ -3051,10 +3070,10 @@ static void struct_args(Parser* p, ExpDesc* e) {
 static void emit_cast(ExpDesc* e, bool is_bitcast) {
 #if EMIT
   if (!is_bitcast) {
-    exp_unemitted(e);
+    exp_mark_unsupported(e);
   }
 #else
-  exp_unemitted(e);
+  exp_mark_non_const(e);
 #endif
 }
 
@@ -3063,7 +3082,7 @@ static void emit_cast(ExpDesc* e, bool is_bitcast) {
 static void emit_field(Parser* p, ExpDesc* e, const Field* f, SrcLoc at) {
 #if EMIT
   if (!f) {
-    exp_unemitted(e);
+    exp_mark_unsupported(e);
     return;
   }
   if (type_is_pointer(p, e->type)) {
@@ -3094,10 +3113,10 @@ static void emit_field(Parser* p, ExpDesc* e, const Field* f, SrcLoc at) {
     // only the offset changes.
     e->offset += f->offset;
   } else {
-    exp_unemitted(e);
+    exp_mark_unsupported(e);
   }
 #else
-  exp_unemitted(e);
+  exp_mark_non_const(e);
 #endif
 }
 
@@ -3138,7 +3157,7 @@ static void emit_index(Parser* p,
                        SrcLoc at) {
 #if EMIT
   if (base == 0) {
-    exp_unemitted(elem);
+    exp_mark_unsupported(elem);
     return;
   }
   if (!type_has_layout(p, elem->type)) {
@@ -3165,7 +3184,7 @@ static void emit_index(Parser* p,
   }
   elem->base = il_emit(&p->il, OP_ADD, IT_I64, base, delta);
 #else
-  exp_unemitted(elem);
+  exp_mark_non_const(elem);
 #endif
 }
 
@@ -3215,7 +3234,7 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   }
   e->type = result;
   if (is_slice) {
-    exp_unemitted(e);
+    emit_unsupported(e);
   } else {
     emit_index(p, e, base, offset, &first, first_at);
   }
@@ -3346,7 +3365,7 @@ static void len_call(Parser* p, ExpDesc* e) {
     e->kind = EK_CONST;
     e->cv.i = type_info(p, t)->count;
   } else {
-    exp_unemitted(e);
+    emit_unsupported(e);
   }
 }
 
@@ -3387,7 +3406,7 @@ static void primary(Parser* p, ExpDesc* e) {
   SrcLoc at = p->ls.pos.t.loc;
   e->shape = SH_VALUE;
   e->type = ty_unknown;
-  exp_unemitted(e);
+  emit_unsupported(e);
   switch (T(p)) {
     case TK_INTLIT:
       e->type = literal_type(p);
@@ -3537,7 +3556,7 @@ static void primary(Parser* p, ExpDesc* e) {
         e->cv.i = is_size ? type_size(p, t) : type_align(p, t);
       } else {
         e->type = ty_i64;
-        exp_unemitted(e);
+        emit_unsupported(e);
       }
       break;
     }
