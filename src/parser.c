@@ -1816,6 +1816,9 @@ static void emit_print_str_piece(Parser* p) {
 // Called after a binary operator and before its right operand, so that the
 // left operand is evaluated first. Constants are kept so they can be folded.
 static void emit_infix(Parser* p, ExpDesc* e, SrcLoc at) {
+  if (!EMIT) {
+    return;
+  }
   if (e->kind == EK_LOCAL || e->kind == EK_ADDR) {
     e->ref = emit_to_ref(p, e, e->type, at);
     e->kind = EK_REF;
@@ -1836,6 +1839,9 @@ static void emit_logical_begin(Parser* p,
                                const ExpDesc* e,
                                SrcLoc at,
                                LogicalJoin* join) {
+  if (!EMIT) {
+    return;
+  }
   Ref left = emit_to_ref(p, e, ty_bool, at);
   join->slot = il_slot_add(&p->il, IT_I32, (NameId){IL_SLOT_UNNAMED});
   join->end = il_block_declare(&p->il);
@@ -1851,9 +1857,94 @@ static void emit_logical_begin(Parser* p,
 }
 
 static void emit_logical_end(Parser* p, const ExpDesc* rhs, SrcLoc at, const LogicalJoin* join) {
+  if (!EMIT) {
+    return;
+  }
   Ref right = emit_to_ref(p, rhs, ty_bool, at);
   il_emit(&p->il, OP_STORE, IT_I32, right, il_slot_addr(&p->il, join->slot));
   il_block_start(&p->il, join->end);
+}
+
+// Makes e the value of the 'and' or 'or' that join was used for.
+static void emit_logical_result(ExpDesc* e, const LogicalJoin* join) {
+  if (!EMIT) {
+    exp_unemitted(e);
+    return;
+  }
+  e->kind = EK_LOCAL;
+  e->slot = join->slot;
+}
+
+// Makes e the comparison of e and rhs as t, unless they can't be compared yet.
+static void emit_compare(Parser* p,
+                         BinOpr op,
+                         TypeId t,
+                         ExpDesc* e,
+                         SrcLoc e_at,
+                         const ExpDesc* rhs,
+                         SrcLoc rhs_at,
+                         SrcLoc at) {
+  if (!EMIT) {
+    exp_unemitted(e);
+    return;
+  }
+  bool is_pointer = type_is_pointer(p, t);
+  if (t.u != TY_BOOL && !type_is_integer(t) && !is_pointer) {
+    exp_unemitted(e);
+    return;
+  }
+  Ref left = emit_to_ref(p, e, t, e_at);
+  Ref right = emit_to_ref(p, rhs, t, rhs_at);
+  IlOp cmp = il_compare_op(op, type_is_unsigned(t) || is_pointer);
+  e->kind = EK_REF;
+  e->ref = il_emit(&p->il, cmp, il_type_of(p, t, at), left, right);
+}
+
+// Makes e the result of the arithmetic operator op on e and rhs as t, unless
+// it can't be emitted yet.
+static void emit_arith(Parser* p,
+                       BinOpr op,
+                       TypeId t,
+                       ExpDesc* e,
+                       SrcLoc e_at,
+                       const ExpDesc* rhs,
+                       SrcLoc rhs_at,
+                       SrcLoc at) {
+  if (!EMIT || il_arith_op(op) == OP_NUM_OPS || (t.u != TY_I32 && t.u != TY_I64)) {
+    exp_unemitted(e);
+    return;
+  }
+  Ref left = emit_to_ref(p, e, t, e_at);
+  Ref right = emit_to_ref(p, rhs, t, rhs_at);
+  e->kind = EK_REF;
+  e->ref = il_emit(&p->il, il_arith_op(op), il_type_of(p, t, at), left, right);
+}
+
+// Makes e the 'not' of the bool e.
+static void emit_not(Parser* p, ExpDesc* e, SrcLoc at) {
+  if (!EMIT || e->type.u != TY_BOOL) {
+    exp_unemitted(e);
+    return;
+  }
+  // A bool is 0 or 1.
+  Ref v = emit_to_ref(p, e, ty_bool, at);
+  e->ref = il_emit(&p->il, OP_XOR, IT_I32, v, il_const_int(&p->il, IT_I32, 1));
+  e->kind = EK_REF;
+}
+
+// Makes e its own address. A struct literal's address isn't emitted yet.
+static void emit_addr_of(Parser* p, ExpDesc* e) {
+  if (!EMIT || e->shape == SH_STRUCT_LITERAL) {
+    exp_unemitted(e);
+  } else if (e->kind == EK_LOCAL) {
+    e->ref = il_slot_addr(&p->il, e->slot);
+    e->kind = EK_REF;
+  } else if (e->kind == EK_ADDR) {
+    e->ref = emit_addr(p, e);
+    e->kind = EK_REF;
+  } else {
+    exp_unemitted(e);
+  }
 }
 
 // Unary '-' or '~', which give the operand's type. Constants are folded.
@@ -1907,13 +1998,8 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       e->shape = SH_VALUE;
       if (e->kind == EK_CONST && e->type.u == TY_BOOL) {
         e->cv.b = !e->cv.b;
-      } else if (EMIT && e->type.u == TY_BOOL) {
-        // A bool is 0 or 1.
-        Ref v = emit_to_ref(p, e, ty_bool, at);
-        e->ref = il_emit(&p->il, OP_XOR, IT_I32, v, il_const_int(&p->il, IT_I32, 1));
-        e->kind = EK_REF;
       } else {
-        exp_unemitted(e);
+        emit_not(p, e, at);
       }
       e->type = ty_bool;
       break;
@@ -1942,15 +2028,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       if (exp_is_const(e)) {
         error_at(p, at, "Can't take the address of a constant.");
       }
-      if (EMIT && e->shape != SH_STRUCT_LITERAL && e->kind == EK_LOCAL) {
-        e->ref = il_slot_addr(&p->il, e->slot);
-        e->kind = EK_REF;
-      } else if (EMIT && e->shape != SH_STRUCT_LITERAL && e->kind == EK_ADDR) {
-        e->ref = emit_addr(p, e);
-        e->kind = EK_REF;
-      } else {
-        exp_unemitted(e);
-      }
+      emit_addr_of(p, e);
       e->shape = SH_VALUE;
       e->type = type_pointer_to(p, e->type);
       break;
@@ -1970,9 +2048,7 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start) {
   while (op != OPR_NONE && priority[op] > limit) {
     SrcLoc at = p->ls.pos.t.loc;
     next(p);
-    if (EMIT) {
-      emit_infix(p, e, start);
-    }
+    emit_infix(p, e, start);
     if (op == OPR_NOTIN) {
       check(p, TK_IN);
     }
@@ -1980,18 +2056,14 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start) {
     LogicalJoin join = {0};
     if (logical) {
       expect_bool(p, e, at, logical);
-      if (EMIT) {
-        emit_logical_begin(p, op, e, start, &join);
-      }
+      emit_logical_begin(p, op, e, start, &join);
     }
     SrcLoc rhs_at = p->ls.pos.t.loc;
     ExpDesc rhs;
     subexpr(p, priority[op], &rhs);
     if (logical) {
       expect_bool(p, &rhs, rhs_at, logical);
-      if (EMIT) {
-        emit_logical_end(p, &rhs, rhs_at, &join);
-      }
+      emit_logical_end(p, &rhs, rhs_at, &join);
     }
     BinOpr nextop = tok_to_binopr(T(p));
     if (binopr_is_comparison(op) && binopr_is_comparison(nextop)) {
@@ -2019,15 +2091,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start) {
       if (t.u == TY_NULL) {
         t = rhs.type;
       }
-      bool is_pointer = type_is_pointer(p, t);
-      if (!folded && EMIT && (t.u == TY_BOOL || type_is_integer(t) || is_pointer)) {
-        Ref left = emit_to_ref(p, e, t, start);
-        Ref right = emit_to_ref(p, &rhs, t, rhs_at);
-        IlOp cmp = il_compare_op(op, type_is_unsigned(t) || is_pointer);
-        e->kind = EK_REF;
-        e->ref = il_emit(&p->il, cmp, il_type_of(p, t, at), left, right);
-      } else if (!folded) {
-        exp_unemitted(e);
+      if (!folded) {
+        emit_compare(p, op, t, e, start, &rhs, rhs_at, at);
       }
       e->type = ty_bool;
     } else if (is_bool) {
@@ -2036,9 +2101,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start) {
       if (logical && e->kind == EK_CONST && rhs.kind == EK_CONST && e->type.u == TY_BOOL &&
           rhs.type.u == TY_BOOL) {
         e->cv.b = op == OPR_AND ? e->cv.b && rhs.cv.b : e->cv.b || rhs.cv.b;
-      } else if (EMIT && logical) {
-        e->kind = EK_LOCAL;
-        e->slot = join.slot;
+      } else if (logical) {
+        emit_logical_result(e, &join);
       } else {
         exp_unemitted(e);
       }
@@ -2050,13 +2114,8 @@ static void binop_rest(Parser* p, int limit, ExpDesc* e, SrcLoc start) {
       }
       if (e->kind == EK_CONST && rhs.kind == EK_CONST && t.u != TY_UNKNOWN && t.u != TY_STR) {
         fold_arith(p, op, t, e, &rhs, at);
-      } else if (EMIT && il_arith_op(op) != OP_NUM_OPS && (t.u == TY_I32 || t.u == TY_I64)) {
-        Ref left = emit_to_ref(p, e, t, start);
-        Ref right = emit_to_ref(p, &rhs, t, rhs_at);
-        e->kind = EK_REF;
-        e->ref = il_emit(&p->il, il_arith_op(op), il_type_of(p, t, at), left, right);
       } else {
-        exp_unemitted(e);
+        emit_arith(p, op, t, e, start, &rhs, rhs_at, at);
       }
       e->type = t;
     } else {
