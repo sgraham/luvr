@@ -14,9 +14,10 @@
 #endif
 
 #if !EMIT && COMPILER_CLANG
-// Helpers that only emit have #if EMIT bodies, so their parameters are unused
-// in the checking build.
+// Helpers that only emit have #if EMIT bodies, so their parameters, and
+// functions that only they call, are unused in the checking build.
 #  pragma clang diagnostic ignored "-Wunused-parameter"
+#  pragma clang diagnostic ignored "-Wunused-function"
 #endif
 
 typedef union ConstValue ConstValue;
@@ -1713,22 +1714,19 @@ static void emit_agg_init(Parser* p, Ref addr, TypeId t) {
 
 // l's type has to be set first.
 static void emit_local_slot(Parser* p, Local* l, SrcLoc at) {
-  if (!EMIT) {
-    return;
-  }
+#if EMIT
   if (type_is_aggregate(p, l->type) && type_has_layout(p, l->type)) {
     l->slot = il_slot_add_agg(&p->il, type_agg(p, l->type), l->name);
   } else {
     l->slot = il_slot_add(&p->il, il_type_of(p, l->type, at), l->name);
   }
+#endif
 }
 
 // Makes e a use of l, whose type is already in e. A constant is loaded
 // separately, since it's the same in both builds.
 static void emit_local_use(Parser* p, ExpDesc* e, const Local* l, NameId name) {
-  if (!EMIT) {
-    return;
-  }
+#if EMIT
   if (l->kind == LK_VAR) {
     e->kind = EK_LOCAL;
     e->slot = l->slot;
@@ -1745,14 +1743,17 @@ static void emit_local_use(Parser* p, ExpDesc* e, const Local* l, NameId name) {
       load_global_var(p, e, global);
     }
   }
+#endif
 }
 
 static void emit_func_use(ExpDesc* e, const GlobalFunc* gf) {
-  if (!EMIT || gf->sym == FUNC_NO_SYM) {
+#if EMIT
+  if (gf->sym == FUNC_NO_SYM) {
     return;
   }
   e->kind = EK_FUNC;
   e->sym = gf->sym;
+#endif
 }
 
 // Integers narrower than 64 bits are i32s. Extends v to i64 if it's narrower.
@@ -1822,13 +1823,12 @@ static void emit_print_str_piece(Parser* p) {
 // Called after a binary operator and before its right operand, so that the
 // left operand is evaluated first. Constants are kept so they can be folded.
 static void emit_infix(Parser* p, ExpDesc* e, SrcLoc at) {
-  if (!EMIT) {
-    return;
-  }
+#if EMIT
   if (e->kind == EK_LOCAL || e->kind == EK_ADDR) {
     e->ref = emit_to_ref(p, e, e->type, at);
     e->kind = EK_REF;
   }
+#endif
 }
 
 // The value of an 'and' or 'or' is stored to a temporary slot on each path,
@@ -1845,9 +1845,7 @@ static void emit_logical_begin(Parser* p,
                                const ExpDesc* e,
                                SrcLoc at,
                                LogicalJoin* join) {
-  if (!EMIT) {
-    return;
-  }
+#if EMIT
   Ref left = emit_to_ref(p, e, ty_bool, at);
   join->slot = il_slot_add(&p->il, IT_I32, (NameId){IL_SLOT_UNNAMED});
   join->end = il_block_declare(&p->il);
@@ -1860,25 +1858,25 @@ static void emit_logical_begin(Parser* p,
     il_jump(&p->il, join->end);
     il_block_start(&p->il, right);
   }
+#endif
 }
 
 static void emit_logical_end(Parser* p, const ExpDesc* rhs, SrcLoc at, const LogicalJoin* join) {
-  if (!EMIT) {
-    return;
-  }
+#if EMIT
   Ref right = emit_to_ref(p, rhs, ty_bool, at);
   il_emit(&p->il, OP_STORE, IT_I32, right, il_slot_addr(&p->il, join->slot));
   il_block_start(&p->il, join->end);
+#endif
 }
 
 // Makes e the value of the 'and' or 'or' that join was used for.
 static void emit_logical_result(ExpDesc* e, const LogicalJoin* join) {
-  if (!EMIT) {
-    exp_unemitted(e);
-    return;
-  }
+#if EMIT
   e->kind = EK_LOCAL;
   e->slot = join->slot;
+#else
+  exp_unemitted(e);
+#endif
 }
 
 // Makes e the comparison of e and rhs as t, unless they can't be compared yet.
@@ -1890,10 +1888,7 @@ static void emit_compare(Parser* p,
                          const ExpDesc* rhs,
                          SrcLoc rhs_at,
                          SrcLoc at) {
-  if (!EMIT) {
-    exp_unemitted(e);
-    return;
-  }
+#if EMIT
   bool is_pointer = type_is_pointer(p, t);
   if (t.u != TY_BOOL && !type_is_integer(t) && !is_pointer) {
     exp_unemitted(e);
@@ -1904,6 +1899,9 @@ static void emit_compare(Parser* p,
   IlOp cmp = il_compare_op(op, type_is_unsigned(t) || is_pointer);
   e->kind = EK_REF;
   e->ref = il_emit(&p->il, cmp, il_type_of(p, t, at), left, right);
+#else
+  exp_unemitted(e);
+#endif
 }
 
 // Makes e the result of the arithmetic operator op on e and rhs as t, unless
@@ -1916,7 +1914,8 @@ static void emit_arith(Parser* p,
                        const ExpDesc* rhs,
                        SrcLoc rhs_at,
                        SrcLoc at) {
-  if (!EMIT || il_arith_op(op) == OP_NUM_OPS || (t.u != TY_I32 && t.u != TY_I64)) {
+#if EMIT
+  if (il_arith_op(op) == OP_NUM_OPS || (t.u != TY_I32 && t.u != TY_I64)) {
     exp_unemitted(e);
     return;
   }
@@ -1924,11 +1923,15 @@ static void emit_arith(Parser* p,
   Ref right = emit_to_ref(p, rhs, t, rhs_at);
   e->kind = EK_REF;
   e->ref = il_emit(&p->il, il_arith_op(op), il_type_of(p, t, at), left, right);
+#else
+  exp_unemitted(e);
+#endif
 }
 
 // Makes e the 'not' of the bool e.
 static void emit_not(Parser* p, ExpDesc* e, SrcLoc at) {
-  if (!EMIT || e->type.u != TY_BOOL) {
+#if EMIT
+  if (e->type.u != TY_BOOL) {
     exp_unemitted(e);
     return;
   }
@@ -1936,21 +1939,26 @@ static void emit_not(Parser* p, ExpDesc* e, SrcLoc at) {
   Ref v = emit_to_ref(p, e, ty_bool, at);
   e->ref = il_emit(&p->il, OP_XOR, IT_I32, v, il_const_int(&p->il, IT_I32, 1));
   e->kind = EK_REF;
+#else
+  exp_unemitted(e);
+#endif
 }
 
 // Makes e its own address. A struct literal's address isn't emitted yet.
 static void emit_addr_of(Parser* p, ExpDesc* e) {
-  if (!EMIT || e->shape == SH_STRUCT_LITERAL) {
-    exp_unemitted(e);
-  } else if (e->kind == EK_LOCAL) {
+#if EMIT
+  if (e->shape != SH_STRUCT_LITERAL && e->kind == EK_LOCAL) {
     e->ref = il_slot_addr(&p->il, e->slot);
     e->kind = EK_REF;
-  } else if (e->kind == EK_ADDR) {
+  } else if (e->shape != SH_STRUCT_LITERAL && e->kind == EK_ADDR) {
     e->ref = emit_addr(p, e);
     e->kind = EK_REF;
   } else {
     exp_unemitted(e);
   }
+#else
+  exp_unemitted(e);
+#endif
 }
 
 // Unary '-' or '~', which give the operand's type. Constants are folded.
@@ -2838,7 +2846,8 @@ static void struct_args(Parser* p, ExpDesc* e) {
 // Makes e its field f, or isn't emitted if f is NULL. e's type is still the
 // struct, or a pointer to it.
 static void emit_field(Parser* p, ExpDesc* e, const Field* f, SrcLoc at) {
-  if (!EMIT || !f) {
+#if EMIT
+  if (!f) {
     exp_unemitted(e);
     return;
   }
@@ -2872,15 +2881,16 @@ static void emit_field(Parser* p, ExpDesc* e, const Field* f, SrcLoc at) {
   } else {
     exp_unemitted(e);
   }
+#else
+  exp_unemitted(e);
+#endif
 }
 
 // Returns the address of the pointer or array e that's indexed, with a
 // constant offset from it in *offset. Returns 0 if it isn't emitted.
 static Ref emit_index_base(Parser* p, ExpDesc* e, u32* offset, SrcLoc at) {
   *offset = 0;
-  if (!EMIT) {
-    return 0;
-  }
+#if EMIT
   if (type_is_pointer(p, e->type)) {
     return emit_to_ref(p, e, e->type, at);
   }
@@ -2897,6 +2907,7 @@ static Ref emit_index_base(Parser* p, ExpDesc* e, u32* offset, SrcLoc at) {
     *offset = e->offset;
     return e->base;
   }
+#endif
   return 0;
 }
 
@@ -2910,7 +2921,8 @@ static void emit_index(Parser* p,
                        u32 offset,
                        const ExpDesc* idx,
                        SrcLoc at) {
-  if (!EMIT || base == 0) {
+#if EMIT
+  if (base == 0) {
     exp_unemitted(elem);
     return;
   }
@@ -2937,6 +2949,9 @@ static void emit_index(Parser* p,
     delta = il_emit(&p->il, OP_MUL, IT_I64, delta, il_const_int(&p->il, IT_I64, size));
   }
   elem->base = il_emit(&p->il, OP_ADD, IT_I64, base, delta);
+#else
+  exp_unemitted(elem);
+#endif
 }
 
 // '[' expr ']' (index) or '[' [expr] ':' [expr] ']' (slice). e is the
