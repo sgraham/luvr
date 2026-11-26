@@ -48,7 +48,11 @@ void ctx_free(Ctx* ctx) {
 }
 
 SymId ctx_sym_add(Ctx* ctx, NameId name, const Module* module) {
-  *vec_push(ctx, &ctx->syms) = (Sym){name, module};
+  return ctx_method_sym_add(ctx, (NameId){SYM_NO_RECEIVER}, name, module);
+}
+
+SymId ctx_method_sym_add(Ctx* ctx, NameId receiver, NameId name, const Module* module) {
+  *vec_push(ctx, &ctx->syms) = (Sym){name, receiver, module};
   return (SymId){ctx->syms.num - 1};
 }
 

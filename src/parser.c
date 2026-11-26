@@ -195,12 +195,16 @@ struct GlobalFunc {
 #define FUNC_NO_SYM UINT32_MAX
 
 // A method of a struct. receiver is the struct, not self's pointer type.
-// Static methods don't have self.
+// Static methods don't have self. Its sym.u is FUNC_NO_SYM for foreign
+// methods, which don't have symbols yet.
 struct Method {
   TypeId receiver;
   NameId name;
   TypeId type;
   bool has_self;
+#if EMIT
+  SymId sym;
+#endif
 };
 
 // A module's global variable. data is its storage.
@@ -4233,6 +4237,16 @@ static void emit_func_sym(Parser* p, GlobalFunc* gf, NameId name) {
 #endif
 }
 
+static void emit_method_sym(Parser* p, Method* method) {
+#if EMIT
+  Ctx* ctx = p->ls.ctx;
+  const Module* module = p->mod == ctx->modules.items[MODULE_ROOT] ? NULL : p->mod;
+  NameId receiver = type_info(p, method->receiver)->name;
+  method->sym = p->in_foreign ? (SymId){FUNC_NO_SYM}
+                              : ctx_method_sym_add(ctx, receiver, method->name, module);
+#endif
+}
+
 static void declare_method(Parser* p,
                            TypeId receiver,
                            NameId name,
@@ -4252,8 +4266,9 @@ static void declare_method(Parser* p,
              type_str(p, receiver));
   }
   u32 idx = p->methods.num;
-  *vec_push(p->ls.ctx, &p->methods) =
-      (Method){.receiver = receiver, .name = name, .type = ft, .has_self = has_self};
+  Method* method = vec_push(p->ls.ctx, &p->methods);
+  *method = (Method){.receiver = receiver, .name = name, .type = ft, .has_self = has_self};
+  emit_method_sym(p, method);
   hashtable_insert(p->ls.ctx, &p->method_index, slot, tag, idx);
 }
 

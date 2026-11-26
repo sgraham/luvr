@@ -261,13 +261,18 @@ static void il_dump_float(IlType ty, u64 bits, FILE* out) {
 }
 
 // A function in an imported module is prefixed with the module's path, as in
-// @sub/util.helper, so that names from different modules can't clash.
+// @sub/util.helper, so that names from different modules can't clash. A
+// method is also prefixed with its receiver, as in @sub/util.Stuff.get.
 static void il_dump_sym(const Ctx* ctx, SymId sym, FILE* out) {
   const Sym* s = &ctx->syms.items[sym.u];
   fputc('@', out);
   if (s->module) {
     const Name* module = lex_name(ctx, s->module->name);
     fprintf(out, "%.*s.", (int)module->len, module->str);
+  }
+  if (s->receiver.u != SYM_NO_RECEIVER) {
+    const Name* receiver = lex_name(ctx, s->receiver);
+    fprintf(out, "%.*s.", (int)receiver->len, receiver->str);
   }
   const Name* name = lex_name(ctx, s->name);
   fprintf(out, "%.*s", (int)name->len, name->str);
