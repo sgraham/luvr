@@ -1787,6 +1787,7 @@ static Ref emit_extend_if_necessary(Parser* p, Ref v, TypeId t) {
 
 // Prints e without ending the line.
 static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
+#if EMIT
   TypeId t = type_concrete(e->type);
   RuntimeSym sym;
   switch ((FixedType)t.u) {
@@ -1823,10 +1824,35 @@ static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
     arg = emit_extend_if_necessary(p, arg, t);
   }
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), &arg, 1);
+#endif
 }
 
 static void emit_print_end(Parser* p) {
+#if EMIT
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_end), NULL, 0);
+#endif
+}
+
+static void emit_source_pos(Parser* p, SrcLoc at) {
+#if EMIT
+  il_source_pos(&p->il, at);
+#endif
+}
+
+// Returns from the current function with e, or with no value if e is NULL.
+static void emit_return(Parser* p, const ExpDesc* e, SrcLoc at) {
+#if EMIT
+  if (!e) {
+    il_emit(&p->il, OP_RET, IT_VOID, 0, 0);
+  } else if (p->il.ret == IT_AGG) {
+    // The caller's RESULTAGG isn't visible here until the ABI step makes it a
+    // hidden pointer or the result registers, so the RET has the address of
+    // the value.
+    il_emit(&p->il, OP_RET, IT_AGG, emit_agg_addr(p, e, at), 0);
+  } else {
+    il_emit(&p->il, OP_RET, p->il.ret, emit_to_ref(p, e, p->ret_type, at), 0);
+  }
+#endif
 }
 
 // Prints the literal part of the current STRING_BEGIN, STRING_MID or
@@ -2277,6 +2303,78 @@ struct Loop {
   BlockId exit;  // where break goes
   bool has_break;
 };
+
+static void emit_loop_begin(Parser* p, Loop* loop) {
+#if EMIT
+  loop->head = il_block_declare(&p->il);
+  loop->exit = il_block_declare(&p->il);
+  il_block_start(&p->il, loop->head);
+#endif
+}
+
+// A false condition leaves the loop.
+static void emit_loop_cond(Parser* p, const Loop* loop, Ref condition) {
+#if EMIT
+  il_branch(&p->il, condition, loop->exit);
+#endif
+}
+
+// ends is whether the loop never exits.
+static void emit_loop_end(Parser* p, const Loop* loop, Flow flow, bool ends) {
+#if EMIT
+  // The end of the body goes back to the head, unless the body always ends in
+  // a return (or a break or continue, which jump themselves).
+  if (flow == FLOW_FALLS_THROUGH) {
+    il_jump(&p->il, loop->head);
+  }
+  // Nothing jumps to the exit of a 'for:' without a break, so it's declared
+  // but never started.
+  if (!ends) {
+    il_block_start(&p->il, loop->exit);
+  }
+#endif
+}
+
+// kind is TK_BREAK or TK_CONTINUE.
+static void emit_loop_jump(Parser* p, const Loop* loop, TokenKind kind) {
+#if EMIT
+  il_jump(&p->il, kind == TK_BREAK ? loop->exit : loop->head);
+#endif
+}
+
+// Returns the block that a false condition goes to, which the caller starts.
+static BlockId emit_branch_if_false(Parser* p, Ref condition) {
+  BlockId target = {0};
+#if EMIT
+  target = il_block_declare(&p->il);
+  il_branch(&p->il, condition, target);
+#endif
+  return target;
+}
+
+// After an if branch's suite. A suite that falls through jumps to *end, which
+// is declared when it's first needed. Then next_branch starts.
+static void emit_if_branch_end(Parser* p, Flow flow, BlockId* end, BlockId next_branch) {
+#if EMIT
+  if (flow == FLOW_FALLS_THROUGH) {
+    if (end->u == IL_BLOCK_NONE) {
+      *end = il_block_declare(&p->il);
+    }
+    il_jump(&p->il, *end);
+  }
+  il_block_start(&p->il, next_branch);
+#endif
+}
+
+// The else suite, or the last condition being false, continues into the end
+// block, if any branch needed one.
+static void emit_if_end(Parser* p, BlockId end) {
+#if EMIT
+  if (end.u != IL_BLOCK_NONE) {
+    il_block_start(&p->il, end);
+  }
+#endif
+}
 
 // for_targets -> name {',' name}
 // The first name has already been parsed.
@@ -3630,11 +3728,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
 //              | ('global' | 'nonlocal') name {',' name}
 //              | decl_or_expr_stat
 static void simple_stat(Parser* p) {
-  if (EMIT) {
-    il_source_pos(&p->il, p->ls.pos.t.loc);
-    if (T(p) == TK_CHECK || T(p) == TK_NONLOCAL) {
-      error_at(p, p->ls.pos.t.loc, "This statement isn't supported yet.");
-    }
+  emit_source_pos(p, p->ls.pos.t.loc);
+  if (EMIT && (T(p) == TK_CHECK || T(p) == TK_NONLOCAL)) {
+    error_at(p, p->ls.pos.t.loc, "This statement isn't supported yet.");
   }
   switch (T(p)) {
     case TK_RETURN: {
@@ -3645,9 +3741,7 @@ static void simple_stat(Parser* p) {
           error_at(p, return_at, "Missing return value in a function returning %s.",
                    type_str(p, p->ret_type));
         }
-        if (EMIT) {
-          il_emit(&p->il, OP_RET, IT_VOID, 0, 0);
-        }
+        emit_return(p, NULL, return_at);
       } else {
         SrcLoc at = p->ls.pos.t.loc;
         ExpDesc e;
@@ -3660,14 +3754,7 @@ static void simple_stat(Parser* p) {
                    type_str(p, p->ret_type));
         }
         check_const_conversion(p, p->ret_type, &e, at);
-        if (EMIT && p->il.ret == IT_AGG) {
-          // The caller's RESULTAGG isn't visible here until the ABI step
-          // makes it a hidden pointer or the result registers, so the RET
-          // has the address of the value.
-          il_emit(&p->il, OP_RET, IT_AGG, emit_agg_addr(p, &e, at), 0);
-        } else if (EMIT) {
-          il_emit(&p->il, OP_RET, p->il.ret, emit_to_ref(p, &e, p->ret_type, at), 0);
-        }
+        emit_return(p, &e, at);
       }
       return;
     }
@@ -3679,11 +3766,7 @@ static void simple_stat(Parser* p) {
       if (T(p) == TK_BREAK) {
         p->loop->has_break = true;
       }
-      if (EMIT && T(p) == TK_BREAK) {
-        il_jump(&p->il, p->loop->exit);
-      } else if (EMIT) {
-        il_jump(&p->il, p->loop->head);
-      }
+      emit_loop_jump(p, p->loop, T(p));
       next(p);
       return;
     case TK_PASS:
@@ -3699,10 +3782,8 @@ static void simple_stat(Parser* p) {
       ExpDesc e;
       subexpr(p, -1, &e);
       check_not_void(p, &e, at);
-      if (EMIT) {
-        emit_print_value(p, &e, at);
-        emit_print_end(p);
-      }
+      emit_print_value(p, &e, at);
+      emit_print_end(p);
       return;
     }
     case TK_CHECK: {
@@ -3795,26 +3876,12 @@ static Flow suite(Parser* p) {
 // 'if', which is declared in *end when it's first needed, because there isn't
 // one if every branch returns.
 static Flow if_branch(Parser* p, BlockId* end) {
-  if (EMIT) {
-    il_source_pos(&p->il, p->ls.pos.t.loc);
-  }
+  emit_source_pos(p, p->ls.pos.t.loc);
   Ref condition = cond(p);
-  BlockId next_branch = {0};
-  if (EMIT) {
-    next_branch = il_block_declare(&p->il);
-    il_branch(&p->il, condition, next_branch);
-  }
+  BlockId next_branch = emit_branch_if_false(p, condition);
   check(p, TK_COLON);
   Flow flow = suite(p);
-  if (EMIT) {
-    if (flow == FLOW_FALLS_THROUGH) {
-      if (end->u == IL_BLOCK_NONE) {
-        *end = il_block_declare(&p->il);
-      }
-      il_jump(&p->il, *end);
-    }
-    il_block_start(&p->il, next_branch);
-  }
+  emit_if_branch_end(p, flow, end, next_branch);
   return flow;
 }
 
@@ -4027,11 +4094,7 @@ static Flow stat(Parser* p) {
       } else {
         ends = false;
       }
-      // The else suite, or the last condition being false, continues into
-      // the end block.
-      if (EMIT && end.u != IL_BLOCK_NONE) {
-        il_block_start(&p->il, end);
-      }
+      emit_if_end(p, end);
       return ends ? FLOW_ENDS : FLOW_FALLS_THROUGH;
     }
     case TK_FOR: {
@@ -4039,19 +4102,11 @@ static Flow stat(Parser* p) {
       next(p);
       bool forever = T(p) == TK_COLON;
       Loop loop = {0};
-      if (EMIT) {
-        loop.head = il_block_declare(&p->il);
-        loop.exit = il_block_declare(&p->il);
-        il_block_start(&p->il, loop.head);
-      }
+      emit_loop_begin(p, &loop);
       if (!forever) {
-        if (EMIT) {
-          il_source_pos(&p->il, at);
-        }
+        emit_source_pos(p, at);
         Ref condition = for_header(p);
-        if (EMIT) {
-          il_branch(&p->il, condition, loop.exit);
-        }
+        emit_loop_cond(p, &loop, condition);
       }
       check(p, TK_COLON);
       Loop* outer = p->loop;
@@ -4059,18 +4114,7 @@ static Flow stat(Parser* p) {
       Flow flow = suite(p);
       p->loop = outer;
       bool ends = forever && !loop.has_break;
-      if (EMIT) {
-        // The end of the body goes back to the head, unless the body always
-        // ends in a return (or a break or continue, which jump themselves).
-        if (flow == FLOW_FALLS_THROUGH) {
-          il_jump(&p->il, loop.head);
-        }
-        // Nothing jumps to the exit of a 'for:' without a break, so it's
-        // declared but never started.
-        if (!ends) {
-          il_block_start(&p->il, loop.exit);
-        }
-      }
+      emit_loop_end(p, &loop, flow, ends);
       return ends ? FLOW_ENDS : FLOW_FALLS_THROUGH;
     }
     case TK_WITH:
