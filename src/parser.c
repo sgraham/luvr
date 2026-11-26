@@ -14,10 +14,9 @@
 #endif
 
 #if !EMIT && COMPILER_CLANG
-// Helpers that only emit have #if EMIT bodies, so their parameters, and
-// functions that only they call, are unused in the checking build.
+// Helpers that only emit have #if EMIT bodies, so their parameters are unused
+// in the checking build.
 #  pragma clang diagnostic ignored "-Wunused-parameter"
-#  pragma clang diagnostic ignored "-Wunused-function"
 #endif
 
 typedef union ConstValue ConstValue;
@@ -177,23 +176,29 @@ struct NamedConst {
   TypeId type;
   union {
     ConstValue cv;  // a scalar
-    DataId data;    // an aggregate's image, only when EMIT
+#if EMIT
+    DataId data;  // an aggregate's image
+#endif
   };
 };
 
-// A top-level function. Its sym is FUNC_NO_SYM in the checking build, and
-// for foreign functions, which don't have symbols yet.
+// A top-level function. Its sym is FUNC_NO_SYM for foreign functions, which
+// don't have symbols yet.
 struct GlobalFunc {
   TypeId type;
+#if EMIT
   u32 sym;
+#endif
 };
 
 #define FUNC_NO_SYM UINT32_MAX
 
-// A module's global variable. data is its storage, only when EMIT.
+// A module's global variable. data is its storage.
 struct GlobalVar {
   TypeId type;
+#if EMIT
   DataId data;
+#endif
 };
 
 // A parameter or local variable of the function being parsed, or of one that
@@ -202,11 +207,13 @@ struct Local {
   NameId name;
   TypeId type;
   LocalKind kind;
-  // Only when EMIT. A parameter is a value, so it doesn't need a slot.
+#if EMIT
+  // A parameter is a value, so it doesn't need a slot.
   union {
     SlotId slot;  // LK_VAR
     Ref ref;      // LK_PARAM
   };
+#endif
   // The Name's binding before this was declared. It's restored when the
   // function ends.
   Local* shadowed;
@@ -250,10 +257,11 @@ struct Parser {
   VEC(TypeInfo) types;  // by TypeId, with unused entries for the FixedTypes
   VEC(TypeId) param_types;
   VEC(Field) fields;
+#if EMIT
   // The image of the struct whose body is being parsed, and its relocations.
-  // Only used when EMIT.
   VEC(u8) image;
   VEC(IlReloc) image_relocs;
+#endif
   // Each [N]T, by a hash of N and T. The slot's val is the TypeId.
   HashTable array_types;
   // The prelude's globals by NameId, for names below prelude_name_end. See
@@ -284,7 +292,9 @@ struct Parser {
   // Set at the end of its definition.
   u32 str_data_offset;
   u32 str_len_offset;
-  IlFunc il;  // of the current function, only used when EMIT
+#if EMIT
+  IlFunc il;  // of the current function
+#endif
 };
 
 // The syntactical shape of parsing an expression. Used to decide whether
@@ -326,6 +336,7 @@ struct ExpDesc {
   TypeId type;
   u8 shape;  // Shape
   u8 kind;   // ExpKind
+#if EMIT
   union {
     SlotId slot;  // EK_LOCAL
     Ref ref;      // EK_REF
@@ -336,6 +347,7 @@ struct ExpDesc {
       u32 offset;
     };
   };
+#endif
   ConstValue cv;
 };
 
@@ -348,14 +360,16 @@ static void primary(Parser* p, ExpDesc* e);
 static TypeId type(Parser* p);
 static u32 array_size(Parser* p);
 static IlType il_mem_type_of(Parser* p, TypeId t);
-static AggId type_agg(Parser* p, TypeId t);
+#if EMIT
 static DataId emit_str_data(Parser* p, const u8* s, u32 len);
+static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, u32 data_mark, SrcLoc at);
+static AggId type_agg(Parser* p, TypeId t);
 static void image_extend(Parser* p, u32 size);
 static u32 image_begin(Parser* p, u32 size);
 static DataId image_end(Parser* p, u32 base, u32 align, bool writable);
-static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, u32 data_mark, SrcLoc at);
 static bool image_add_field(Parser* p, TypeId t, u32 offset);
 static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, SrcLoc at);
+#endif
 static Flow stat(Parser* p);
 static Flow suite(Parser* p);
 static void parse_module(Parser* p);
@@ -574,7 +588,10 @@ static void declare_global_var(Parser* p,
                                const ExpDesc* v,
                                u32 data_mark,
                                SrcLoc at) {
-  GlobalVar g = {t, emit_global_data(p, t, v, data_mark, at)};
+  GlobalVar g = {.type = t};
+#if EMIT
+  g.data = emit_global_data(p, t, v, data_mark, at);
+#endif
   u32 idx = p->global_vars.num;
   *vec_push(p->ls.ctx, &p->global_vars) = g;
   declare_global(p, name, GK_VAR | (idx << GLOBAL_KIND_BITS));
@@ -596,9 +613,9 @@ static NOINLINE void load_named_const(Parser* p, ExpDesc* e, const NamedConst* c
   e->type = c->type;
   if (type_is_aggregate(p, c->type)) {
     e->kind = EK_CONST_DATA;
-    if (EMIT) {
-      e->data = c->data;
-    }
+#if EMIT
+    e->data = c->data;
+#endif
   } else {
     e->kind = EK_CONST;
     e->cv = c->cv;
@@ -1553,6 +1570,7 @@ static NOINLINE bool fold_compare(BinOpr op, const ExpDesc* a, const ExpDesc* b)
 
 // Emission
 
+#if EMIT
 // bool and integers up to 32 bits are i32, and the other integers are i64.
 static IlType il_type_of(Parser* p, TypeId t, SrcLoc at) {
   if (type_is_pointer(p, t)) {
@@ -1618,6 +1636,7 @@ static IlOp il_compare_op(BinOpr op, bool is_unsigned) {
       return OP_NUM_OPS;
   }
 }
+#endif
 
 // A value that the emitting build doesn't emit yet. Its ref is 0, which
 // isn't a valid Ref, so that emit_to_ref() gives an error if it's used,
@@ -1629,6 +1648,7 @@ static void exp_unemitted(ExpDesc* e) {
 #endif
 }
 
+#if EMIT
 static Ref emit_offset_addr(Parser* p, Ref base, u32 offset) {
   if (offset == 0) {
     return base;
@@ -1639,6 +1659,7 @@ static Ref emit_offset_addr(Parser* p, Ref base, u32 offset) {
 static Ref emit_addr(Parser* p, const ExpDesc* e) {
   return emit_offset_addr(p, e->base, e->offset);
 }
+#endif
 
 // Emits whatever is needed to make e one value of type t, and returns its Ref.
 // t has already been checked against e's type. If e is an untyped constant
@@ -1668,6 +1689,7 @@ static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, SrcLoc at) {
 #endif
 }
 
+#if EMIT
 // Returns the address of the aggregate that e is.
 static Ref emit_agg_addr(Parser* p, const ExpDesc* e, SrcLoc at) {
   if (e->kind == EK_LOCAL) {
@@ -1683,6 +1705,7 @@ static Ref emit_agg_addr(Parser* p, const ExpDesc* e, SrcLoc at) {
   }
   error_at(p, at, "This expression isn't supported yet.");
 }
+#endif
 
 static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e, SrcLoc at) {
 #if EMIT
@@ -1708,9 +1731,9 @@ static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, Sr
 #endif
 }
 
+#if EMIT
 // Gives the struct or array of type t at addr its initial value.
 static void emit_agg_init(Parser* p, Ref addr, TypeId t) {
-#if EMIT
   AggId agg = type_agg(p, t);
   DataId image = type_info(p, t)->image;
   if (image.u == DATA_NONE) {
@@ -1718,8 +1741,8 @@ static void emit_agg_init(Parser* p, Ref addr, TypeId t) {
   } else {
     il_copy(&p->il, addr, il_const_data(&p->il, image), agg);
   }
-#endif
 }
+#endif
 
 // Gives the new local l its initial value, which is v, or if v is NULL, the
 // zero or default value of l's type.
@@ -1778,6 +1801,7 @@ static void emit_func_use(ExpDesc* e, const GlobalFunc* gf) {
 #endif
 }
 
+#if EMIT
 // Integers narrower than 64 bits are i32s. Extends v to i64 if it's narrower.
 static Ref emit_extend_if_necessary(Parser* p, Ref v, TypeId t) {
   if (type_int_bits(t) == 64) {
@@ -1785,6 +1809,7 @@ static Ref emit_extend_if_necessary(Parser* p, Ref v, TypeId t) {
   }
   return il_emit(&p->il, type_is_unsigned(t) ? OP_ZEXT32 : OP_SEXT32, IT_I64, v, 0);
 }
+#endif
 
 // Prints e without ending the line.
 static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
@@ -1859,6 +1884,7 @@ static void emit_return(Parser* p, const ExpDesc* e, SrcLoc at) {
 // Prints the literal part of the current STRING_BEGIN, STRING_MID or
 // STRING_END token, if it isn't empty.
 static void emit_print_str_piece(Parser* p) {
+#if EMIT
   u32 len;
   const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
   if (len == 0) {
@@ -1866,6 +1892,7 @@ static void emit_print_str_piece(Parser* p) {
   }
   Ref arg = il_const_data(&p->il, emit_str_data(p, s, len));
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_str), &arg, 1);
+#endif
 }
 
 // Called after a binary operator and before its right operand, so that the
@@ -2300,8 +2327,10 @@ struct Targets {
 
 // A loop whose body is being parsed.
 struct Loop {
+#if EMIT
   BlockId head;  // where continue goes
   BlockId exit;  // where break goes
+#endif
   bool has_break;
 };
 
@@ -3017,6 +3046,18 @@ static void struct_args(Parser* p, ExpDesc* e) {
   emit_literal_end(p, &lit, e, st);
 }
 
+// A cast between pointers and u64 doesn't change e. Other casts aren't emitted
+// yet.
+static void emit_cast(ExpDesc* e, bool is_bitcast) {
+#if EMIT
+  if (!is_bitcast) {
+    exp_unemitted(e);
+  }
+#else
+  exp_unemitted(e);
+#endif
+}
+
 // Makes e its field f, or isn't emitted if f is NULL. e's type is still the
 // struct, or a pointer to it.
 static void emit_field(Parser* p, ExpDesc* e, const Field* f, SrcLoc at) {
@@ -3309,6 +3350,7 @@ static void len_call(Parser* p, ExpDesc* e) {
   }
 }
 
+#if EMIT
 // Writes the low size bytes of bits to dst. Every target is little-endian.
 static void store_le(u8* dst, u64 bits, u32 size) {
   for (u32 i = 0; i < size; ++i) {
@@ -3318,15 +3360,6 @@ static void store_le(u8* dst, u64 bits, u32 size) {
 
 // Adds the bytes of a string literal, and the image of a str that refers to
 // them.
-// Makes e's data the image of the current STRING token's str.
-static void emit_str_literal(Parser* p, ExpDesc* e) {
-#if EMIT
-  u32 len;
-  const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-  e->data = emit_str_data(p, s, len);
-#endif
-}
-
 static DataId emit_str_data(Parser* p, const u8* s, u32 len) {
   DataId bytes = il_data_add(p->ls.ctx, s, len, 1, /*writable=*/false, NULL, 0);
   u8 image[16] = {0};
@@ -3335,6 +3368,16 @@ static DataId emit_str_data(Parser* p, const u8* s, u32 len) {
   IlReloc reloc = {p->str_data_offset, bytes};
   return il_data_add(p->ls.ctx, image, sizeof(image), type_align(p, ty_str), /*writable=*/false,
                      &reloc, 1);
+}
+#endif
+
+// Makes e's data the image of the current STRING token's str.
+static void emit_str_literal(Parser* p, ExpDesc* e) {
+#if EMIT
+  u32 len;
+  const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
+  e->data = emit_str_data(p, s, len);
+#endif
 }
 
 // primary -> literal | string | name | TypeName | '(' expr ')'
@@ -3544,8 +3587,8 @@ static void primary(Parser* p, ExpDesc* e) {
       if (e->kind == EK_CONST && (type_is_integer(t) || type_is_float(t)) &&
           (type_is_integer(e->type) || type_is_float(e->type))) {
         fold_cast(p, e, t, value_at);
-      } else if (!EMIT || !is_bitcast) {
-        exp_unemitted(e);
+      } else {
+        emit_cast(e, is_bitcast);
       }
       e->type = t;
       break;
@@ -3572,9 +3615,9 @@ static void declare_const(Parser* p,
   }
   NamedConst c = {.type = t};
   if (v->kind == EK_CONST_DATA) {
-    if (EMIT) {
-      c.data = v->data;
-    }
+#if EMIT
+    c.data = v->data;
+#endif
   } else {
     c.cv = v->cv;
   }
@@ -3945,6 +3988,13 @@ static Flow if_branch(Parser* p, BlockId* end) {
   return flow;
 }
 
+// Foreign functions don't have symbols yet.
+static void emit_func_sym(Parser* p, GlobalFunc* gf, NameId name) {
+#if EMIT
+  gf->sym = p->in_foreign ? FUNC_NO_SYM : ctx_sym_add(p->ls.ctx, name);
+#endif
+}
+
 // funcsig -> [type] name '(' [param {',' param}] ')'
 // param   -> type name | name    (bare name: a method's first parameter)
 //
@@ -3985,8 +4035,9 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
   if (!is_method) {
     if (p->func_depth == 0) {
       u32 idx = p->global_funcs.num;
-      u32 sym = EMIT && !p->in_foreign ? ctx_sym_add(p->ls.ctx, name) : FUNC_NO_SYM;
-      *vec_push(p->ls.ctx, &p->global_funcs) = (GlobalFunc){ft, sym};
+      GlobalFunc* gf = vec_push(p->ls.ctx, &p->global_funcs);
+      *gf = (GlobalFunc){.type = ft};
+      emit_func_sym(p, gf, name);
       declare_definition(p, name, at, GK_FUNC | (idx << GLOBAL_KIND_BITS));
     } else {
       declare_if_new(p, name, at, ft);
@@ -4217,6 +4268,10 @@ static Flow stat(Parser* p) {
 
 // Top level
 
+// Images, and the aggs and data that they're used for, are only built when
+// emitting.
+#if EMIT
+
 // Grows p->image to size bytes with zeros.
 static void image_extend(Parser* p, u32 size) {
   vec_reserve(p->ls.ctx, &p->image, size - p->image.num);
@@ -4325,7 +4380,6 @@ static bool image_add_field(Parser* p, TypeId t, u32 offset) {
 // as t's default. Otherwise it's all zeros which is handled separately and not
 // stored.
 static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, u32 data_mark, SrcLoc at) {
-#if EMIT
   if (!type_has_layout(p, t)) {
     error_at(p, at, "This global isn't supported yet.");
   }
@@ -4348,9 +4402,6 @@ static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, u32 data_m
     return il_data_add_zero(p->ls.ctx, size, align, /*writable=*/true);
   }
   return image_end(p, base, align, /*writable=*/true);
-#else
-  return (DataId){DATA_NONE};
-#endif
 }
 
 // Returns the AggId of a struct or array type t. A struct's was added at the
@@ -4375,6 +4426,14 @@ static AggId type_agg(Parser* p, TypeId t) {
     p->image.num = base;
   }
   return info->agg;
+}
+#endif
+
+static void emit_struct_image_begin(Parser* p) {
+#if EMIT
+  p->image.num = 0;
+  p->image_relocs.num = 0;
+#endif
 }
 
 // Adds the field of type t at offset to the image of the struct being
@@ -4420,8 +4479,7 @@ static void struct_body(Parser* p, TypeId st) {
   u32 align = 1;
   bool known = true;
   bool has_image = false;
-  p->image.num = 0;
-  p->image_relocs.num = 0;
+  emit_struct_image_begin(p);
   for (;;) {
     SrcLoc type_at = p->ls.pos.t.loc;
     TypeId t = type(p);
@@ -4852,9 +4910,11 @@ static void prelude_load(Ctx* ctx, Parser* p) {
 // Undoes the file's bindings and frees the Parser.
 static void parse_end(Parser* p) {
   pop_locals(p, 0);
-  if (EMIT) {
-    il_free(&p->il);
-  }
+#if EMIT
+  il_free(&p->il);
+  free(p->image.items);
+  free(p->image_relocs.items);
+#endif
   free(p->prelude_globals);
   free(p->global_consts.items);
   free(p->global_vars.items);
@@ -4862,8 +4922,6 @@ static void parse_end(Parser* p) {
   free(p->types.items);
   free(p->param_types.items);
   free(p->fields.items);
-  free(p->image.items);
-  free(p->image_relocs.items);
   hashtable_free(&p->array_types);
   free(p);
 }
@@ -4893,9 +4951,9 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   if (!hashtable_init(&p->array_types, 64)) {
     ctx_error(ctx, path, NULL, (SrcLoc){0}, "Out of memory.");
   }
-  if (EMIT) {
-    il_init(&p->il, ctx);
-  }
+#if EMIT
+  il_init(&p->il, ctx);
+#endif
   prelude_load(ctx, p);
   // The root module's canonical name is its file name, without the directory
   // or .luv.
