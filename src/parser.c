@@ -274,6 +274,9 @@ struct Parser {
   // Bit c - 'A' is set for each type parameter declared by the current
   // struct's list or method's receiver.
   u32 type_params;
+  // The type of the current method's self, or ty_unknown if it isn't known
+  // yet, as for generic and builtin receivers.
+  TypeId self_type;
   TypeId ret_type;  // of the current function
   Loop* loop;       // the current function's innermost loop, or NULL
   // The first name in the current for header. It's a loop variable if it's
@@ -4226,7 +4229,9 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
         if (optional(p, TK_DOT)) {  // module.Type param
           t = qualified_type_rest(p, name, at);
           name = expect_name(p, "parameter name", &at);
-        } else if (!(is_method && first)) {
+        } else if (is_method && first) {
+          t = p->self_type;
+        } else {
           error_at(p, p->ls.pos.t.loc, "Parameter needs a type.");
         }
       } else {
@@ -4733,24 +4738,29 @@ static void receiver_param(Parser* p) {
   type_param(p);
 }
 
-static void receiver(Parser* p) {
+// Returns the type of self. A method on a struct gets a pointer to it, since
+// xyz.f(5) is Xyz.f(&xyz, 5). self isn't typed yet for generic and builtin
+// receivers.
+static TypeId receiver(Parser* p) {
   SrcLoc at = p->ls.pos.t.loc;
   switch (T(p)) {
-    case TK_TYPENAME:
-      check_type_name(p);
+    case TK_TYPENAME: {
+      TypeId t = check_type_name(p);
       next(p);
-      if (T(p) == TK_LBRACE) {
-        SrcLoc brace = p->ls.pos.t.loc;
-        next(p);
-        for (;;) {
-          receiver_param(p);
-          if (!optional(p, TK_COMMA)) {
-            break;
-          }
-        }
-        check_match(p, TK_RBRACE, TK_LBRACE, brace);
+      if (T(p) != TK_LBRACE) {
+        return t.u == TY_UNKNOWN ? t : type_pointer_to(p, t);
       }
-      return;
+      SrcLoc brace = p->ls.pos.t.loc;
+      next(p);
+      for (;;) {
+        receiver_param(p);
+        if (!optional(p, TK_COMMA)) {
+          break;
+        }
+      }
+      check_match(p, TK_RBRACE, TK_LBRACE, brace);
+      return ty_unknown;
+    }
     case TK_LSQUARE:
       next(p);
       if (T(p) != TK_RSQUARE) {
@@ -4758,13 +4768,13 @@ static void receiver(Parser* p) {
       }
       next(p);
       receiver_param(p);
-      return;
+      return ty_unknown;
     case TK_LBRACE:
       next(p);
       receiver_param(p);
       check_match(p, TK_RBRACE, TK_LBRACE, at);
       receiver_param(p);
-      return;
+      return ty_unknown;
     case TK_STAR:
       error_at(p, at, "Methods can't be defined on pointer types.");
     case TK_NAME:
@@ -4774,7 +4784,7 @@ static void receiver(Parser* p) {
         error_expected(p, "type to define methods on");
       }
       next(p);
-      return;
+      return ty_unknown;
   }
 }
 
@@ -4792,7 +4802,7 @@ static void toplevel_stat(Parser* p) {
       return;
     case TK_ON:
       next(p);
-      receiver(p);
+      p->self_type = receiver(p);
       if (optional(p, TK_FOREIGN)) {
         foreign_decl(p, /*is_method=*/true);
       } else {

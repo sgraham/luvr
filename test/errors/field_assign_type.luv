@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:10:17:    self.data = realloc(cast *u8(self.data), sizeof(int) * 100)
+# CERR: {ssss}                       ^ error: Can't assign *u8 to *int.
+foreign *u8 realloc(*u8 ptr, u64 new_size)
+
+struct Stuff:
+    *int data
+
+on Stuff def init(self):
+    self.data = realloc(cast *u8(self.data), sizeof(int) * 100)

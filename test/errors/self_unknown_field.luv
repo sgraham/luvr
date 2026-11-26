@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:8:17:    return self.b
+# CERR: {ssss}                      ^ error: 'b' isn't a field of Stuff.
+struct Stuff:
+    int a
+
+on Stuff def int get(self):
+    return self.b
