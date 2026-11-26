@@ -21,6 +21,13 @@ Constraints this puts on the expression language:
   augmented assignments. Lua enforces the same rule (`namestat` +
   `check_condition(... "syntax error")`). That makes `[f(x) for x in xs]` or
   `{...}` as a bare statement illegal, which is no loss.
+  A literal or `(` can't start a statement either, so `"x".f()` and
+  `(3).f()` aren't call statements (noted 2026-11-26, with methods on
+  builtin types). Their results would be discarded, and str and number
+  methods can't modify their receiver, so only I/O-like methods returning
+  nothing would be affected. It's left until that's shown to be a problem.
+  Allowing it would stay LL(1), since none of those tokens start a
+  declaration, and it would be strictly more permissive.
 - **Qualified types (`mod.Type x`) need no lexer help.** The parser resolves
   `NAME '.' TYPENAME` as a postfix chain. Because `Type` is lexically a
   type, the `expdesc` becomes `VTYPE`, and the following `NAME` makes it a
