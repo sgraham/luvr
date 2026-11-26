@@ -106,3 +106,13 @@ Since methods on builtin types are only defined in the prelude, user code
 only ever sees `*T`. The case that loses something is a small read-only user
 struct (such as a `Vec2`), which would be slightly cheaper by value. That's
 left to optimization (or builtin SIMD types) rather than a language choice.
+
+## Fields and methods share names
+
+Decided 2026-11-26. A method can't have the same name as a field of its
+receiver, and it's an error at the method's definition. Struct definitions
+come before their methods, so it's one field lookup. Keeping fields and
+methods in separate namespaces (`s.len` the field, `s.len()` the method) was
+considered, but it's mostly useful for getters, which the `_field`
+convention already covers. It would also make a function-pointer field
+uncallable as `s.f()`, and it's confusing to read.
