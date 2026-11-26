@@ -1,0 +1,4 @@
+# CRET: 1
+# CERR: {self}:4:8:import "for"
+# CERR: {ssss}            ^ error: Module name 'for' is a keyword.
+import "for"

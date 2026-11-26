@@ -1,0 +1,4 @@
+# CRET: 1
+# CERR: {self}:4:8:import "Stuff"
+# CERR: {ssss}            ^ error: An import path component must be a lowercase name.
+import "Stuff"

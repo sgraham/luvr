@@ -46,20 +46,21 @@ static void test_path_stem(void) {
 static void test_path_import_is_invalid(void) {
   const char* empty = "An import path can't have an empty component.";
   const char* dot = "An import path can't have a '.' component.";
-  static const struct {
+  const char* name = "An import path component must be a lowercase name.";
+  const struct {
     const char* path;
-    bool empty;
-    bool dot;
+    const char* want;
   } cases[] = {
-      {"x", false, false},  {"sub/x", false, false}, {"../x", false, false}, {"..", false, false},
-      {".x", false, false}, {"x.", false, false},    {"...", false, false},  {"", true, false},
-      {"/x", true, false},  {"x/", true, false},     {"a//b", true, false},  {".", false, true},
-      {"./x", false, true}, {"a/./b", false, true},  {"a/.", false, true},
+      {"x", NULL},  {"sub/x", NULL}, {"../x", NULL}, {"..", NULL},  {"x_1", NULL},
+      {"_x", NULL}, {"", empty},     {"/x", empty},  {"x/", empty}, {"a//b", empty},
+      {".", dot},   {"./x", dot},    {"a/./b", dot}, {"a/.", dot},  {".x", name},
+      {"x.", name}, {"...", name},   {"a.b", name},  {"X", name},   {"sub/Xy", name},
+      {"1x", name}, {"a-b", name},
   };
   for (size_t i = 0; i < COUNTOF(cases); ++i) {
     const char* path = cases[i].path;
     const char* got = path_import_is_invalid((const u8*)path, (u32)strlen(path));
-    const char* want = cases[i].empty ? empty : cases[i].dot ? dot : NULL;
+    const char* want = cases[i].want;
     if (got && want ? strcmp(got, want) != 0 : got != want) {
       printf("path_import_is_invalid(\"%s\") = %s, want %s\n", path, got ? got : "NULL",
              want ? want : "NULL");

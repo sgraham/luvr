@@ -1,0 +1,4 @@
+# CRET: 1
+# CERR: {self}:4:8:import "prelude"
+# CERR: {ssss}            ^ error: A module can't be named 'prelude'.
+import "prelude"

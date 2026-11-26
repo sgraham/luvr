@@ -24,6 +24,19 @@ const char* path_stem(const char* path, u32* len) {
   return path + dir;
 }
 
+static bool path_component_is_lowercase_name(const u8* part, u32 len) {
+  if (part[0] >= '0' && part[0] <= '9') {
+    return false;
+  }
+  for (u32 i = 0; i < len; ++i) {
+    u8 c = part[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+      return false;
+    }
+  }
+  return true;
+}
+
 const char* path_import_is_invalid(const u8* path, u32 len) {
   ASSERT(!memchr(path, '\\', len));
   u32 start = 0;
@@ -40,6 +53,13 @@ const char* path_import_is_invalid(const u8* path, u32 len) {
     // only be another way to write the same import.
     if (part_len == 1 && path[start] == '.') {
       return "An import path can't have a '.' component.";
+    }
+    // A module's symbols are prefixed with its path, and types are
+    // capitalized, so lowercase components can't be mistaken for a type or
+    // another module.
+    bool is_dotdot = part_len == 2 && path[start] == '.' && path[start + 1] == '.';
+    if (!is_dotdot && !path_component_is_lowercase_name(path + start, part_len)) {
+      return "An import path component must be a lowercase name.";
     }
     if (end == len) {
       return NULL;

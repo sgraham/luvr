@@ -5093,6 +5093,11 @@ static u32 import_module(Parser* p, const u8* path, u32 len, SrcLoc at) {
   u32 joined_len = name_len;
   name_len = path_normalize(name_buf, name_len);
   memset(name_buf + name_len, 0, joined_len - name_len);
+  // The prelude's symbols are prefixed with its name, as an imported
+  // module's are.
+  if (name_len == strlen("prelude") && memcmp(name_buf, "prelude", name_len) == 0) {
+    error_at(p, at, "A module can't be named 'prelude'.");
+  }
   NameId name = lex_intern_padded(ctx, name_buf, name_len);
   const u32* idx = namemap_find(&ctx->module_ids, name);
   if (idx) {
@@ -5135,7 +5140,8 @@ static void parse_module(Parser* p) {
     }
     u32 len;
     const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-    u32 idx = import_module(p, s, len, p->ls.pos.t.loc);
+    SrcLoc path_at = p->ls.pos.t.loc;
+    u32 idx = import_module(p, s, len, path_at);
     // The module is bound to the last component of its path.
     u32 base = path_dir_len(s, len);
     NameId name = lex_intern_padded(p->ls.ctx, s + base, len - base);
@@ -5143,6 +5149,9 @@ static void parse_module(Parser* p) {
     if (optional(p, TK_AS)) {
       SrcLoc at;
       name = expect_name(p, "module alias", &at);
+    } else if (name_of(p, name)->kind != TK_NAME) {
+      error_at(p, path_at, "Module name '%.*s' is a keyword.", (int)(len - base),
+               (const char*)s + base);
     }
     declare_global(p, name, GK_MODULE);
     namemap_set(p->ls.ctx, &p->mod->imports, name, idx);
