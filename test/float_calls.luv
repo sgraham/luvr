@@ -1,0 +1,38 @@
+# OUT: 2.5
+# OUT: 1.5
+# OUT: -0.25
+# OUT: 0.4
+# OUT: 2.5
+# OUT: 4.0
+
+# Floats as parameters and results, mixed with integers, and as fields of
+# structs passed and returned by value.
+def f64 twice(f64 x):
+    return x * 2
+
+def f32 half(f32 x):
+    return x / 2
+
+def f64 mix(int n, f64 x, f32 y, i8 k):
+    return x + cast f64(y) + cast f64(n + cast int(k))
+
+struct Vec2:
+    f64 x
+    f32 y
+
+def Vec2 make(f64 a):
+    return Vec2(.x=a, .y=1.5)
+
+def f64 sum(Vec2 v):
+    return v.x + cast f64(v.y)
+
+def int main():
+    print twice(1.25)
+    f32 h = half(3)
+    print h
+    print mix(1, 0.5, 0.25, -2)
+    print twice(twice(0.1))
+    v = make(2.5)
+    print v.x
+    print sum(v)
+    return 0
