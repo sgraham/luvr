@@ -1,0 +1,46 @@
+# OUT: 15
+# OUT: 3
+# OUT: 12
+# OUT: 7
+# OUT: 101
+# OUT: 30
+# OUT: 7
+# OUT: 3
+
+# Augmented assignment to each kind of target. The target is loaded before the
+# value is evaluated.
+struct Point:
+    int x
+    int y
+
+total = 1
+
+def int set_x(*Point p, int x):
+    p.x = x
+    return 0
+
+def int main():
+    i = 10
+    i += 5
+    print i
+    i64 j = 6
+    j -= 3
+    print j
+    j *= 4
+    print j
+    k = 5
+    k ^= 2
+    print k
+    p = Point(.x=1, .y=2)
+    pp = &p
+    pp.x += 100
+    print p.x
+    [3]int a = [10, 20, 30]
+    a[0] += a[1]
+    print a[0]
+    global total
+    total += 6
+    print total
+    p.x += set_x(&p, 50)
+    print p.x - 98
+    return 0

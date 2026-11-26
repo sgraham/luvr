@@ -1724,8 +1724,8 @@ static Ref emit_agg_addr(Parser* p, const ExpDesc* e, SrcLoc at) {
 }
 #endif
 
-static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e, SrcLoc at) {
 #if EMIT
+static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e, SrcLoc at) {
   if (type_is_aggregate(p, dst->type)) {
     Ref src = emit_agg_addr(p, e, at);
     il_copy(&p->il, emit_addr(p, dst), src, type_agg(p, dst->type));
@@ -1733,11 +1733,9 @@ static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e,
   }
   Ref v = emit_to_ref(p, e, dst->type, at);
   il_emit(&p->il, OP_STORE, il_mem_type_of(p, dst->type), v, emit_addr(p, dst));
-#endif
 }
 
 static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, SrcLoc at) {
-#if EMIT
   Ref addr = il_slot_addr(&p->il, l->slot);
   if (type_is_aggregate(p, l->type)) {
     il_copy(&p->il, addr, emit_agg_addr(p, e, at), type_agg(p, l->type));
@@ -1745,6 +1743,22 @@ static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, Sr
   }
   Ref v = emit_to_ref(p, e, l->type, at);
   il_emit(&p->il, OP_STORE, il_type_of(p, l->type, at), v, addr);
+}
+#endif
+
+// Stores v to the local loc, or if loc is NULL or a global, to the address that
+// dst is.
+static void emit_store(Parser* p,
+                       const Local* loc,
+                       const ExpDesc* dst,
+                       const ExpDesc* v,
+                       SrcLoc at) {
+#if EMIT
+  if (loc && loc->kind != LK_GLOBAL) {
+    emit_assign_to_local(p, loc, v, at);
+  } else {
+    emit_assign_to_addr(p, dst, v, at);
+  }
 #endif
 }
 
@@ -3764,19 +3778,26 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           error_at(p, p->ls.pos.t.loc, "Cannot assign a new value to a constant.");
         }
       }
-      bool not_augassign = T(p) == TK_EQ;
-      bool declares = exp.shape == SH_NAME && not_augassign;
-      bool stores_field = not_augassign && exp.kind == EK_ADDR;
-      if (EMIT && !toplevel && !declares && !stores_field) {
+      bool augmented = T(p) != TK_EQ;
+      bool declares = exp.shape == SH_NAME && !augmented;
+      bool stores = exp.kind == EK_LOCAL || exp.kind == EK_ADDR;
+      if (EMIT && !toplevel && !declares && !stores) {
         error_at(p, at, "This statement isn't supported yet.");
       }
       TokenKind op_kind = T(p);
+      BinOpr op = augmented ? augassign_opr[op_kind - TK_PLUSEQ] : OPR_NONE;
       SrcLoc op_at = p->ls.pos.t.loc;
+      // An augmented assignment loads the target before the value is
+      // evaluated, like the left operand of a binary operator.
+      ExpDesc cur = exp;
+      if (augmented) {
+        emit_infix(p, &cur, at);
+      }
       next(p);
       SrcLoc value_at = p->ls.pos.t.loc;
       // A new local takes the value's type, even if it shadows a global
       // function.
-      bool to_existing = not_augassign && (!declares || loc);
+      bool to_existing = !augmented && (!declares || loc);
       ExpDesc v;
       p->const_context = toplevel || (declares && name_of(p, name)->is_const);
       u32 data_mark = p->ls.ctx->data.num;
@@ -3784,10 +3805,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       p->const_context = false;
       if (to_existing) {
         check_assign(p, exp.type, &v, value_at);
-      } else if (!not_augassign) {
+      } else if (augmented) {
         // The result is always the target's type, so it doesn't need to be
         // checked again.
-        BinOpr op = augassign_opr[op_kind - TK_PLUSEQ];
         type_for_arith(p, op, exp.type, v.type, op_at);
         if (v.kind == EK_CONST) {
           check_const_operands(p, op, exp.type, &exp, at, &v, value_at, op_at);
@@ -3815,14 +3835,13 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
             loc->type = t;
             emit_local_slot(p, loc, at);
           }
-          if (loc->kind == LK_GLOBAL) {
-            emit_assign_to_addr(p, &exp, &v, value_at);
-          } else {
-            emit_assign_to_local(p, loc, &v, value_at);
-          }
+          emit_store(p, loc, &exp, &v, value_at);
         }
-      } else if (stores_field) {
-        emit_assign_to_addr(p, &exp, &v, value_at);
+      } else if (augmented) {
+        emit_arith(p, op, exp.type, &cur, at, &v, value_at, op_at);
+        emit_store(p, loc, &exp, &cur, value_at);
+      } else {
+        emit_store(p, NULL, &exp, &v, value_at);
       }
       return;
     }
