@@ -4382,14 +4382,19 @@ static void foreign_decl(Parser* p, bool is_method) {
 // locals.
 static void emit_func_begin(Parser* p, NameId name, bool is_method, SrcLoc name_at) {
 #if EMIT
-  if (is_method) {
-    error_at(p, name_at, "Methods aren't supported yet.");
+  if (is_method && p->receiver.u == TY_UNKNOWN) {
+    error_at(p, name_at, "Methods of generic and builtin types aren't supported yet.");
   }
   if (p->func_depth > 1) {
     error_at(p, name_at, "Nested functions aren't supported yet.");
   }
-  GlobalInfo info = module_global_info(p->mod, name);
-  SymId sym = p->global_funcs.items[info >> GLOBAL_KIND_BITS].sym;
+  SymId sym;
+  if (is_method) {
+    sym = method_find(p, p->receiver, name)->sym;
+  } else {
+    GlobalInfo info = module_global_info(p->mod, name);
+    sym = p->global_funcs.items[info >> GLOBAL_KIND_BITS].sym;
+  }
   if (type_is_aggregate(p, p->ret_type) && type_has_layout(p, p->ret_type)) {
     il_reset(&p->il, sym, IT_AGG);
     p->il.ret_agg = type_agg(p, p->ret_type);
