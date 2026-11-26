@@ -116,3 +116,25 @@ methods in separate namespaces (`s.len` the field, `s.len()` the method) was
 considered, but it's mostly useful for getters, which the `_field`
 convention already covers. It would also make a function-pointer field
 uncallable as `s.f()`, and it's confusing to read.
+
+## Receivers that can't be modified
+
+Decided 2026-11-26. A method can only be called on an assignable value
+or through a pointer. Calling one on a parameter or a constant is an error,
+in the same way that assigning to them is, because `self` is a pointer and
+the method could modify them through it. The workaround is an explicit copy
+(`copy = stuff`, then `copy.f()`), or taking a `*T` parameter.
+
+This also means that a struct parameter's memory is never written while the
+callee runs, so it can be passed by reference without a defensive copy, and
+loads from it can be reused across calls. Copying into a temporary for each
+call would hide the cost, and passing the address anyway would be unsound
+(constant data, or the caller's memory).
+
+Possible relaxation: methods are defined before use, so whether a method
+modifies self (assigns through it, takes `&self`, passes it as a `*T`, or
+calls a method that does) is known at every call. Read-only methods could
+then be called on parameters and constants. The cost is that changing a
+method's body to modify self would break its callers without any change to
+its signature. It's left until the restriction is shown to be a problem
+(getters on parameters, like `r.width()` in `def int area(Rect r)`).

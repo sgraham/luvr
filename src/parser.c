@@ -3106,7 +3106,7 @@ static u32 call_args(Parser* p, TypeId callee, u32 skip, CallEmit* call) {
                    type_str(p, e.type), type_str(p, t));
         }
         check_const_conversion(p, t, &e, arg_at);
-        emit_arg(p, call, num_args - 1, &e, t, arg_at);
+        emit_arg(p, call, skip + num_args - 1, &e, t, arg_at);
       }
       if (!optional(p, TK_COMMA)) {
         break;
@@ -3268,6 +3268,20 @@ static void emit_cast(Parser* p, ExpDesc* e, TypeId t, bool is_bitcast, SrcLoc a
 
 // Makes e its field f, or isn't emitted if f is NULL. e's type is still the
 // struct, or a pointer to it.
+#if EMIT
+// Returns the address of the struct that e, a pointer, auto-dereferences to.
+// Each pointer but the last is loaded through to get the next one, and the
+// last one's value is the address.
+static Ref emit_through_pointers(Parser* p, const ExpDesc* e, SrcLoc at) {
+  Ref ptr = emit_to_ref(p, e, e->type, at);
+  for (TypeId t = type_info(p, e->type)->pointee; type_is_pointer(p, t);
+       t = type_info(p, t)->pointee) {
+    ptr = il_emit(&p->il, OP_LOAD, IT_I64, ptr, 0);
+  }
+  return ptr;
+}
+#endif
+
 static void emit_field(Parser* p, ExpDesc* e, const Field* f, SrcLoc at) {
 #if EMIT
   if (!f) {
@@ -3275,13 +3289,7 @@ static void emit_field(Parser* p, ExpDesc* e, const Field* f, SrcLoc at) {
     return;
   }
   if (type_is_pointer(p, e->type)) {
-    // Each pointer but the last is loaded through to get the next one, and the
-    // last one's value is the base.
-    Ref ptr = emit_to_ref(p, e, e->type, at);
-    for (TypeId t = type_info(p, e->type)->pointee; type_is_pointer(p, t);
-         t = type_info(p, t)->pointee) {
-      ptr = il_emit(&p->il, OP_LOAD, IT_I64, ptr, 0);
-    }
+    Ref ptr = emit_through_pointers(p, e, at);
     e->kind = EK_ADDR;
     e->base = ptr;
     e->offset = f->offset;
@@ -3429,6 +3437,25 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   }
 }
 
+// Passes the address of e, the receiver, as self, and makes e the method to
+// call. A receiver that's reached through pointers is already in memory. The
+// address of an assignable struct can be taken, but parameters and constants
+// can't be modified through it.
+static void emit_self_arg(Parser* p, CallEmit* call, ExpDesc* e, const Method* method, SrcLoc at) {
+#if EMIT
+  TypeId self_type = p->param_types.items[type_info(p, method->type)->first_param];
+  bool through_pointer = type_is_pointer(p, e->type);
+  if (method->sym.u == FUNC_NO_SYM || !type_is_pointer(p, self_type) ||
+      (!through_pointer && exp_part_shape(e) != SH_LVALUE)) {
+    error_at(p, at, "This method call isn't supported yet.");
+  }
+  Ref self = through_pointer ? emit_through_pointers(p, e, at) : emit_agg_addr(p, e, at);
+  call->args[call->first] = self;
+  e->kind = EK_FUNC;
+  e->sym = method->sym;
+#endif
+}
+
 // Makes e, the receiver, the result of calling method on it.
 static void method_call(Parser* p, ExpDesc* e, const Method* method, SrcLoc name_at) {
   if (!method->has_self) {
@@ -3436,16 +3463,14 @@ static void method_call(Parser* p, ExpDesc* e, const Method* method, SrcLoc name
     error_at(p, name_at, "Static method '%.*s' can't be called on a value.", (int)n->len,
              (const char*)n->str);
   }
-  if (EMIT) {
-    error_at(p, name_at, "Method calls aren't supported yet.");
-  }
   TypeId ret = type_info(p, method->type)->ret;
   CallEmit call;
   emit_call_begin(p, &call, ret);
-  call_args(p, method->type, /*skip=*/1, &call);
+  emit_self_arg(p, &call, e, method, name_at);
+  u32 num_args = call_args(p, method->type, /*skip=*/1, &call);
   e->shape = SH_CALL;
   e->type = ret;
-  emit_unsupported(e);
+  emit_call_end(p, &call, e, num_args + 1, name_at);
 }
 
 // postfix -> { '.' name | '.' TypeName | '[' index_or_slice ']' | '(' args ')'
