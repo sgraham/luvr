@@ -3412,11 +3412,11 @@ static void postfix(Parser* p, ExpDesc* e) {
         if (type_is_struct(p, base) && !f && T(p) != TK_LPAREN) {
           field_error(p, base, name, name_at);
         }
-        // Emitting changes e's kind, so the shape is found first. Methods
-        // aren't typed yet, so a parameter whose type isn't known, such as
-        // self, might be a pointer.
+        // Emitting changes e's kind, so the shape is found first. self isn't
+        // typed yet for generic and builtin receivers, but it will be a
+        // pointer, so its fields are assignable.
         bool through_pointer =
-            type_is_pointer(p, e->type) || (e->shape == SH_PARAM && !type_is_struct(p, e->type));
+            type_is_pointer(p, e->type) || (e->shape == SH_PARAM && e->type.u == TY_UNKNOWN);
         Shape shape = through_pointer ? SH_LVALUE : exp_part_shape(e);
         emit_field(p, e, f, name_at);
         e->shape = shape;

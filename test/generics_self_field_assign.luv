@@ -1,0 +1,18 @@
+# OUT: 2
+
+# self isn't typed yet in a method on a generic struct, but its fields are
+# still assignable, since it will be a pointer.
+struct Counter{T}:
+    T last
+    int count
+
+on Counter{T} def add(self, T v):
+    self.last = v
+    self.count = self.count + 1
+
+def int main():
+    Counter{int} c = Counter{int}(.last=0, .count=0)
+    c.add(3)
+    c.add(4)
+    print c.count
+    return 0
