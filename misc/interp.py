@@ -146,7 +146,12 @@ FLOAT_FORMATS = {"f32": "<f", "f64": "<d"}
 
 
 def round_to_f32(v):
-    return struct.unpack("<f", struct.pack("<f", v))[0]
+    # struct raises for a value that rounds to an infinity, where IEEE 754
+    # gives the infinity.
+    try:
+        return struct.unpack("<f", struct.pack("<f", v))[0]
+    except OverflowError:
+        return math.copysign(math.inf, v)
 
 
 def load(mem, addr, ty):
@@ -450,6 +455,9 @@ def run(prog, f, args, result_dst):
             if signed and v >= 1 << (bits - 1):
                 v -= 1 << bits
             values[ins.result] = v
+            continue
+        if ins.op == "FTRUNC":
+            values[ins.result] = round_to_f32(value_of(values, prog, ins.operands[0]))
             continue
         if ins.op == "FEXT":
             # A constant operand is read as an f64, so it's rounded here.

@@ -3159,11 +3159,17 @@ static void struct_args(Parser* p, ExpDesc* e) {
 }
 
 // Makes e the cast of e to t. A cast between pointers and u64 doesn't change e.
-// Casts to or from floats aren't emitted yet.
+// Casts between integers and floats aren't emitted yet.
 static void emit_cast(Parser* p, ExpDesc* e, TypeId t, bool is_bitcast, SrcLoc at) {
 #if EMIT
   TypeId from = e->type;
   if (is_bitcast || from.u == t.u) {
+    return;
+  }
+  if (type_is_float(from) && type_is_float(t)) {
+    IlOp op = t.u == TY_F64 ? OP_FEXT : OP_FTRUNC;
+    e->ref = il_emit(&p->il, op, il_type_of(p, t, at), emit_to_ref(p, e, from, at), 0);
+    e->kind = EK_REF;
     return;
   }
   if (!type_is_integer(from) || !type_is_integer(t)) {

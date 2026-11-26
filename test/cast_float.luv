@@ -1,0 +1,26 @@
+# OUT: 0.100000
+# OUT: 123456792.000000
+# OUT: 0.100000
+# OUT: inf
+# OUT: -inf
+# OUT: 3.140000
+# OUT: true
+# OUT: false
+
+# Casts between f32 and f64 that aren't constants. f64 to f32 rounds, and
+# gives an infinity when it's out of range.
+def int main():
+    f64 tenth = 0.1
+    print cast f32(tenth)
+    f64 big = 123456789
+    print cast f32(big)
+    f32 small = 0.1
+    print cast f64(small)
+    f64 huge = 1e300
+    print cast f32(huge)
+    print cast f32(-huge)
+    f32 pi = 3.14
+    print cast f64(pi)
+    print cast f64(small) == cast f64(cast f32(tenth))
+    print cast f64(small) == tenth
+    return 0

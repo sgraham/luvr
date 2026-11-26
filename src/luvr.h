@@ -844,6 +844,8 @@ typedef enum IlOperand {
 //
 // FEXT extends an f32 to f64.
 //
+// FTRUNC rounds an f64 to f32, giving an infinity if it's out of range.
+//
 // TRUNC is the low 32 bits of an i64.
 #define IL_OPS(X)              \
   X(ADD, REF, REF, true)       \
@@ -876,6 +878,7 @@ typedef enum IlOperand {
   X(SEXT16, REF, NONE, true)   \
   X(ZEXT16, REF, NONE, true)   \
   X(FEXT, REF, NONE, true)     \
+  X(FTRUNC, REF, NONE, true)   \
   X(TRUNC, REF, NONE, true)    \
   X(NEG, REF, NONE, true)      \
   X(SLOT, SLOT, NONE, true)    \
