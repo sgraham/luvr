@@ -383,6 +383,9 @@ def run(prog, f, args, result_dst):
             a, b = (unsigned(BITS[ins.ty], value_of(values, prog, o)) for o in ins.operands)
             values[ins.result] = int(COMPARE[UNSIGNED_COMPARE[ins.op]](a, b))
             continue
+        if ins.op == "NEG":
+            values[ins.result] = wrap(ins.ty, -value_of(values, prog, ins.operands[0]))
+            continue
         if ins.op in NARROW:
             bits, signed = NARROW[ins.op]
             v = unsigned(bits, value_of(values, prog, ins.operands[0]))

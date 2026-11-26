@@ -1870,7 +1870,6 @@ static Ref emit_extend_narrow(Parser* p, Ref v, TypeId t) {
 }
 #endif
 
-
 // Prints e without ending the line.
 static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
 #if EMIT
@@ -2103,6 +2102,33 @@ static void emit_addr_of(Parser* p, ExpDesc* e) {
 #endif
 }
 
+// Makes e the unary '-' or '~' of the integer e, unless it can't be emitted
+// yet.
+static void emit_unary_arith(Parser* p, bool neg, ExpDesc* e, SrcLoc at) {
+#if EMIT
+  TypeId t = e->type;
+  if (!type_is_integer(t)) {
+    exp_mark_unsupported(e);
+    return;
+  }
+  IlType ty = il_type_of(p, t, at);
+  Ref v = emit_to_ref(p, e, t, at);
+  if (neg) {
+    v = emit_extend_narrow(p, il_emit(&p->il, OP_NEG, ty, v, 0), t);
+  } else {
+    // Only the bits of t's width are flipped, so that a narrow unsigned
+    // value stays zero-extended.
+    int bits = type_int_bits(t);
+    u64 mask = type_is_unsigned(t) && bits < 32 ? (1ull << bits) - 1 : ~0ull;
+    v = il_emit(&p->il, OP_XOR, ty, v, il_const_int(&p->il, ty, mask));
+  }
+  e->kind = EK_REF;
+  e->ref = v;
+#else
+  exp_mark_non_const(e);
+#endif
+}
+
 // Unary '-' or '~', which give the operand's type. Constants are folded.
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, SrcLoc at) {
   TypeId t = e->type;
@@ -2110,14 +2136,15 @@ static void unary_arith(Parser* p, bool neg, ExpDesc* e, SrcLoc at) {
     emit_unsupported(e);
     return;
   }
-  if (neg && !type_is_integer(t) && !type_is_float(t)) {
-    error_at(p, at, "'-' expects a number, not %s.", type_str(p, t));
+  bool is_signed_int = type_is_integer(t) && !type_is_unsigned(t);
+  if (neg && !is_signed_int && !type_is_float(t)) {
+    error_at(p, at, "'-' expects a signed integer or a float, not %s.", type_str(p, t));
   }
   if (!neg && !type_is_integer(t)) {
     error_at(p, at, "'~' expects an integer, not %s.", type_str(p, t));
   }
   if (e->kind != EK_CONST) {
-    emit_unsupported(e);
+    emit_unary_arith(p, neg, e, at);
     return;
   }
   if (type_is_float(t)) {

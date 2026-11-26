@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:11:    print -x
+# CERR: {ssss}                ^ error: '-' expects a signed integer or a float, not u32.
+def int main():
+    u32 x = 6
+    print -x
+    return 0
