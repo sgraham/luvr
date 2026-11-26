@@ -125,11 +125,14 @@ in the same way that assigning to them is, because `self` is a pointer and
 the method could modify them through it. The workaround is an explicit copy
 (`copy = stuff`, then `copy.f()`), or taking a `*T` parameter.
 
-This also means that a struct parameter's memory is never written while the
-callee runs, so it can be passed by reference without a defensive copy, and
-loads from it can be reused across calls. Copying into a temporary for each
-call would hide the cost, and passing the address anyway would be unsound
-(constant data, or the caller's memory).
+For a parameter this is only a language rule, because parameters are
+immutable. Every target ABI gives the callee its own copy of a by-value
+aggregate (a pointer to a caller-made copy on Win64 and AAPCS64, stack memory
+on SysV, or the callee's slot for one passed in registers), so passing its
+address as self would be safe. For constant data it would be unsound.
+Copying into a temporary for each call would hide the cost. Whether
+parameters should be mutable like locals, which would remove the parameter
+case, is an open question.
 
 Possible relaxation: methods are defined before use, so whether a method
 modifies self (assigns through it, takes `&self`, passes it as a `*T`, or
