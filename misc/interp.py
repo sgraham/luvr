@@ -234,6 +234,8 @@ def parse(text):
                 words = line.split()
                 ret = words[1] if len(words) == 3 else None
                 f = Func(words[-1][1:], ret)
+                if f.name in funcs:
+                    raise Error(f"function @{f.name} is defined twice")
                 funcs[f.name] = f
             elif f is None:
                 raise Error("expected 'func'")
