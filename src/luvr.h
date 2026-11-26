@@ -831,7 +831,7 @@ typedef enum IlOperand {
 // either width. DIV and REM truncate toward zero. Dividing by zero, or the
 // minimum signed value by -1, isn't defined. SEXT8, ZEXT8, SEXT16 and ZEXT16
 // extend the low bits of an i32 to all of it, so that narrow arithmetic wraps
-// at its own width.
+// at its own width. FEXT extends an f32 to f64.
 #define IL_OPS(X)              \
   X(ADD, REF, REF, true)       \
   X(SUB, REF, REF, true)       \
@@ -862,6 +862,7 @@ typedef enum IlOperand {
   X(ZEXT8, REF, NONE, true)    \
   X(SEXT16, REF, NONE, true)   \
   X(ZEXT16, REF, NONE, true)   \
+  X(FEXT, REF, NONE, true)     \
   X(NEG, REF, NONE, true)      \
   X(SLOT, SLOT, NONE, true)    \
   X(LOAD, REF, NONE, true)     \

@@ -144,6 +144,10 @@ def alloc(mem, size, align):
 FLOAT_FORMATS = {"f32": "<f", "f64": "<d"}
 
 
+def round_to_f32(v):
+    return struct.unpack("<f", struct.pack("<f", v))[0]
+
+
 def load(mem, addr, ty):
     if ty in FLOAT_FORMATS:
         fmt = FLOAT_FORMATS[ty]
@@ -409,6 +413,10 @@ def run(prog, f, args, result_dst):
             if signed and v >= 1 << (bits - 1):
                 v -= 1 << bits
             values[ins.result] = v
+            continue
+        if ins.op == "FEXT":
+            # A constant operand is read as an f64, so it's rounded here.
+            values[ins.result] = round_to_f32(value_of(values, prog, ins.operands[0]))
             continue
         if ins.op == "SEXT32":
             values[ins.result] = wrap("i32", value_of(values, prog, ins.operands[0]))
