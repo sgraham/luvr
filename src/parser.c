@@ -27,6 +27,7 @@ typedef struct GlobalVar GlobalVar;
 typedef struct Local Local;
 typedef struct LogicalJoin LogicalJoin;
 typedef struct Loop Loop;
+typedef struct Method Method;
 typedef struct NamedConst NamedConst;
 typedef struct Parser Parser;
 typedef struct Targets Targets;
@@ -193,6 +194,13 @@ struct GlobalFunc {
 
 #define FUNC_NO_SYM UINT32_MAX
 
+// A method of a struct. receiver is the struct, not self's pointer type.
+struct Method {
+  TypeId receiver;
+  NameId name;
+  TypeId type;
+};
+
 // A module's global variable. data is its storage.
 struct GlobalVar {
   TypeId type;
@@ -257,6 +265,10 @@ struct Parser {
   VEC(TypeInfo) types;  // by TypeId, with unused entries for the FixedTypes
   VEC(TypeId) param_types;
   VEC(Field) fields;
+  VEC(Method) methods;
+  // Each method, by a hash of its receiver and name. The slot's val is its
+  // index in methods.
+  HashTable method_index;
 #if EMIT
   // The image of the struct whose body is being parsed, and its relocations.
   VEC(u8) image;
@@ -4162,6 +4174,32 @@ static void emit_func_sym(Parser* p, GlobalFunc* gf, NameId name) {
 #endif
 }
 
+// Returns the slot of receiver's method named name, or the empty slot where it
+// would be inserted.
+static HashSlot* method_slot(Parser* p, TypeId receiver, NameId name, u32 tag) {
+  HashSlot* slot = hashtable_first(&p->method_index, tag);
+  for (; slot->tag != 0; slot = hashtable_next(&p->method_index, slot, tag)) {
+    const Method* method = &p->methods.items[slot->val];
+    if (method->receiver.u == receiver.u && method->name.u == name.u) {
+      break;
+    }
+  }
+  return slot;
+}
+
+static void declare_method(Parser* p, TypeId receiver, NameId name, SrcLoc at, TypeId ft) {
+  u32 tag = hashtable_tag_of_key((u64)receiver.u << 32 | name.u);
+  HashSlot* slot = method_slot(p, receiver, name, tag);
+  if (slot->tag != 0) {
+    const Name* n = name_of(p, name);
+    error_at(p, at, "Duplicate method '%.*s' on %s.", (int)n->len, (const char*)n->str,
+             type_str(p, receiver));
+  }
+  u32 idx = p->methods.num;
+  *vec_push(p->ls.ctx, &p->methods) = (Method){.receiver = receiver, .name = name, .type = ft};
+  hashtable_insert(p->ls.ctx, &p->method_index, slot, tag, idx);
+}
+
 // funcsig -> [type] name '(' [param {',' param}] ')'
 // param   -> type name | name    (bare name: a method's first parameter)
 //
@@ -4209,6 +4247,10 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
     } else {
       declare_if_new(p, name, at, ft);
     }
+  } else if (type_is_pointer(p, p->self_type)) {
+    // Methods of generic and builtin receivers aren't recorded, because their
+    // self_type isn't known.
+    declare_method(p, type_info(p, p->self_type)->pointee, name, at, ft);
   }
   if (T(p) == TK_LBRACE) {
     error_at(p, p->ls.pos.t.loc, "Functions can't have type parameters, only structs.");
@@ -5101,7 +5143,9 @@ static void parse_end(Parser* p) {
   free(p->types.items);
   free(p->param_types.items);
   free(p->fields.items);
+  free(p->methods.items);
   hashtable_free(&p->array_types);
+  hashtable_free(&p->method_index);
   free(p);
 }
 
@@ -5127,7 +5171,7 @@ void PARSE_FILE(Ctx* ctx, const char* path) {
   memset(p->types.items, 0, TY_NUM_FIXED * sizeof(TypeInfo));
   p->types.num = TY_NUM_FIXED;
   vec_reserve(ctx, &p->param_types, INITIAL_TYPES);
-  if (!hashtable_init(&p->array_types, 64)) {
+  if (!hashtable_init(&p->array_types, 64) || !hashtable_init(&p->method_index, 64)) {
     ctx_error(ctx, path, NULL, (SrcLoc){0}, "Out of memory.");
   }
 #if EMIT
