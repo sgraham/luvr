@@ -124,6 +124,46 @@ static void il_init_test(IlFunc* f, Ctx* ctx, IlType ret) {
   il_reset(f, lex_intern_safe(ctx, "f"), ret);
 }
 
+static void test_float_as_str_precise_slow(void) {
+  static const struct {
+    double v;
+    bool is_f32;
+    const char* want;
+  } cases[] = {
+      {0.1, false, "0.1"},
+      {1, false, "1.0"},
+      {300, false, "300.0"},
+      {-0.0, false, "-0.0"},
+      {0.0001, false, "0.0001"},
+      {1e-5, false, "1e-05"},
+      {1e15, false, "1000000000000000.0"},
+      {1e16, false, "1e+16"},
+      {1.0 / 3, false, "0.3333333333333333"},
+      {5e-324, false, "5e-324"},
+      {-1.7976931348623157e308, false, "-1.7976931348623157e+308"},
+      // A power of two, where the nearest 16 digits don't read back but the
+      // next 16 digits up do.
+      {0x1p-1017, false, "7.120236347223045e-307"},
+      {INFINITY, false, "inf"},
+      {-INFINITY, false, "-inf"},
+      {-NAN, false, "nan"},
+      {0.1f, true, "0.1"},
+      {1234567, true, "1234567.0"},
+      {16777216, true, "1.6777216e+07"},
+      {123456789, true, "1.2345679e+08"},
+      {1.0f / 3, true, "0.33333334"},
+  };
+  for (size_t i = 0; i < COUNTOF(cases); ++i) {
+    char got[FLOAT_STR_MAX];
+    float_as_str_precise_slow(got, cases[i].v, cases[i].is_f32);
+    if (strcmp(got, cases[i].want) != 0) {
+      printf("float_as_str_precise_slow(%.17g, %d) = %s, want %s\n", cases[i].v, cases[i].is_f32,
+             got, cases[i].want);
+      ++failures;
+    }
+  }
+}
+
 static void test_il_const_int(void) {
   Ctx ctx;
   CHECK(ctx_init(&ctx));
@@ -440,6 +480,7 @@ int main(void) {
   test_path_stem();
   test_path_import_is_invalid();
   test_path_normalize();
+  test_float_as_str_precise_slow();
   test_il_const_int();
   test_il_dump();
   test_il_blocks();

@@ -1,9 +1,9 @@
-# OUT: 3.000000
-# OUT: -2.000000
-# OUT: 255.000000
-# OUT: 4294967295.000000
-# OUT: 18446744073709551616.000000
-# OUT: 16777216.000000
+# OUT: 3.0
+# OUT: -2.0
+# OUT: 255.0
+# OUT: 4294967295.0
+# OUT: 1.8446744073709552e+19
+# OUT: 1.6777216e+07
 # OUT: 3
 # OUT: -3
 # OUT: 127
@@ -16,7 +16,7 @@
 # OUT: 0
 # OUT: 2
 # OUT: 2147483647
-# OUT: 1152921642045800448.000000
+# OUT: 1.1529216e+18
 
 # Casts between integers and floats that aren't constants. Floats are
 # truncated toward zero, and out of range values saturate, with NaN giving 0.

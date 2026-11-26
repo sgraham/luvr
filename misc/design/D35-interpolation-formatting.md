@@ -145,28 +145,42 @@ of a struct with no `__str__` uses the debug view by default.
 
 ## Float formatting
 
-Floats are currently formatted in two ways:
+Decided 2026-11-26. `print`, `\(f)`, error messages and IL dumps all format
+an f64 as Python's `repr()` does: the shortest digits that read back as the
+same value, in fixed notation for decimal exponents from -4 to 15 and with an
+exponent otherwise. So `0.1`, `300.0`, `0.0001`, `10000000000.0`, `1e-05`,
+`1e+16`, `5e-324`, `inf`, `-inf`, `nan` and `-0.0`. An integral value always
+has a `.0`, so it can't be mistaken for an integer in output, in errors, or
+in the IL, which needs it to tell constants apart.
 
-- The compiler (error messages, IL dumps) uses `float_as_str_precise_slow`
-  in ctx.c, the shortest form that reads back as the same value, found by
-  trying `%.*g` at each precision and reading it back with `strtod`.
-- The runtime's `print` uses `%f`, so `0.1` prints as `0.100000`. That
-  comes from the old luv60 test outputs, not from a decision.
+Python has no f32. An f32 gets the shortest digits that read back as the
+same f32 (`0.1`, not the f64 `0.10000000149011612`), laid out the same way,
+except that the exponent is used from `1e7` rather than `1e16`. An f32 only
+has about 7 significant digits, so a fixed `123456789.0` would print as
+`123456790.0` (the f32 is 123456792), padded with zeros that look like
+digits that aren't there. f32 `16777216` is the unlucky case that's exact
+but prints as `1.6777216e+07`.
 
-Open questions:
+The test interpreter uses `repr()` for f64. `float_as_str_precise_slow` in
+ctx.c finds the shortest digits by trying each precision with `%.*e` and
+reading back with `strtod`, plus the next digits up for the lopsided
+interval of a power of two.
 
-1. **The default format.** Should `print f` and `\(f)` use the shortest
-   exact form, as Python and JS do (`0.1`, `1e+300`)? The debug view
-   probably should either way.
-2. **The implementation.** Ryu (Ulf Adams, Apache 2.0 or Boost) gives the
-   shortest exact digits quickly, and the same code could be used in the
-   compiler and the runtime, so the two always agree. Alternatives with the
-   same guarantee are Dragonbox and Schubfach (used by Java since 19). All
-   of them use a table of powers of 10. Ryu has a smaller-table option
-   (`RYU_OPTIMIZE_SIZE`) that computes most of the table at run time.
-   zmij (https://github.com/vitaut/zmij) looks better and easier to use,
-   and has a plain C version.
-3. **Fixed precision** (`.2f`). libc `printf` on macOS, glibc, and MSVC
-   since 2019 rounds correctly, so the runtime could keep using it for
-   explicit precisions and use Ryu only for the shortest form. Ryu's own
-   fixed-precision printer (`d2fixed`) needs much larger tables.
+The C runtime will use zmij (MIT or Boost, `zmij.c` and `zmij-c.h`, about
+3,000 lines and 17 KB of tables), a fast shortest-digits library, and the
+compiler will share it in place of the slow helper. Its output is the same
+format except that it leaves off the `.0` and writes NaN with its sign bit as
+`-nan`, so those two are fixed up after it. The helper agreed with zmij and
+those two fix-ups on 7.2 million f64 and f32 values, including every power
+of two and its neighbours (checked 2026-11-26, not committed). zmij also has
+correctly rounded fixed precision (`zmij_write_fixed`, which matched macOS
+`printf("%.*f")` on a million values), `%e` and `%g`, which covers the float
+specs above without libc.
+
+Libraries considered (checked 2026-11-26): zmij, Schubfach and Ryu gave the
+same digits on 2 million values. Only their layout differs. Schubfach is
+C++ only and f64 only, and always uses an exponent (`3.e+02`). Ryu is C,
+but its public functions always use an exponent (`3E2`). Teju Jagua returns
+only digits and an exponent, which would suit doing the layout ourselves,
+but it only handles positive finite values and needs a more involved build.
+Dragonbox is C++.

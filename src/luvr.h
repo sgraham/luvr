@@ -460,6 +460,7 @@ typedef void (*AggDoneFn)(Ctx* ctx, AggId agg);
 #define RUNTIME_SYMS(X) \
   X(luv_print_i64)      \
   X(luv_print_u64)      \
+  X(luv_print_f32)      \
   X(luv_print_f64)      \
   X(luv_print_bool)     \
   X(luv_print_str)      \
@@ -543,13 +544,15 @@ void ctx_error_location(const Ctx* ctx, u32* line, u32* col);
 // result is a fixed string saying so.
 const char* ctx_err_str(Ctx* ctx, const char* fmt, ...);
 
-// %.17g is at most 24 chars, as in -2.2250738585072014e-308.
+// The longest is 24 chars, as in -2.2250738585072014e-308 or
+// -0.00012345678901234567.
 #define FLOAT_STR_MAX 32
 
-// Writes the shortest form of v that reads back as the same value, as an f32 if
-// is_f32 is set. It's found by trying each precision in turn, so it's slow.
-// There's always a '.' or an exponent, so that it can't be mistaken for an
-// integer.
+// Writes v as Python's repr() does: the shortest digits that read back as v,
+// as in 0.1, 300.0, 0.0001, 1e-05 and 1e+16. If is_f32 is set, the digits are
+// the shortest that read back as the f32, and an exponent is used from 1e7
+// rather than 1e16, since an f32 only has about 7 digits. The digits are found
+// by trying each precision in turn, so it's slow.
 void float_as_str_precise_slow(char buf[FLOAT_STR_MAX], double v, bool is_f32);
 
 // Records the error in ctx and longjmps to ctx->on_error.

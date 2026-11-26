@@ -1,9 +1,9 @@
-# OUT: 1.500000
-# OUT: 0.100000
-# OUT: 2.000000
-# OUT: 3.000000
-# OUT: -0.250000
-# OUT: 123456789.125000
+# OUT: 1.5
+# OUT: 0.1
+# OUT: 2.0
+# OUT: 3.0
+# OUT: -0.25
+# OUT: 123456789.125
 
 # f64 constants, locals, and printing them.
 def int main():

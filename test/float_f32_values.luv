@@ -1,10 +1,10 @@
-# OUT: 0.100000
-# OUT: 123456792.000000
-# OUT: 3.000000
-# OUT: 16777216.000000
+# OUT: 0.1
+# OUT: 1.2345679e+08
+# OUT: 3.0
+# OUT: 1.6777216e+07
 
-# f32 constants and locals are rounded to f32, and printing extends them to
-# f64.
+# f32 constants and locals are rounded to f32, and are printed with the fewest
+# digits that read back as the same f32.
 def int main():
     f32 a = 0.1
     print a

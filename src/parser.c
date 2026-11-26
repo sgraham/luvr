@@ -1888,6 +1888,8 @@ static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
       sym = SYM_luv_print_u64;
       break;
     case TY_F32:
+      sym = SYM_luv_print_f32;
+      break;
     case TY_F64:
       sym = SYM_luv_print_f64;
       break;
@@ -1907,9 +1909,6 @@ static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
   }
   if (type_is_integer(t)) {
     arg = emit_extend_if_necessary(p, arg, t);
-  }
-  if (t.u == TY_F32) {
-    arg = il_emit(&p->il, OP_FEXT, IT_F64, arg, 0);
   }
   il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), &arg, 1);
 #endif

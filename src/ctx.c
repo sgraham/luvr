@@ -69,28 +69,94 @@ const char* ctx_err_str(Ctx* ctx, const char* fmt, ...) {
   return s;
 }
 
+// Whether mant * 10^exp reads back as v.
+static bool float_reads_back(u64 mant, int exp, double v, bool is_f32) {
+  char s[FLOAT_STR_MAX];
+  snprintf(s, sizeof(s), "%" PRIu64 "e%d", mant, exp);
+  double back = strtod(s, NULL);
+  return is_f32 ? (float)back == (float)v : back == v;
+}
+
 void float_as_str_precise_slow(char buf[FLOAT_STR_MAX], double v, bool is_f32) {
-  for (int prec = 1;; ++prec) {
-    snprintf(buf, FLOAT_STR_MAX, "%.*g", prec, v);
-    double back = strtod(buf, NULL);
-    if (prec == 17 || (is_f32 ? (float)back == (float)v : back == v)) {
+  if (isnan(v)) {
+    strcpy(buf, "nan");
+    return;
+  }
+  if (isinf(v)) {
+    strcpy(buf, v < 0 ? "-inf" : "inf");
+    return;
+  }
+  // %.*e rounds to nearest, so the first precision whose digits read back as
+  // v is the shortest. The digits are kept as mant * 10^exp.
+  double mag = fabs(v);
+  u64 mant = 0;
+  int exp = 0;
+  for (int prec = 0;; ++prec) {
+    char sci[FLOAT_STR_MAX];
+    snprintf(sci, sizeof(sci), "%.*e", prec, mag);
+    mant = 0;
+    const char* s = sci;
+    for (; *s != 'e'; ++s) {
+      if (*s != '.') {
+        mant = mant * 10 + (u64)(*s - '0');
+      }
+    }
+    exp = atoi(s + 1) - prec;
+    if (float_reads_back(mant, exp, mag, is_f32) || prec == 16) {
+      break;
+    }
+    // When v is a power of two, the next float down is closer than the next
+    // one up, so the nearest digits can be just too low while the next digits
+    // up still read back as v.
+    if (strtod(sci, NULL) < mag && float_reads_back(mant + 1, exp, mag, is_f32)) {
+      ++mant;
       break;
     }
   }
-  // %g uses an exponent once it's at least the precision, which turns 300 into
-  // 3e+02. v is an integer then, so the plain form is exact, and it's used
-  // when it isn't longer.
-  char* exp = strchr(buf, 'e');
-  if (exp && exp[1] == '+' && atoi(exp + 2) < 17) {
-    char plain[FLOAT_STR_MAX];
-    snprintf(plain, sizeof(plain), "%.0f.0", v);
-    if (strlen(plain) <= strlen(buf)) {
-      strcpy(buf, plain);
+  char digits[FLOAT_STR_MAX];
+  int num_digits = snprintf(digits, sizeof(digits), "%" PRIu64, mant);
+  for (; num_digits > 1 && digits[num_digits - 1] == '0'; --num_digits) {
+    ++exp;
+  }
+  // The decimal exponent of the first digit, as in d.ddde+XX.
+  exp += num_digits - 1;
+  char* out = buf;
+  if (signbit(v)) {
+    *out++ = '-';
+  }
+  // Fixed notation is used up to about the type's precision, after which it
+  // would need zeros that look like digits that aren't there.
+  if (exp < -4 || exp >= (is_f32 ? 7 : 16)) {
+    *out++ = digits[0];
+    if (num_digits > 1) {
+      *out++ = '.';
+      memcpy(out, digits + 1, num_digits - 1);
+      out += num_digits - 1;
+    }
+    snprintf(out, FLOAT_STR_MAX - (out - buf), "e%c%02d", exp < 0 ? '-' : '+', abs(exp));
+    return;
+  }
+  if (exp < 0) {
+    *out++ = '0';
+    *out++ = '.';
+    for (int i = -1; i > exp; --i) {
+      *out++ = '0';
+    }
+    memcpy(out, digits, num_digits);
+    out += num_digits;
+  } else {
+    for (int i = 0; i <= exp; ++i) {
+      *out++ = i < num_digits ? digits[i] : '0';
+    }
+    *out++ = '.';
+    if (num_digits > exp + 1) {
+      memcpy(out, digits + exp + 1, num_digits - exp - 1);
+      out += num_digits - exp - 1;
+    } else {
+      *out++ = '0';
     }
   }
-  if (!strpbrk(buf, ".en")) {
-    strcat(buf, ".0");
-  }
+  *out = 0;
 }
 
 void ctx_error(Ctx* ctx, const char* file, const u8* buf, SrcLoc loc, const char* fmt, ...) {

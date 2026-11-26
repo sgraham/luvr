@@ -398,11 +398,45 @@ def print_str(mem, s):
     sys.stdout.buffer.write(mem.bytes[data:data + n])
 
 
+# The same format as float_as_str_precise_slow() in ctx.c. That's repr() for an
+# f64, and an f32 is laid out the same way, but with the shortest digits that
+# read back as the f32, and an exponent from 1e7.
+def f32_str(v):
+    if math.isnan(v) or math.isinf(v):
+        return repr(v)
+    v = round_to_f32(v)
+    mag = abs(v)
+    for prec in range(9):
+        s = "%.*e" % (prec, mag)
+        if round_to_f32(float(s)) == mag:
+            break
+        # When v is a power of two, the next float down is closer than the next
+        # one up, so the nearest digits can be just too low while the next
+        # digits up still read back as v.
+        mant, exp = s.split("e")
+        up = "%de%d" % (int(mant.replace(".", "")) + 1, int(exp) - prec)
+        if float(s) < mag and round_to_f32(float(up)) == mag:
+            s = "%.*e" % (prec, float(up))
+            break
+    mant, exp = s.split("e")
+    digits = mant.replace(".", "").rstrip("0") or "0"
+    exp = int(exp)
+    sign = "-" if math.copysign(1, v) < 0 else ""
+    if exp < -4 or exp >= 7:
+        rest = "." + digits[1:] if len(digits) > 1 else ""
+        return "%s%s%se%s%02d" % (sign, digits[0], rest, "-" if exp < 0 else "+", abs(exp))
+    if exp < 0:
+        return sign + "0." + "0" * (-exp - 1) + digits
+    whole = digits[:exp + 1].ljust(exp + 1, "0")
+    return sign + whole + "." + (digits[exp + 1:] or "0")
+
+
 # The runtime's functions, by symbol name. Each is passed the Memory first.
 RUNTIME = {
     "luv_print_i64": lambda mem, v: sys.stdout.write(str(v)),
     "luv_print_u64": lambda mem, v: sys.stdout.write(str(v & ((1 << 64) - 1))),
-    "luv_print_f64": lambda mem, v: sys.stdout.write("%f" % v),
+    "luv_print_f32": lambda mem, v: sys.stdout.write(f32_str(v)),
+    "luv_print_f64": lambda mem, v: sys.stdout.write(repr(v)),
     "luv_print_bool": lambda mem, v: sys.stdout.write("true" if v else "false"),
     "luv_print_str": print_str,
     "luv_print_end": lambda mem: sys.stdout.write("\n"),
