@@ -2714,16 +2714,85 @@ static void struct_args(Parser* p, ExpDesc* e) {
   }
 }
 
+// Makes e its field f, or isn't emitted if f is NULL. e's type is still the
+// struct, or a pointer to it.
+static void emit_field(Parser* p, ExpDesc* e, const Field* f, SrcLoc at) {
+  if (!EMIT || !f) {
+    exp_unemitted(e);
+    return;
+  }
+  if (type_is_pointer(p, e->type)) {
+    // Each pointer but the last is loaded through to get the next one, and the
+    // last one's value is the base.
+    Ref ptr = emit_to_ref(p, e, e->type, at);
+    for (TypeId t = type_info(p, e->type)->pointee; type_is_pointer(p, t);
+         t = type_info(p, t)->pointee) {
+      ptr = il_emit(&p->il, OP_LOAD, IT_I64, ptr, 0);
+    }
+    e->kind = EK_ADDR;
+    e->base = ptr;
+    e->offset = f->offset;
+  } else if (type_is_struct(p, e->type) && e->kind == EK_LOCAL) {
+    // A field of a struct local is in the local's slot, so the slot's address
+    // is the base.
+    Ref slot_addr = il_slot_addr(&p->il, e->slot);
+    e->kind = EK_ADDR;
+    e->base = slot_addr;
+    e->offset = f->offset;
+  } else if (type_is_struct(p, e->type) && e->kind == EK_CONST_DATA) {
+    // A field of constant data is read from its image.
+    e->kind = EK_ADDR;
+    e->base = il_const_data(&p->il, e->data);
+    e->offset = f->offset;
+  } else if (type_is_struct(p, e->type) && e->kind == EK_ADDR) {
+    // A field of a nested struct is in the same memory as the outer struct, so
+    // only the offset changes.
+    e->offset += f->offset;
+  } else {
+    exp_unemitted(e);
+  }
+}
+
+// Returns the address of the pointer or array e that's indexed, with a
+// constant offset from it in *offset. Returns 0 if it isn't emitted.
+static Ref emit_index_base(Parser* p, ExpDesc* e, u32* offset, SrcLoc at) {
+  *offset = 0;
+  if (!EMIT) {
+    return 0;
+  }
+  if (type_is_pointer(p, e->type)) {
+    return emit_to_ref(p, e, e->type, at);
+  }
+  if (!type_is_array(p, e->type)) {
+    return 0;
+  }
+  if (e->kind == EK_LOCAL) {
+    return il_slot_addr(&p->il, e->slot);
+  }
+  if (e->kind == EK_CONST_DATA) {
+    return il_const_data(&p->il, e->data);
+  }
+  if (e->kind == EK_ADDR) {
+    *offset = e->offset;
+    return e->base;
+  }
+  return 0;
+}
+
 // Makes elem the element at index idx of the pointer or array at base +
-// offset. Its type has already been changed to the element's. A constant
-// index that fits is kept in the offset, so that a field of the element adds
-// to it.
+// offset, from emit_index_base(). Its type has already been changed to the
+// element's. A constant index that fits is kept in the offset, so that a field
+// of the element adds to it.
 static void emit_index(Parser* p,
                        ExpDesc* elem,
                        Ref base,
                        u32 offset,
                        const ExpDesc* idx,
                        SrcLoc at) {
+  if (!EMIT || base == 0) {
+    exp_unemitted(elem);
+    return;
+  }
   if (!type_has_layout(p, elem->type)) {
     error_at(p, at, "This expression isn't supported yet.");
   }
@@ -2759,20 +2828,8 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   bool is_array = type_is_array(p, e->type);
   // The pointer is loaded, or the array's address found, before the index is
   // evaluated, like the left operand of a binary operator.
-  Ref base = 0;
-  u32 offset = 0;
-  bool emits = EMIT && (is_pointer || (is_array && (e->kind == EK_LOCAL || e->kind == EK_ADDR ||
-                                                    e->kind == EK_CONST_DATA)));
-  if (EMIT && is_pointer) {
-    base = emit_to_ref(p, e, e->type, at);
-  } else if (EMIT && is_array && e->kind == EK_LOCAL) {
-    base = il_slot_addr(&p->il, e->slot);
-  } else if (EMIT && is_array && e->kind == EK_CONST_DATA) {
-    base = il_const_data(&p->il, e->data);
-  } else if (EMIT && is_array && e->kind == EK_ADDR) {
-    base = e->base;
-    offset = e->offset;
-  }
+  u32 offset;
+  Ref base = emit_index_base(p, e, &offset, at);
   next(p);  // '['
   // The index, or the slice's start, which can be left out.
   ExpDesc first;
@@ -2806,10 +2863,10 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
     e->shape = SH_LVALUE;
   }
   e->type = result;
-  if (emits && !is_slice) {
-    emit_index(p, e, base, offset, &first, first_at);
-  } else {
+  if (is_slice) {
     exp_unemitted(e);
+  } else {
+    emit_index(p, e, base, offset, &first, first_at);
   }
 }
 
@@ -2852,36 +2909,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         bool through_pointer =
             type_is_pointer(p, e->type) || (e->shape == SH_PARAM && !type_is_struct(p, e->type));
         Shape shape = through_pointer ? SH_LVALUE : exp_part_shape(e);
-        if (EMIT && f && type_is_pointer(p, e->type)) {
-          // Each pointer but the last is loaded through to get the next one,
-          // and the last one's value is the base.
-          Ref ptr = emit_to_ref(p, e, e->type, name_at);
-          for (TypeId t = type_info(p, e->type)->pointee; type_is_pointer(p, t);
-               t = type_info(p, t)->pointee) {
-            ptr = il_emit(&p->il, OP_LOAD, IT_I64, ptr, 0);
-          }
-          e->kind = EK_ADDR;
-          e->base = ptr;
-          e->offset = f->offset;
-        } else if (EMIT && f && type_is_struct(p, e->type) && e->kind == EK_LOCAL) {
-          // A field of a struct local is in the local's slot, so the slot's
-          // address is the base.
-          Ref slot_addr = il_slot_addr(&p->il, e->slot);
-          e->kind = EK_ADDR;
-          e->base = slot_addr;
-          e->offset = f->offset;
-        } else if (EMIT && f && type_is_struct(p, e->type) && e->kind == EK_CONST_DATA) {
-          // A field of constant data is read from its image.
-          e->kind = EK_ADDR;
-          e->base = il_const_data(&p->il, e->data);
-          e->offset = f->offset;
-        } else if (EMIT && f && type_is_struct(p, e->type) && e->kind == EK_ADDR) {
-          // A field of a nested struct is in the same memory as the outer
-          // struct, so only the offset changes.
-          e->offset += f->offset;
-        } else {
-          exp_unemitted(e);
-        }
+        emit_field(p, e, f, name_at);
         e->shape = shape;
         e->type = f ? f->type : ty_unknown;
         break;
