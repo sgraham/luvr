@@ -162,6 +162,30 @@ The IL already has the operations for `cast`: `SEXT32`, `ZEXT32` and
 `TRUNC` between integer widths, `ITOF`, `UTOF`, `FTOI` and `FTOU`, and
 `FEXT` and `FTRUNC` between float widths.
 
+## Float semantics
+
+Decided 2026-11-26. Floats follow IEEE 754, as in C, Go, Rust and Zig.
+
+- `<`, `<=`, `>`, `>=` and `==` are false if either operand is NaN, so
+  `x == x` is false for NaN. `!=` is true. `-0.0 == 0.0`.
+- Because of NaN, `not (a < b)` isn't `a >= b`. Lowering a branch must never
+  invert a float compare.
+- Dividing by zero at run time gives an infinity, or NaN for `0.0 / 0.0`,
+  without a check. Python raises instead, but there are no exceptions, and
+  the check would be on every division. A constant zero divisor is a
+  compile error, as in Go.
+- A constant expression that overflows to an infinity is an error. There
+  are no literals for infinities or NaN. They'll be prelude or math
+  functions, as Go's `math.Inf(1)` and `math.NaN()` are.
+- They print as `inf`, `-inf` and `nan`, as in C and Python. `-0.0` keeps
+  its sign.
+- No fast-math and no flush-to-zero. Rewrites like `x + 0 -> x`, `x * 0 -> 0`
+  and `x - x -> 0` aren't valid on floats, because of `-0.0` and NaN.
+- f32 arithmetic is rounded to f32 after each operation, in constant
+  folding as well as at run time.
+- Searching for NaN with `in`, or using it as a dict key, never finds it.
+  Python checks identity first. That's decided with lists and dicts.
+
 ## Casts
 
 `cast T(x)` converts between these:
@@ -186,10 +210,13 @@ Everything else is an error, including:
 - `str` to or from anything, for now. `*u8` from a `str` for foreign calls
   depends on how strings are represented ([D23](D23-arrays-lists.md)).
 
-A float that's out of range for the integer type, or NaN, gives an
-unspecified value, but isn't undefined behaviour. Saturating, as in Rust,
-gives the same result on every target, but costs extra instructions on
-x86 for conversions that are wrong either way.
+A float that's out of range for the integer type saturates to the type's
+minimum or maximum, and NaN gives 0, as in Rust (decided 2026-11-26). That's
+the same result on every target. arm64's `FCVTZS`/`FCVTZU` already behave
+this way. x64's `CVTTSD2SQ` returns `0x8000000000000000` for NaN and for
+anything out of range, so x64 needs a compare, a NaN check and selects around
+it. Go and C use the native instruction, so their results differ between the
+two.
 
 A constant out of range for `T` is an error, as in Go, so `cast u8(300)`
 and `cast u64(-1)` are both rejected. Untyped constants are conceptually

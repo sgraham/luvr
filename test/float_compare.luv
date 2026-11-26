@@ -1,0 +1,43 @@
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: false
+# OUT: false
+# OUT: false
+# OUT: false
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: big
+
+# Float compares on values that aren't constants. A compare with NaN is false,
+# except for !=. An f32 compared with a constant compares the constant rounded
+# to f32.
+def int main():
+    f64 a = 1.5
+    f64 b = 2.5
+    print a < b
+    print a > b
+    print a <= 1.5
+    print b >= a
+    print a != b
+    print a == b
+    f32 tenth = 0.1
+    print tenth == 0.1
+    f64 zero = 0
+    nan = zero / zero
+    print nan < 1
+    print nan > 1
+    print nan <= nan
+    print nan >= nan
+    print nan == nan
+    print nan != nan
+    f64 neg_zero = -zero
+    print neg_zero == zero
+    if b > 2:
+        print "big"
+    return 0

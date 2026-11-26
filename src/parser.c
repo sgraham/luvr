@@ -2027,7 +2027,7 @@ static void emit_compare(Parser* p,
                          SrcLoc at) {
 #if EMIT
   bool is_pointer = type_is_pointer(p, t);
-  if (t.u != TY_BOOL && !type_is_integer(t) && !is_pointer) {
+  if (t.u != TY_BOOL && !type_is_integer(t) && !type_is_float(t) && !is_pointer) {
     exp_mark_unsupported(e);
     return;
   }

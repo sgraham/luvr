@@ -836,6 +836,9 @@ typedef enum IlOperand {
 // On floats, ADD, SUB, MUL, DIV and NEG are the IEEE 754 operations, rounded to
 // the instruction's type.
 //
+// A float compare with a NaN operand is false, except for NE, which is true.
+// So a float compare can't be inverted, as `not (a < b)` isn't `a >= b`.
+//
 // FEXT extends an f32 to f64.
 //
 // SEXT8, ZEXT8, SEXT16 and ZEXT16 extend the low bits of an i32 to all of it,

@@ -425,6 +425,11 @@ def run(prog, f, args, result_dst):
             a, b = (value_of(values, prog, o) for o in ins.operands)
             values[ins.result] = wrap(ins.ty, ARITH[ins.op](BITS[ins.ty], a, b))
             continue
+        if ins.op in COMPARE and ins.ty in FLOAT_FORMATS:
+            # Python's float compares already treat NaN as IEEE 754 does.
+            a, b = (float_value(ins.ty, value_of(values, prog, o)) for o in ins.operands)
+            values[ins.result] = int(COMPARE[ins.op](a, b))
+            continue
         if ins.op in COMPARE:
             a, b = (value_of(values, prog, o) for o in ins.operands)
             values[ins.result] = int(COMPARE[ins.op](a, b))
