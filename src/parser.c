@@ -574,10 +574,7 @@ static void declare_global_var(Parser* p,
                                const ExpDesc* v,
                                u32 data_mark,
                                SrcLoc at) {
-  GlobalVar g = {t, {DATA_NONE}};
-  if (EMIT) {
-    g.data = emit_global_data(p, t, v, data_mark, at);
-  }
+  GlobalVar g = {t, emit_global_data(p, t, v, data_mark, at)};
   u32 idx = p->global_vars.num;
   *vec_push(p->ls.ctx, &p->global_vars) = g;
   declare_global(p, name, GK_VAR | (idx << GLOBAL_KIND_BITS));
@@ -1647,6 +1644,7 @@ static Ref emit_addr(Parser* p, const ExpDesc* e) {
 // t has already been checked against e's type. If e is an untyped constant
 // it will take on t's type.
 static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, SrcLoc at) {
+#if EMIT
   IlType ty = il_type_of(p, t, at);
   if (e->kind == EK_CONST && t.u == TY_BOOL) {
     return il_const_int(&p->il, ty, e->cv.b);
@@ -1665,6 +1663,9 @@ static Ref emit_to_ref(Parser* p, const ExpDesc* e, TypeId t, SrcLoc at) {
     return e->ref;
   }
   error_at(p, at, "This expression isn't supported yet.");
+#else
+  return 0;
+#endif
 }
 
 // Returns the address of the aggregate that e is.
@@ -2205,7 +2206,7 @@ static void expr_expect(Parser* p, TypeId t, ExpDesc* e) {
 // Returns the condition's value when emitting, and otherwise 0.
 static Ref cond_value(Parser* p, ExpDesc* e, SrcLoc at) {
   expect_bool(p, e, at, "Condition");
-  return EMIT ? emit_to_ref(p, e, ty_bool, at) : 0;
+  return emit_to_ref(p, e, ty_bool, at);
 }
 
 static Ref cond(Parser* p) {
@@ -2459,10 +2460,116 @@ static void comprehension(Parser* p, const LexPos* elem, SrcLoc at) {
   check_match(p, TK_RSQUARE, TK_LSQUARE, at);
 }
 
+#if EMIT
+// Where a struct or array literal is built. In a constant context, it's an
+// image at image in p->image, and otherwise it's the temporary at temp, which
+// is 0 for a literal that isn't emitted.
+typedef struct LiteralEmit {
+  Ref temp;
+  u32 image;
+  u32 elem_size;  // an array's
+} LiteralEmit;
+#else
+typedef int LiteralEmit;
+#endif
+
+// The literal is built in a temporary, because most uses of it, such as an
+// argument or a field of another literal, have nowhere else to build it.
+static void emit_struct_literal_begin(Parser* p, LiteralEmit* lit, TypeId st, SrcLoc at) {
+#if EMIT
+  if (!type_is_struct(p, st) || !type_has_layout(p, st)) {
+    error_at(p, at, "This struct literal isn't supported yet.");
+  }
+  if (p->const_context) {
+    lit->image = image_begin(p, type_size(p, st));
+    image_add_field(p, st, lit->image);
+  } else {
+    AggId agg = type_info(p, st)->agg;
+    lit->temp = il_slot_addr(&p->il, il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED}));
+    emit_agg_init(p, lit->temp, st);
+  }
+#endif
+}
+
+// Every element is stored, so the temporary doesn't need initializing. A
+// constant's image starts empty and grows with each element, so that too many
+// elements are an error after the literal rather than a write past its end.
+static void emit_array_literal_begin(Parser* p, LiteralEmit* lit, TypeId t, SrcLoc at) {
+#if EMIT
+  if (!type_has_layout(p, t)) {
+    error_at(p, at, "This array literal isn't supported yet.");
+  }
+  if (p->const_context) {
+    lit->image = image_begin(p, 0);
+  } else {
+    lit->temp =
+        il_slot_addr(&p->il, il_slot_add_agg(&p->il, type_agg(p, t), (NameId){IL_SLOT_UNNAMED}));
+  }
+  lit->elem_size = type_size(p, type_info(p, t)->elem);
+#endif
+}
+
+#if EMIT
+static void emit_literal_store(Parser* p,
+                               const LiteralEmit* lit,
+                               TypeId t,
+                               const ExpDesc* v,
+                               u32 offset,
+                               SrcLoc at) {
+  if (p->const_context) {
+    image_add_const(p, t, v, lit->image + offset, at);
+  } else if (lit->temp) {
+    ExpDesc dst = {.type = t, .kind = EK_ADDR, .base = lit->temp, .offset = offset};
+    emit_assign_to_addr(p, &dst, v, at);
+  }
+}
+#endif
+
+static void emit_field_store(Parser* p,
+                             const LiteralEmit* lit,
+                             const Field* f,
+                             const ExpDesc* v,
+                             SrcLoc at) {
+#if EMIT
+  emit_literal_store(p, lit, f->type, v, f->offset, at);
+#endif
+}
+
+static void emit_element_store(Parser* p,
+                               const LiteralEmit* lit,
+                               TypeId elem,
+                               const ExpDesc* v,
+                               u32 index,
+                               SrcLoc at) {
+#if EMIT
+  u32 offset = index * lit->elem_size;
+  if (p->const_context) {
+    image_extend(p, lit->image + offset + lit->elem_size);
+  }
+  emit_literal_store(p, lit, elem, v, offset, at);
+#endif
+}
+
+// Makes e the finished literal of type t. A constant literal's kind has
+// already been set.
+static void emit_literal_end(Parser* p, const LiteralEmit* lit, ExpDesc* e, TypeId t) {
+#if EMIT
+  if (p->const_context) {
+    e->data = image_end(p, lit->image, type_align(p, t), /*writable=*/false);
+  } else {
+    e->kind = EK_ADDR;
+    e->base = lit->temp;
+    e->offset = 0;
+  }
+#else
+  if (!p->const_context) {
+    exp_unemitted(e);
+  }
+#endif
+}
+
 // An element of a list or array literal, checked against `elem` if it's known.
-// When emitting an array, it's stored at temp + offset, or in a constant
-// context, written at image + offset in p->image.
-static void list_element(Parser* p, TypeId elem, Ref temp, u32 image, u32 offset) {
+static void list_element(Parser* p, TypeId elem, const LiteralEmit* lit, u32 index) {
   SrcLoc at = p->ls.pos.t.loc;
   ExpDesc v;
   expr_expect(p, elem, &v);
@@ -2472,15 +2579,7 @@ static void list_element(Parser* p, TypeId elem, Ref temp, u32 image, u32 offset
   if (p->const_context && !exp_is_const(&v)) {
     error_at(p, at, "Expected a constant expression.");
   }
-  if (EMIT && p->const_context) {
-    // The image grows with each element, so that too many elements are an
-    // error after the literal rather than a write past its end.
-    image_extend(p, image + offset + type_size(p, elem));
-    image_add_const(p, elem, &v, image + offset, at);
-  } else if (EMIT && temp) {
-    ExpDesc dst = {.type = elem, .kind = EK_ADDR, .base = temp, .offset = offset};
-    emit_assign_to_addr(p, &dst, &v, at);
-  }
+  emit_element_store(p, lit, elem, &v, index, at);
 }
 
 // '[' ']' | '[' expr comprehension ']' | '[' expr {',' expr} [','] ']'
@@ -2512,31 +2611,19 @@ static void list_literal(Parser* p, ExpDesc* e) {
     }
     lex_rewind(&p->ls, &elem);
   }
-  // Every element is stored, so the temporary doesn't need initializing. In a
-  // constant context, the literal is built as an image in p->image instead.
-  Ref temp = 0;
-  u32 image = 0;
-  u32 elem_size = 0;
-  if (EMIT && is_array) {
-    if (!type_has_layout(p, expected)) {
-      error_at(p, at, "This array literal isn't supported yet.");
-    }
-    if (p->const_context) {
-      image = image_begin(p, 0);
-    } else {
-      temp = il_slot_addr(
-          &p->il, il_slot_add_agg(&p->il, type_agg(p, expected), (NameId){IL_SLOT_UNNAMED}));
-    }
-    elem_size = type_size(p, elem_type);
+  // In a constant context, the literal is built as an image in p->image.
+  LiteralEmit lit = {0};
+  if (is_array) {
+    emit_array_literal_begin(p, &lit, expected, at);
   }
   if (T(p) != TK_RSQUARE) {
-    list_element(p, elem_type, temp, image, 0);
+    list_element(p, elem_type, &lit, 0);
     count = 1;
     while (optional(p, TK_COMMA)) {
       if (T(p) == TK_RSQUARE) {
         break;  // trailing comma
       }
-      list_element(p, elem_type, temp, image, count * elem_size);
+      list_element(p, elem_type, &lit, count);
       ++count;
     }
   }
@@ -2550,13 +2637,9 @@ static void list_literal(Parser* p, ExpDesc* e) {
   }
   if (is_array && p->const_context) {
     e->kind = EK_CONST_DATA;
-    if (EMIT) {
-      e->data = image_end(p, image, type_align(p, expected), /*writable=*/false);
-    }
-  } else if (EMIT && is_array) {
-    e->kind = EK_ADDR;
-    e->base = temp;
-    e->offset = 0;
+  }
+  if (is_array) {
+    emit_literal_end(p, &lit, e, expected);
   }
 }
 
@@ -2858,24 +2941,9 @@ static void struct_args(Parser* p, ExpDesc* e) {
   SrcLoc at = p->ls.pos.t.loc;
   TypeId st = e->type;
   bool has_fields = type_is_struct(p, st);
-  // The literal is built in a temporary, because most uses of it, such as an
-  // argument or a field of another literal, have nowhere else to build it.
-  // In a constant context, it's built as an image in p->image instead.
-  Ref temp = 0;
-  u32 image = 0;
-  if (EMIT) {
-    if (!has_fields || !type_has_layout(p, st)) {
-      error_at(p, at, "This struct literal isn't supported yet.");
-    }
-    if (p->const_context) {
-      image = image_begin(p, type_size(p, st));
-      image_add_field(p, st, image);
-    } else {
-      AggId agg = type_info(p, st)->agg;
-      temp = il_slot_addr(&p->il, il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED}));
-      emit_agg_init(p, temp, st);
-    }
-  }
+  // In a constant context, the literal is built as an image in p->image.
+  LiteralEmit lit = {0};
+  emit_struct_literal_begin(p, &lit, st, at);
   u32 num_fields = has_fields ? type_info(p, st)->num_fields : 0;
   u32 first_field = has_fields ? type_info(p, st)->first_field : 0;
   u32 field = 0;  // the field that the next positional argument gives
@@ -2935,12 +3003,7 @@ static void struct_args(Parser* p, ExpDesc* e) {
       if (f) {
         check_const_conversion(p, f->type, &arg, arg_at);
       }
-      if (EMIT && p->const_context) {
-        image_add_const(p, f->type, &arg, image + f->offset, arg_at);
-      } else if (EMIT) {
-        ExpDesc dst = {.type = f->type, .kind = EK_ADDR, .base = temp, .offset = f->offset};
-        emit_assign_to_addr(p, &dst, &arg, arg_at);
-      }
+      emit_field_store(p, &lit, f, &arg, arg_at);
       if (!optional(p, TK_COMMA)) {
         break;
       }
@@ -2950,16 +3013,8 @@ static void struct_args(Parser* p, ExpDesc* e) {
   e->shape = SH_STRUCT_LITERAL;
   if (p->const_context) {
     e->kind = EK_CONST_DATA;
-    if (EMIT) {
-      e->data = image_end(p, image, type_align(p, st), /*writable=*/false);
-    }
-  } else if (EMIT) {
-    e->kind = EK_ADDR;
-    e->base = temp;
-    e->offset = 0;
-  } else {
-    exp_unemitted(e);
   }
+  emit_literal_end(p, &lit, e, st);
 }
 
 // Makes e its field f, or isn't emitted if f is NULL. e's type is still the
@@ -3263,6 +3318,15 @@ static void store_le(u8* dst, u64 bits, u32 size) {
 
 // Adds the bytes of a string literal, and the image of a str that refers to
 // them.
+// Makes e's data the image of the current STRING token's str.
+static void emit_str_literal(Parser* p, ExpDesc* e) {
+#if EMIT
+  u32 len;
+  const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
+  e->data = emit_str_data(p, s, len);
+#endif
+}
+
 static DataId emit_str_data(Parser* p, const u8* s, u32 len) {
   DataId bytes = il_data_add(p->ls.ctx, s, len, 1, /*writable=*/false, NULL, 0);
   u8 image[16] = {0};
@@ -3303,11 +3367,7 @@ static void primary(Parser* p, ExpDesc* e) {
     case TK_STRING:
       e->type = ty_str;
       e->kind = EK_CONST_DATA;
-      if (EMIT) {
-        u32 len;
-        const u8* s = lex_str(&p->ls, &p->ls.pos.t, &len);
-        e->data = emit_str_data(p, s, len);
-      }
+      emit_str_literal(p, e);
       next(p);
       break;
     case TK_TRUE:
@@ -3981,6 +4041,48 @@ static void foreign_decl(Parser* p, bool is_method) {
   end_of_stat(p);
 }
 
+// Starts the function, after its signature, with its parameters as its only
+// locals.
+static void emit_func_begin(Parser* p, NameId name, bool is_method, SrcLoc name_at) {
+#if EMIT
+  if (is_method) {
+    error_at(p, name_at, "Methods aren't supported yet.");
+  }
+  if (p->func_depth > 1) {
+    error_at(p, name_at, "Nested functions aren't supported yet.");
+  }
+  if (type_is_aggregate(p, p->ret_type) && type_has_layout(p, p->ret_type)) {
+    il_reset(&p->il, name, IT_AGG);
+    p->il.ret_agg = type_agg(p, p->ret_type);
+  } else {
+    il_reset(&p->il, name, il_type_of(p, p->ret_type, name_at));
+  }
+  il_block_start(&p->il, il_block_declare(&p->il));
+  for (u32 i = p->func_base; i < p->num_locals; ++i) {
+    Local* l = &p->locals[i];
+    u32 index = i - p->func_base;
+    if (type_is_aggregate(p, l->type) && type_has_layout(p, l->type)) {
+      l->ref = il_emit(&p->il, OP_PARAMAGG, IT_I64, index, type_agg(p, l->type).u);
+    } else {
+      l->ref = il_emit(&p->il, OP_PARAM, il_type_of(p, l->type, name_at), index, 0);
+    }
+  }
+#endif
+}
+
+// Ends the function after its body, and passes it to Ctx.on_func.
+static void emit_func_end(Parser* p, Flow flow) {
+#if EMIT
+  if (flow == FLOW_FALLS_THROUGH) {
+    il_emit(&p->il, OP_RET, IT_VOID, 0, 0);
+  }
+  Ctx* ctx = p->ls.ctx;
+  if (ctx->on_func) {
+    ctx->on_func(ctx, &p->il, p->mod->src.buf);
+  }
+#endif
+}
+
 // funcdef -> funcsig ':' suite   (after 'def')
 static void funcdef(Parser* p, bool is_method) {
   TypeId outer_ret = p->ret_type;
@@ -3989,47 +4091,14 @@ static void funcdef(Parser* p, bool is_method) {
   NameId name;
   SrcLoc name_at;
   u32 outer = funcsig(p, is_method, &name, &name_at);
-  if (EMIT) {
-    if (is_method) {
-      error_at(p, name_at, "Methods aren't supported yet.");
-    }
-    if (p->func_depth > 1) {
-      error_at(p, name_at, "Nested functions aren't supported yet.");
-    }
-    if (type_is_aggregate(p, p->ret_type) && type_has_layout(p, p->ret_type)) {
-      il_reset(&p->il, name, IT_AGG);
-      p->il.ret_agg = type_agg(p, p->ret_type);
-    } else {
-      il_reset(&p->il, name, il_type_of(p, p->ret_type, name_at));
-    }
-    il_block_start(&p->il, il_block_declare(&p->il));
-    // Nothing in the body has been parsed yet, so the function's only locals
-    // are its parameters.
-    for (u32 i = p->func_base; i < p->num_locals; ++i) {
-      Local* l = &p->locals[i];
-      u32 index = i - p->func_base;
-      if (type_is_aggregate(p, l->type) && type_has_layout(p, l->type)) {
-        l->ref = il_emit(&p->il, OP_PARAMAGG, IT_I64, index, type_agg(p, l->type).u);
-      } else {
-        l->ref = il_emit(&p->il, OP_PARAM, il_type_of(p, l->type, name_at), index, 0);
-      }
-    }
-  }
+  emit_func_begin(p, name, is_method, name_at);
   check(p, TK_COLON);
   Flow flow = suite(p);
   if (flow == FLOW_FALLS_THROUGH && p->ret_type.u != TY_VOID) {
     error_at(p, name_at, "Missing return at the end of a function returning %s.",
              type_str(p, p->ret_type));
   }
-  if (EMIT) {
-    if (flow == FLOW_FALLS_THROUGH) {
-      il_emit(&p->il, OP_RET, IT_VOID, 0, 0);
-    }
-    Ctx* ctx = p->ls.ctx;
-    if (ctx->on_func) {
-      ctx->on_func(ctx, &p->il, p->mod->src.buf);
-    }
-  }
+  emit_func_end(p, flow);
   func_close(p, outer);
   p->ret_type = outer_ret;
   p->loop = outer_loop;
@@ -4256,6 +4325,7 @@ static bool image_add_field(Parser* p, TypeId t, u32 offset) {
 // as t's default. Otherwise it's all zeros which is handled separately and not
 // stored.
 static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, u32 data_mark, SrcLoc at) {
+#if EMIT
   if (!type_has_layout(p, t)) {
     error_at(p, at, "This global isn't supported yet.");
   }
@@ -4278,6 +4348,9 @@ static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, u32 data_m
     return il_data_add_zero(p->ls.ctx, size, align, /*writable=*/true);
   }
   return image_end(p, base, align, /*writable=*/true);
+#else
+  return (DataId){DATA_NONE};
+#endif
 }
 
 // Returns the AggId of a struct or array type t. A struct's was added at the
@@ -4302,6 +4375,33 @@ static AggId type_agg(Parser* p, TypeId t) {
     p->image.num = base;
   }
   return info->agg;
+}
+
+// Adds the field of type t at offset to the image of the struct being
+// defined, whose size is now size. Returns whether it has a nonzero image.
+static bool emit_field_image(Parser* p, TypeId t, u32 offset, u32 size) {
+#if EMIT
+  image_extend(p, size);
+  return image_add_field(p, t, offset);
+#else
+  return false;
+#endif
+}
+
+// Writes a field's default value v into the image of the struct being defined.
+static void emit_field_default(Parser* p, TypeId t, const ExpDesc* v, u32 offset, SrcLoc at) {
+#if EMIT
+  image_add_const(p, t, v, offset, at);
+#endif
+}
+
+// Adds the finished image of the struct being defined as its initial value.
+static void emit_struct_image(Parser* p, TypeInfo* info, u32 size, u32 align) {
+#if EMIT
+  image_extend(p, size);
+  info->image = il_data_add(p->ls.ctx, p->image.items, size, align, /*writable=*/false,
+                            p->image_relocs.items, p->image_relocs.num);
+#endif
 }
 
 // struct_body -> INDENT field {field} DEDENT
@@ -4350,10 +4450,7 @@ static void struct_body(Parser* p, TypeId st) {
       offset = align_up(size, field_align);
       size = offset + type_size(p, t);
       align = field_align > align ? field_align : align;
-      if (EMIT) {
-        image_extend(p, size);
-        has_image |= image_add_field(p, t, offset);
-      }
+      has_image |= emit_field_image(p, t, offset, size);
     }
     if (optional(p, TK_EQ)) {
       SrcLoc value_at = p->ls.pos.t.loc;
@@ -4365,8 +4462,8 @@ static void struct_body(Parser* p, TypeId st) {
       if (!exp_is_const(&v)) {
         error_at(p, value_at, "Expected a constant expression.");
       }
-      if (EMIT && known) {
-        image_add_const(p, t, &v, offset, value_at);
+      if (known) {
+        emit_field_default(p, t, &v, offset, value_at);
         has_image = true;
       }
     }
@@ -4388,10 +4485,8 @@ static void struct_body(Parser* p, TypeId st) {
       type_agg_leaves(p, st, 0, leaves, &num_leaves);
     }
     info->agg = il_agg_add(p->ls.ctx, size, align, leaves, num_leaves);
-    if (EMIT && has_image) {
-      image_extend(p, size);
-      info->image = il_data_add(p->ls.ctx, p->image.items, size, align, /*writable=*/false,
-                                p->image_relocs.items, p->image_relocs.num);
+    if (has_image) {
+      emit_struct_image(p, info, size, align);
     }
   }
 }
