@@ -346,7 +346,7 @@ static DataId emit_str_data(Parser* p, const u8* s, u32 len);
 static void image_extend(Parser* p, u32 size);
 static u32 image_begin(Parser* p, u32 size);
 static DataId image_end(Parser* p, u32 base, u32 align, bool writable);
-static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, SrcLoc at);
+static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, u32 data_mark, SrcLoc at);
 static bool image_add_field(Parser* p, TypeId t, u32 offset);
 static void image_add_const(Parser* p, TypeId t, const ExpDesc* defval, u32 offset, SrcLoc at);
 static Flow stat(Parser* p);
@@ -559,11 +559,17 @@ static void declare_global(Parser* p, NameId name, GlobalInfo info) {
   namemap_set(p->ls.ctx, &p->mod->globals, name, info);
 }
 
-// v is the global's initial value, or NULL if it doesn't have one.
-static void declare_global_var(Parser* p, NameId name, TypeId t, const ExpDesc* v, SrcLoc at) {
+// v is the global's initial value, or NULL if it doesn't have one. data_mark
+// is the number of data items before v was parsed.
+static void declare_global_var(Parser* p,
+                               NameId name,
+                               TypeId t,
+                               const ExpDesc* v,
+                               u32 data_mark,
+                               SrcLoc at) {
   GlobalVar g = {t, {DATA_NONE}};
   if (EMIT) {
-    g.data = emit_global_data(p, t, v, at);
+    g.data = emit_global_data(p, t, v, data_mark, at);
   }
   u32 idx = p->global_vars.num;
   *vec_push(p->ls.ctx, &p->global_vars) = g;
@@ -3270,10 +3276,12 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
   bool is_const = name_of(p, name)->is_const;
   SrcLoc value_at = at;
   ExpDesc v;
+  u32 data_mark = 0;
   bool has_value = optional(p, TK_EQ);
   if (has_value) {
     value_at = p->ls.pos.t.loc;
     p->const_context = toplevel || is_const;
+    data_mark = p->ls.ctx->data.num;
     expr_expect(p, t, &v);
     p->const_context = false;
     check_assign(p, t, &v, value_at);
@@ -3288,7 +3296,7 @@ static void decl_rest(Parser* p, bool toplevel, TypeId t) {
     error_at(p, p->ls.pos.t.loc, "A constant needs a value.");
   }
   if (toplevel) {
-    declare_global_var(p, name, t, has_value ? &v : NULL, value_at);
+    declare_global_var(p, name, t, has_value ? &v : NULL, data_mark, value_at);
   } else {
     declare_if_new(p, name, at, t);
     if (EMIT) {
@@ -3388,6 +3396,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       bool to_existing = not_augassign && (!declares || loc);
       ExpDesc v;
       p->const_context = toplevel || (declares && name_of(p, name)->is_const);
+      u32 data_mark = p->ls.ctx->data.num;
       expr_expect(p, to_existing ? exp.type : ty_unknown, &v);
       p->const_context = false;
       if (to_existing) {
@@ -3416,7 +3425,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           error_at(p, value_at, "Expected a constant expression.");
         }
         if (toplevel) {
-          declare_global_var(p, name, t, &v, value_at);
+          declare_global_var(p, name, t, &v, data_mark, value_at);
         } else {
           if (!loc) {
             loc = declare_local(p, name, at, LK_VAR);
@@ -4041,9 +4050,18 @@ static bool image_add_field(Parser* p, TypeId t, u32 offset) {
 // Adds the storage of a global of type t, which starts as v, or if v is NULL,
 // as t's default. Otherwise it's all zeros which is handled separately and not
 // stored.
-static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, SrcLoc at) {
+static DataId emit_global_data(Parser* p, TypeId t, const ExpDesc* v, u32 data_mark, SrcLoc at) {
   if (!type_has_layout(p, t)) {
     error_at(p, at, "This global isn't supported yet.");
+  }
+  // Data added while v was parsed, such as a literal's image, can't be
+  // referred to by anything else, so it becomes the global's storage instead
+  // of being copied. Data is only printed before a function, so it hasn't been
+  // printed yet.
+  if (v && v->kind == EK_CONST_DATA && v->data.u >= data_mark) {
+    ASSERT(v->data.u >= p->ls.ctx->data_printed);
+    p->ls.ctx->data.items[v->data.u].writable = true;
+    return v->data;
   }
   u32 size = type_size(p, t);
   u32 align = type_align(p, t);

@@ -16,6 +16,9 @@
 # OUT: 7
 # OUT: 0
 # OUT: 1
+# OUT: 8
+# OUT: 2
+# OUT: const
 struct Point:
     int x = 1
     int y
@@ -31,6 +34,8 @@ Point pt
 Point other = Point(.x=7, .name="other")
 [4]int buf
 [100000]u8 big
+ORIGIN = Point(2, 3, "const")
+Point copy = ORIGIN
 
 def bump():
     global count
@@ -66,4 +71,8 @@ def int main():
     print buf[2]
     print big[99999]
     print other.x - 6
+    copy.x = 8
+    print copy.x
+    print ORIGIN.x
+    print copy.name
     return 0
