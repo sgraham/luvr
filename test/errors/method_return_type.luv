@@ -1,0 +1,13 @@
+# CRET: 1
+# CERR: {self}:13:14:    bool b = p.get()
+# CERR: {ssss}                    ^ error: Can't assign int to bool.
+struct Stuff:
+    int a
+
+on Stuff def int get(self):
+    return self.a
+
+def main():
+    s = Stuff(1)
+    *Stuff p = &s
+    bool b = p.get()

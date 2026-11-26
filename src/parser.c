@@ -2949,6 +2949,28 @@ static void type_agg_leaves(Parser* p, TypeId t, u32 offset, AggLeaf* leaves, u3
   }
 }
 
+static u32 method_tag(TypeId receiver, NameId name) {
+  return hashtable_tag_of_key((u64)receiver.u << 32 | name.u);
+}
+
+// Returns the slot of receiver's method named name, or the empty slot where it
+// would be inserted.
+static HashSlot* method_slot(Parser* p, TypeId receiver, NameId name, u32 tag) {
+  HashSlot* slot = hashtable_first(&p->method_index, tag);
+  for (; slot->tag != 0; slot = hashtable_next(&p->method_index, slot, tag)) {
+    const Method* method = &p->methods.items[slot->val];
+    if (method->receiver.u == receiver.u && method->name.u == name.u) {
+      break;
+    }
+  }
+  return slot;
+}
+
+static const Method* method_find(Parser* p, TypeId receiver, NameId name) {
+  HashSlot* slot = method_slot(p, receiver, name, method_tag(receiver, name));
+  return slot->tag != 0 ? &p->methods.items[slot->val] : NULL;
+}
+
 static const Field* struct_field(Parser* p, TypeId st, NameId name) {
   const TypeInfo* info = type_info(p, st);
   for (u32 i = 0; i < info->num_fields; ++i) {
@@ -3039,12 +3061,13 @@ static void emit_call_end(Parser* p, const CallEmit* call, ExpDesc* e, u32 num_a
 }
 
 // Arguments are checked against callee if it's a function type, and the return
-// value is how many there are.
-static u32 call_args(Parser* p, TypeId callee, CallEmit* call) {
+// value is how many there are. The first `skip` parameters are passed
+// implicitly, as a method's self is, so they don't have arguments.
+static u32 call_args(Parser* p, TypeId callee, u32 skip, CallEmit* call) {
   SrcLoc at = p->ls.pos.t.loc;
   bool is_function = type_is_function(p, callee);
-  u32 num_params = is_function ? type_info(p, callee)->num_params : 0;
-  u32 first_param = is_function ? type_info(p, callee)->first_param : 0;
+  u32 num_params = is_function ? type_info(p, callee)->num_params - skip : 0;
+  u32 first_param = is_function ? type_info(p, callee)->first_param + skip : 0;
   u32 num_args = 0;
   SrcLoc extra_at = {0};  // the first argument past num_params
   next(p);                // '('
@@ -3391,6 +3414,20 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   }
 }
 
+// Makes e, the receiver, the result of calling method on it.
+static void method_call(Parser* p, ExpDesc* e, const Method* method, SrcLoc name_at) {
+  if (EMIT) {
+    error_at(p, name_at, "Method calls aren't supported yet.");
+  }
+  TypeId ret = type_info(p, method->type)->ret;
+  CallEmit call;
+  emit_call_begin(p, &call, ret);
+  call_args(p, method->type, /*skip=*/1, &call);
+  e->shape = SH_CALL;
+  e->type = ret;
+  emit_unsupported(e);
+}
+
 // postfix -> { '.' name | '.' TypeName | '[' index_or_slice ']' | '(' args ')'
 //            | type_args }
 //
@@ -3419,8 +3456,15 @@ static void postfix(Parser* p, ExpDesc* e) {
         SrcLoc name_at = p->ls.pos.t.loc;
         next(p);
         const Field* f = type_is_struct(p, base) ? struct_field(p, base, name) : NULL;
-        // Methods aren't typed yet, so a name that isn't a field is only an
-        // error if it isn't called.
+        if (type_is_struct(p, base) && !f && T(p) == TK_LPAREN) {
+          const Method* method = method_find(p, base, name);
+          if (method) {
+            method_call(p, e, method, name_at);
+            break;
+          }
+        }
+        // Not every struct's methods are recorded yet, so a name that isn't a
+        // field or method is only an error if it isn't called.
         if (type_is_struct(p, base) && !f && T(p) != TK_LPAREN) {
           field_error(p, base, name, name_at);
         }
@@ -3454,7 +3498,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         TypeId ret = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
         CallEmit call;
         emit_call_begin(p, &call, ret);
-        u32 num_args = call_args(p, callee, &call);
+        u32 num_args = call_args(p, callee, /*skip=*/0, &call);
         e->shape = SH_CALL;
         e->type = ret;
         emit_call_end(p, &call, e, num_args, at);
@@ -4174,21 +4218,8 @@ static void emit_func_sym(Parser* p, GlobalFunc* gf, NameId name) {
 #endif
 }
 
-// Returns the slot of receiver's method named name, or the empty slot where it
-// would be inserted.
-static HashSlot* method_slot(Parser* p, TypeId receiver, NameId name, u32 tag) {
-  HashSlot* slot = hashtable_first(&p->method_index, tag);
-  for (; slot->tag != 0; slot = hashtable_next(&p->method_index, slot, tag)) {
-    const Method* method = &p->methods.items[slot->val];
-    if (method->receiver.u == receiver.u && method->name.u == name.u) {
-      break;
-    }
-  }
-  return slot;
-}
-
 static void declare_method(Parser* p, TypeId receiver, NameId name, SrcLoc at, TypeId ft) {
-  u32 tag = hashtable_tag_of_key((u64)receiver.u << 32 | name.u);
+  u32 tag = method_tag(receiver, name);
   HashSlot* slot = method_slot(p, receiver, name, tag);
   if (slot->tag != 0) {
     const Name* n = name_of(p, name);
