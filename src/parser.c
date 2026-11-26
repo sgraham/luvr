@@ -3158,13 +3158,36 @@ static void struct_args(Parser* p, ExpDesc* e) {
   emit_literal_end(p, &lit, e, st);
 }
 
-// A cast between pointers and u64 doesn't change e. Other casts aren't emitted
-// yet.
-static void emit_cast(ExpDesc* e, bool is_bitcast) {
+// Makes e the cast of e to t. A cast between pointers and u64 doesn't change e.
+// Casts to or from floats aren't emitted yet.
+static void emit_cast(Parser* p, ExpDesc* e, TypeId t, bool is_bitcast, SrcLoc at) {
 #if EMIT
-  if (!is_bitcast) {
-    exp_mark_unsupported(e);
+  TypeId from = e->type;
+  if (is_bitcast || from.u == t.u) {
+    return;
   }
+  if (!type_is_integer(from) || !type_is_integer(t)) {
+    exp_mark_unsupported(e);
+    return;
+  }
+  Ref v = emit_to_ref(p, e, from, at);
+  int from_bits = type_int_bits(from);
+  int to_bits = type_int_bits(t);
+  if (to_bits == 64) {
+    v = emit_extend_if_necessary(p, v, from);
+  } else {
+    if (from_bits == 64) {
+      v = il_emit(&p->il, OP_TRUNC, IT_I32, v, 0);
+    }
+    // A narrower value is already extended correctly for t, unless it's
+    // signed and t isn't.
+    bool is_extended = from_bits < to_bits && (type_is_unsigned(from) || !type_is_unsigned(t));
+    if (!is_extended) {
+      v = emit_extend_narrow(p, v, t);
+    }
+  }
+  e->kind = EK_REF;
+  e->ref = v;
 #else
   exp_mark_non_const(e);
 #endif
@@ -3700,7 +3723,7 @@ static void primary(Parser* p, ExpDesc* e) {
           (type_is_integer(e->type) || type_is_float(e->type))) {
         fold_cast(p, e, t, value_at);
       } else {
-        emit_cast(e, is_bitcast);
+        emit_cast(p, e, t, is_bitcast, value_at);
       }
       e->type = t;
       break;

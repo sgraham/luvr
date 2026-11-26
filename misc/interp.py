@@ -455,6 +455,9 @@ def run(prog, f, args, result_dst):
             # A constant operand is read as an f64, so it's rounded here.
             values[ins.result] = round_to_f32(value_of(values, prog, ins.operands[0]))
             continue
+        if ins.op == "TRUNC":
+            values[ins.result] = wrap("i32", value_of(values, prog, ins.operands[0]))
+            continue
         if ins.op == "SEXT32":
             values[ins.result] = wrap("i32", value_of(values, prog, ins.operands[0]))
             continue

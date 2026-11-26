@@ -839,10 +839,12 @@ typedef enum IlOperand {
 // A float compare with a NaN operand is false, except for NE, which is true.
 // So a float compare can't be inverted, as `not (a < b)` isn't `a >= b`.
 //
-// FEXT extends an f32 to f64.
-//
 // SEXT8, ZEXT8, SEXT16 and ZEXT16 extend the low bits of an i32 to all of it,
 // so that narrow arithmetic wraps at its own width.
+//
+// FEXT extends an f32 to f64.
+//
+// TRUNC is the low 32 bits of an i64.
 #define IL_OPS(X)              \
   X(ADD, REF, REF, true)       \
   X(SUB, REF, REF, true)       \
@@ -874,6 +876,7 @@ typedef enum IlOperand {
   X(SEXT16, REF, NONE, true)   \
   X(ZEXT16, REF, NONE, true)   \
   X(FEXT, REF, NONE, true)     \
+  X(TRUNC, REF, NONE, true)    \
   X(NEG, REF, NONE, true)      \
   X(SLOT, SLOT, NONE, true)    \
   X(LOAD, REF, NONE, true)     \

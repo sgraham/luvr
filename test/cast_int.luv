@@ -1,0 +1,41 @@
+# OUT: 44
+# OUT: -1
+# OUT: 255
+# OUT: 65535
+# OUT: 4294967295
+# OUT: 18446744073709551615
+# OUT: -1
+# OUT: 255
+# OUT: -56
+# OUT: 4294967295
+# OUT: 1
+# OUT: -2147483648
+# OUT: 300
+# OUT: 200
+
+# Casts between integer types that aren't constants. Narrowing keeps the low
+# bits, and widening extends by the signedness of the source.
+def int main():
+    i64 big = 300
+    print cast u8(big)
+    i8 m1 = -1
+    print cast i16(m1)
+    print cast u8(m1)
+    print cast u16(m1)
+    print cast u32(m1)
+    print cast u64(m1)
+    u8 ff = 255
+    print cast i8(ff)
+    print cast i64(ff)
+    i32 n = 200
+    print cast i8(n)
+    u64 lo = 4294967295
+    print cast u32(lo)
+    u64 high = 4294967297
+    print cast i32(high)
+    u32 min32 = 2147483648
+    print cast i32(min32)
+    u16 w = 300
+    print cast i32(w)
+    print cast u8(cast i16(n))
+    return 0
