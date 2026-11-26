@@ -121,7 +121,7 @@ static void expect_il_dump(const IlFunc* f, const char* src, const char* want, c
 
 static void il_init_test(IlFunc* f, Ctx* ctx, IlType ret) {
   il_init(f, ctx);
-  il_reset(f, lex_intern_safe(ctx, "f"), ret);
+  il_reset(f, ctx_sym_add(ctx, lex_intern_safe(ctx, "f"), NULL), ret);
 }
 
 static void test_float_as_str_precise_slow(void) {
@@ -208,7 +208,7 @@ static void test_il_dump(void) {
                  "  %1 = SUB i64 %0, -3\n"
                  "  RET i64 %1\n",
                  "test_il_dump");
-  il_reset(&f, f.name, IT_VOID);
+  il_reset(&f, f.sym, IT_VOID);
   il_emit(&f, OP_RET, IT_VOID, 0, 0);
   expect_il_dump(&f, "", "func @f\n  RET\n", "test_il_dump after il_reset");
   il_free(&f);
@@ -284,9 +284,9 @@ static void test_il_call(void) {
   CHECK(ctx_init(&ctx));
   IlFunc f;
   il_init_test(&f, &ctx, IT_I64);
-  u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
+  SymId sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"), NULL);
   Ref callee = il_const_sym(&f, sym);
-  if (il_const_sym(&f, sym) != callee || il_const_int(&f, IT_I64, sym) == callee) {
+  if (il_const_sym(&f, sym) != callee || il_const_int(&f, IT_I64, sym.u) == callee) {
     printf("il_const_sym: symbols aren't interned apart from integers\n");
     ++failures;
   }
@@ -314,7 +314,7 @@ static void test_il_data(void) {
   CHECK(ctx_init(&ctx));
   IlFunc f;
   il_init_test(&f, &ctx, IT_VOID);
-  u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
+  SymId sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"), NULL);
   DataId hi = il_data_add(&ctx, (const u8*)"hi", 2, 1, /*writable=*/false, NULL, 0);
   DataId escaped = il_data_add(&ctx, (const u8*)"\"\\\n\t~ ", 6, 1, /*writable=*/false, NULL, 0);
   il_data_add(&ctx, NULL, 0, 1, /*writable=*/false, NULL, 0);
@@ -417,7 +417,7 @@ static void test_il_agg_slot(void) {
   il_agg_add(&ctx, 16, 8, float_leaves, 2);
   SlotId slot = il_slot_add_agg(&f, agg, lex_intern_safe(&ctx, "s"));
   SlotId temp = il_slot_add_agg(&f, agg, (NameId){IL_SLOT_UNNAMED});
-  u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
+  SymId sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"), NULL);
   il_block_start(&f, il_block_declare(&f));
   Ref param = il_emit(&f, OP_PARAMAGG, IT_I64, 0, agg.u);
   Ref addr = il_slot_addr(&f, slot);
@@ -454,7 +454,7 @@ static void test_il_agg_result(void) {
   il_init_test(&f, &ctx, IT_AGG);
   AggLeaf leaves[] = {{0, IT_I64}, {8, IT_I64}};
   f.ret_agg = il_agg_add(&ctx, 16, 8, leaves, 2);
-  u32 sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"));
+  SymId sym = ctx_sym_add(&ctx, lex_intern_safe(&ctx, "g"), NULL);
   SlotId temp = il_slot_add_agg(&f, f.ret_agg, (NameId){IL_SLOT_UNNAMED});
   il_block_start(&f, il_block_declare(&f));
   Ref addr = il_slot_addr(&f, temp);

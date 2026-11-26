@@ -5,7 +5,7 @@ bool ctx_init(Ctx* ctx) {
   // on_error isn't set yet, so adding the runtime's symbols can't be allowed
   // to grow syms.
   ctx->syms.cap = SYM_NUM_RUNTIME;
-  ctx->syms.items = (NameId*)malloc(ctx->syms.cap * sizeof(NameId));
+  ctx->syms.items = (Sym*)malloc(ctx->syms.cap * sizeof(Sym));
   if (!ctx->syms.items || !lex_intern_init(ctx) || !namemap_init(&ctx->module_ids, 16)) {
     ctx_free(ctx);
     return false;
@@ -16,7 +16,7 @@ bool ctx_init(Ctx* ctx) {
 #undef RUNTIME_SYM_NAME_
   };
   for (u32 i = 0; i < SYM_NUM_RUNTIME; ++i) {
-    ctx_sym_add(ctx, lex_intern_safe(ctx, runtime_syms[i]));
+    ctx_sym_add(ctx, lex_intern_safe(ctx, runtime_syms[i]), NULL);
   }
   return true;
 }
@@ -47,9 +47,9 @@ void ctx_free(Ctx* ctx) {
   memset(ctx, 0, sizeof(*ctx));
 }
 
-u32 ctx_sym_add(Ctx* ctx, NameId name) {
-  *vec_push(ctx, &ctx->syms) = name;
-  return ctx->syms.num - 1;
+SymId ctx_sym_add(Ctx* ctx, NameId name, const Module* module) {
+  *vec_push(ctx, &ctx->syms) = (Sym){name, module};
+  return (SymId){ctx->syms.num - 1};
 }
 
 const char* ctx_err_str(Ctx* ctx, const char* fmt, ...) {

@@ -1,0 +1,12 @@
+# OUT: 50
+# OUT: 61
+
+# impsub is imported as "impsub" here and as "../impsub" by sub/subcall. It's
+# the same module either way, so both calls are to one function.
+import "impsub"
+import "sub/subcall"
+
+def int main():
+    print impsub.helper_func(5)
+    print subcall.call_helper(6)
+    return 0

@@ -1,0 +1,5 @@
+# IMPORTED
+import "../impsub"
+
+def int call_helper(int x):
+    return impsub.helper_func(x) + 1

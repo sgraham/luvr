@@ -23,6 +23,8 @@ typedef struct NameMap NameMap;
 typedef struct SlotId SlotId;
 typedef struct SrcLoc SrcLoc;
 typedef struct StrRef StrRef;
+typedef struct Sym Sym;
+typedef struct SymId SymId;
 typedef struct Token Token;
 
 // Platform
@@ -527,7 +529,7 @@ struct Ctx {
   AggDoneFn on_agg;
 
   // Functions that IL constants can refer to, by index.
-  VEC(NameId) syms;
+  VEC(Sym) syms;
 
   // Read-only bytes, such as string literals, that IL constants can refer to
   // by index.
@@ -544,8 +546,21 @@ struct Ctx {
 bool ctx_init(Ctx* ctx);
 void ctx_free(Ctx* ctx);
 
+// An index in Ctx.syms. The runtime's functions are the first RuntimeSyms.
+struct SymId {
+  u32 u;
+};
+
+// A function that IL constants can refer to. Functions in different modules
+// can have the same name, so module is part of the symbol. It's NULL for the
+// runtime's functions and the root module's.
+struct Sym {
+  NameId name;
+  const Module* module;
+};
+
 // Returns the new symbol's index.
-u32 ctx_sym_add(Ctx* ctx, NameId name);
+SymId ctx_sym_add(Ctx* ctx, NameId name, const Module* module);
 
 // Line and column are 1-based. They're found by scanning from the start of the
 // buffer, so this is only suitable for the error path.
@@ -1016,7 +1031,7 @@ struct IlSourcePos {
 
 struct IlFunc {
   Ctx* ctx;
-  NameId name;
+  SymId sym;
   IlType ret;
   AggId ret_agg;  // what's returned if ret is IT_AGG, else AGG_NONE
   VEC(Ins) ins;   // ins.items[i] is the instruction at REF_INS | i
@@ -1096,7 +1111,7 @@ void il_init(IlFunc* f, Ctx* ctx);
 void il_free(IlFunc* f);
 
 // Empties f for the next function, keeping its allocations.
-void il_reset(IlFunc* f, NameId name, IlType ret);
+void il_reset(IlFunc* f, SymId sym, IlType ret);
 
 Ref il_emit(IlFunc* f, IlOp op, IlType ty, Ref a, Ref b);
 
@@ -1107,7 +1122,7 @@ Ref il_const_int(IlFunc* f, IlType ty, u64 v);
 // ty is IT_F32 or IT_F64. An f32 constant is v rounded to f32.
 Ref il_const_float(IlFunc* f, IlType ty, double v);
 
-Ref il_const_sym(IlFunc* f, u32 sym);
+Ref il_const_sym(IlFunc* f, SymId sym);
 
 Ref il_const_data(IlFunc* f, DataId data);
 

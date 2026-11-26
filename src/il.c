@@ -52,8 +52,8 @@ void il_free(IlFunc* f) {
   memset(f, 0, sizeof(*f));
 }
 
-void il_reset(IlFunc* f, NameId name, IlType ret) {
-  f->name = name;
+void il_reset(IlFunc* f, SymId sym, IlType ret) {
+  f->sym = sym;
   f->ret = ret;
   f->ret_agg = (AggId){AGG_NONE};
   f->ins.num = 0;
@@ -111,8 +111,8 @@ Ref il_const_float(IlFunc* f, IlType ty, double v) {
   return il_const(f, ty, float_bits(v, /*is_f32=*/ty == IT_F32));
 }
 
-Ref il_const_sym(IlFunc* f, u32 sym) {
-  return il_const(f, IT_SYM, sym);
+Ref il_const_sym(IlFunc* f, SymId sym) {
+  return il_const(f, IT_SYM, sym.u);
 }
 
 Ref il_const_data(IlFunc* f, DataId data) {
@@ -260,6 +260,19 @@ static void il_dump_float(IlType ty, u64 bits, FILE* out) {
   fputs(buf, out);
 }
 
+// A function in an imported module is prefixed with the module's path, as in
+// @sub/util.helper, so that names from different modules can't clash.
+static void il_dump_sym(const Ctx* ctx, SymId sym, FILE* out) {
+  const Sym* s = &ctx->syms.items[sym.u];
+  fputc('@', out);
+  if (s->module) {
+    const Name* module = lex_name(ctx, s->module->name);
+    fprintf(out, "%.*s.", (int)module->len, module->str);
+  }
+  const Name* name = lex_name(ctx, s->name);
+  fprintf(out, "%.*s", (int)name->len, name->str);
+}
+
 static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
   if (r & REF_INS) {
     fprintf(out, "%%%u", r & ~REF_INS);
@@ -268,8 +281,7 @@ static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
   u32 idx = r - 1;
   u64 v = f->consts.items[idx];
   if (f->const_types.items[idx] == IT_SYM) {
-    const Name* name = lex_name(f->ctx, f->ctx->syms.items[v]);
-    fprintf(out, "@%.*s", (int)name->len, name->str);
+    il_dump_sym(f->ctx, (SymId){(u32)v}, out);
     return;
   }
   if (f->const_types.items[idx] == IT_DATA) {
@@ -290,8 +302,8 @@ void il_dump(const IlFunc* f, const u8* src, FILE* out) {
   } else if (f->ret != IT_VOID) {
     fprintf(out, "%s ", il_type_names[f->ret]);
   }
-  const Name* name = lex_name(f->ctx, f->name);
-  fprintf(out, "@%.*s\n", (int)name->len, name->str);
+  il_dump_sym(f->ctx, f->sym, out);
+  fputc('\n', out);
   for (u32 i = 0; i < f->slots.num; ++i) {
     const IlSlot* s = &f->slots.items[i];
     if (s->type == IT_AGG) {

@@ -182,12 +182,12 @@ struct NamedConst {
   };
 };
 
-// A top-level function. Its sym is FUNC_NO_SYM for foreign functions, which
+// A top-level function. Its sym.u is FUNC_NO_SYM for foreign functions, which
 // don't have symbols yet.
 struct GlobalFunc {
   TypeId type;
 #if EMIT
-  u32 sym;
+  SymId sym;
 #endif
 };
 
@@ -341,7 +341,7 @@ struct ExpDesc {
     SlotId slot;  // EK_LOCAL
     Ref ref;      // EK_REF
     DataId data;  // EK_CONST_DATA
-    u32 sym;      // EK_FUNC
+    SymId sym;    // EK_FUNC
     struct {      // EK_ADDR
       Ref base;
       u32 offset;
@@ -1833,7 +1833,7 @@ static void emit_local_use(Parser* p, ExpDesc* e, const Local* l, NameId name) {
 
 static void emit_func_use(ExpDesc* e, const GlobalFunc* gf) {
 #if EMIT
-  if (gf->sym == FUNC_NO_SYM) {
+  if (gf->sym.u == FUNC_NO_SYM) {
     return;
   }
   e->kind = EK_FUNC;
@@ -1910,13 +1910,13 @@ static void emit_print_value(Parser* p, const ExpDesc* e, SrcLoc at) {
   if (type_is_integer(t)) {
     arg = emit_extend_if_necessary(p, arg, t);
   }
-  il_call(&p->il, IT_VOID, il_const_sym(&p->il, sym), &arg, 1);
+  il_call(&p->il, IT_VOID, il_const_sym(&p->il, (SymId){sym}), &arg, 1);
 #endif
 }
 
 static void emit_print_end(Parser* p) {
 #if EMIT
-  il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_end), NULL, 0);
+  il_call(&p->il, IT_VOID, il_const_sym(&p->il, (SymId){SYM_luv_print_end}), NULL, 0);
 #endif
 }
 
@@ -1952,7 +1952,7 @@ static void emit_print_str_piece(Parser* p) {
     return;
   }
   Ref arg = il_const_data(&p->il, emit_str_data(p, s, len));
-  il_call(&p->il, IT_VOID, il_const_sym(&p->il, SYM_luv_print_str), &arg, 1);
+  il_call(&p->il, IT_VOID, il_const_sym(&p->il, (SymId){SYM_luv_print_str}), &arg, 1);
 #endif
 }
 
@@ -3611,7 +3611,9 @@ static void primary(Parser* p, ExpDesc* e) {
         } else if (member_kind == GK_CONST) {
           load_named_const(p, e, &p->global_consts.items[member >> GLOBAL_KIND_BITS]);
         } else if (member_kind == GK_FUNC) {
-          e->type = p->global_funcs.items[member >> GLOBAL_KIND_BITS].type;
+          const GlobalFunc* gf = &p->global_funcs.items[member >> GLOBAL_KIND_BITS];
+          e->type = gf->type;
+          emit_func_use(e, gf);
           check_function_called(p, e, member_at);
         } else if (member_kind == GK_VAR) {
           load_global_var(p, e, member);
@@ -4151,7 +4153,9 @@ static Flow if_branch(Parser* p, BlockId* end) {
 // Foreign functions don't have symbols yet.
 static void emit_func_sym(Parser* p, GlobalFunc* gf, NameId name) {
 #if EMIT
-  gf->sym = p->in_foreign ? FUNC_NO_SYM : ctx_sym_add(p->ls.ctx, name);
+  Ctx* ctx = p->ls.ctx;
+  const Module* module = p->mod == ctx->modules.items[MODULE_ROOT] ? NULL : p->mod;
+  gf->sym = p->in_foreign ? (SymId){FUNC_NO_SYM} : ctx_sym_add(ctx, name, module);
 #endif
 }
 
@@ -4262,11 +4266,13 @@ static void emit_func_begin(Parser* p, NameId name, bool is_method, SrcLoc name_
   if (p->func_depth > 1) {
     error_at(p, name_at, "Nested functions aren't supported yet.");
   }
+  GlobalInfo info = module_global_info(p->mod, name);
+  SymId sym = p->global_funcs.items[info >> GLOBAL_KIND_BITS].sym;
   if (type_is_aggregate(p, p->ret_type) && type_has_layout(p, p->ret_type)) {
-    il_reset(&p->il, name, IT_AGG);
+    il_reset(&p->il, sym, IT_AGG);
     p->il.ret_agg = type_agg(p, p->ret_type);
   } else {
-    il_reset(&p->il, name, il_type_of(p, p->ret_type, name_at));
+    il_reset(&p->il, sym, il_type_of(p, p->ret_type, name_at));
   }
   il_block_start(&p->il, il_block_declare(&p->il));
   for (u32 i = p->func_base; i < p->num_locals; ++i) {
