@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:9:9:    x = Stuff
+# CERR: {ssss}             ^ error: A type isn't a value.
+
+struct Stuff:
+    int a
+
+def int main():
+    x = Stuff
+    return 0

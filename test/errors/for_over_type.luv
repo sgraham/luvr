@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:14:    for x in Range:
+# CERR: {ssss}                   ^ error: A type isn't a value.
+
+def main():
+    for x in Range:
+        print x

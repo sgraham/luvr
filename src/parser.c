@@ -2258,6 +2258,10 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
     }
     default:
       primary(p, e);
+      // Declarations and sizeof call primary() themselves to accept types.
+      if (e->shape == SH_TYPE) {
+        error_at(p, start, "A type isn't a value.");
+      }
       break;
   }
   binop_rest(p, limit, e, start);
