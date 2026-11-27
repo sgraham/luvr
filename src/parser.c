@@ -22,6 +22,7 @@
 typedef union ConstValue ConstValue;
 typedef struct ExpDesc ExpDesc;
 typedef struct Field Field;
+typedef struct ForIter ForIter;
 typedef struct GlobalFunc GlobalFunc;
 typedef struct GlobalVar GlobalVar;
 typedef struct Local Local;
@@ -2984,13 +2985,23 @@ static const Method* struct_method_find(Parser* p, TypeId t, NameId name) {
   return type_is_struct(p, t) ? method_find(p, t, name) : NULL;
 }
 
-// Sets types[i] to the type of loop variable i, which is the pointee of the
-// iterator's out parameter i. Arrays, lists, dicts, and str don't have
-// iterators until there are generics, so their loop variables are untyped.
-static void iter_elem_types(Parser* p, TypeId iterable, u32 num_targets, TypeId* types, SrcLoc at) {
+// The methods that a loop calls, and the types of its loop variables.
+struct ForIter {
+  const Method* make;  // __iter__, or NULL if the iterable is the iterator
+  const Method* next;  // NULL if the iterable isn't a struct
+  TypeId types[MAX_TARGETS];
+};
+
+// Finds the methods for a loop over iterable. The type of loop variable i is
+// the pointee of __next__'s out parameter i. Arrays, lists, dicts, and str
+// don't have iterators until there are generics, so their loop variables are
+// untyped.
+static void for_iter_find(Parser* p, TypeId iterable, u32 num_targets, ForIter* it, SrcLoc at) {
+  it->make = NULL;
+  it->next = NULL;
   if (iterable.u == TY_UNKNOWN || iterable.u == TY_STR || type_is_array(p, iterable)) {
     for (u32 i = 0; i < num_targets; ++i) {
-      types[i] = ty_unknown;
+      it->types[i] = ty_unknown;
     }
     return;
   }
@@ -3002,6 +3013,7 @@ static void iter_elem_types(Parser* p, TypeId iterable, u32 num_targets, TypeId*
     if (!make) {
       error_at(p, at, "%s isn't iterable.", type_str(p, iterable));
     }
+    it->make = make;
     iter = type_info(p, make->type)->ret;
     next = struct_method_find(p, iter, ctx->name___next__);
     if (!next) {
@@ -3014,8 +3026,9 @@ static void iter_elem_types(Parser* p, TypeId iterable, u32 num_targets, TypeId*
     error_at(p, at, "The loop has %u variable%s, but %s.__next__ gives %u.", num_targets,
              num_targets == 1 ? "" : "s", type_str(p, iter), next_info->num_params - 1);
   }
+  it->next = next;
   for (u32 i = 0; i < num_targets; ++i) {
-    types[i] = type_info(p, p->param_types.items[next_info->first_param + 1 + i])->pointee;
+    it->types[i] = type_info(p, p->param_types.items[next_info->first_param + 1 + i])->pointee;
   }
 }
 
@@ -3054,7 +3067,8 @@ static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, Src
 typedef struct CallEmit {
   Ref args[MAX_CALL_ARGS + 1];
   u32 first;
-  Ref result;  // the address of an aggregate result's temporary
+  SlotId agg_temp;  // an aggregate result's temporary
+  Ref agg_result;   // the address of agg_temp
 } CallEmit;
 #else
 typedef int CallEmit;  // Unused.
@@ -3067,12 +3081,12 @@ typedef int CallEmit;  // Unused.
 static void emit_call_begin(Parser* p, CallEmit* call, TypeId ret) {
 #if EMIT
   call->first = 0;
-  call->result = 0;
+  call->agg_result = 0;
   if (type_is_aggregate(p, ret) && type_has_layout(p, ret)) {
     AggId agg = type_agg(p, ret);
-    SlotId temp = il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED});
-    call->result = il_slot_addr(&p->il, temp);
-    call->args[0] = il_emit(&p->il, OP_RESULTAGG, IT_I64, call->result, agg.u);
+    call->agg_temp = il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED});
+    call->agg_result = il_slot_addr(&p->il, call->agg_temp);
+    call->args[0] = il_emit(&p->il, OP_RESULTAGG, IT_I64, call->agg_result, agg.u);
     call->first = 1;
   }
 #endif
@@ -3103,7 +3117,7 @@ static void emit_call_end(Parser* p, const CallEmit* call, ExpDesc* e, u32 num_a
   if (call->first) {
     il_call(&p->il, IT_VOID, sym, call->args, num_args + 1);
     e->kind = EK_ADDR;
-    e->base = call->result;
+    e->base = call->agg_result;
     e->offset = 0;
   } else {
     e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, call->args, num_args);
@@ -4431,7 +4445,7 @@ static void emit_method_sym(Parser* p, Method* method) {
 // The compiler calls special methods itself, as 'for' calls __iter__ and
 // __next__, so their signatures are checked where they're defined rather than
 // at each use.
-static void check_special_method(Parser* p, NameId name, SrcLoc at, TypeId ft, bool has_self) {
+static void check_for_special_methods(Parser* p, NameId name, SrcLoc at, TypeId ft, bool has_self) {
   Ctx* ctx = p->ls.ctx;
   const TypeInfo* info = type_info(p, ft);
   if (name.u == ctx->name___iter__.u && (!has_self || info->num_params != 1)) {
@@ -4466,7 +4480,7 @@ static void declare_method(Parser* p,
     error_at(p, at, "'%.*s' is already a field of %s.", (int)n->len, (const char*)n->str,
              type_str(p, receiver));
   }
-  check_special_method(p, name, at, ft, has_self);
+  check_for_special_methods(p, name, at, ft, has_self);
   u32 idx = p->methods.num;
   Method* method = vec_push(p->ls.ctx, &p->methods);
   *method = (Method){.receiver = receiver, .name = name, .type = ft, .has_self = has_self};
@@ -4650,12 +4664,59 @@ static void funcdef(Parser* p, bool is_method) {
   p->loop = outer_loop;
 }
 
+// The iterator stays in __iter__'s result temporary for the whole loop. Each
+// pass calls __next__ with the addresses of hidden out slots, and then loads
+// them into the loop variables, so that the loop variables aren't
+// address-taken. The head block is moved to the call of __next__, so that the
+// setup before it only runs once.
+static void emit_iterate(Parser* p,
+                         Loop* loop,
+                         ExpDesc* iterable,
+                         const ForIter* it,
+                         Local* const* vars,
+                         u32 num_vars,
+                         SrcLoc at) {
+#if EMIT
+  const TypeInfo* make_info = type_info(p, it->make->type);
+  TypeId self_type = p->param_types.items[make_info->first_param];
+  CallEmit make;
+  emit_call_begin(p, &make, make_info->ret);
+  emit_self_arg(p, &make, iterable, it->make, self_type, at);
+  iterable->type = make_info->ret;
+  emit_call_end(p, &make, iterable, 1, at);
+  SlotId outs[MAX_TARGETS];
+  for (u32 i = 0; i < num_vars; ++i) {
+    TypeId t = it->types[i];
+    if (type_is_aggregate(p, t)) {
+      outs[i] = il_slot_add_agg(&p->il, type_agg(p, t), (NameId){IL_SLOT_UNNAMED});
+    } else {
+      outs[i] = il_slot_add(&p->il, il_type_of(p, t, at), (NameId){IL_SLOT_UNNAMED});
+    }
+  }
+  loop->head = il_block_declare(&p->il);
+  il_block_start(&p->il, loop->head);
+  CallEmit next;
+  emit_call_begin(p, &next, ty_bool);
+  next.args[0] = il_slot_addr(&p->il, make.agg_temp);
+  for (u32 i = 0; i < num_vars; ++i) {
+    next.args[1 + i] = il_slot_addr(&p->il, outs[i]);
+  }
+  ExpDesc more = {.type = ty_bool};
+  emit_method_use(p, &more, it->next, at);
+  emit_call_end(p, &next, &more, num_vars + 1, at);
+  il_branch(&p->il, more.ref, loop->exit);
+  for (u32 i = 0; i < num_vars; ++i) {
+    ExpDesc out = {.type = it->types[i], .kind = EK_LOCAL, .slot = outs[i]};
+    emit_assign_to_local(p, vars[i], &out, at);
+  }
+#endif
+}
+
 // for_header -> for_targets 'in' expr | expr
 //
 // A bare name followed by 'in' or ',' is a loop variable. Any other name
-// starts a condition, which continues from the name. Returns the condition's
-// value when emitting, and otherwise 0.
-static Ref for_header(Parser* p) {
+// starts a condition, which continues from the name.
+static void for_header(Parser* p, Loop* loop) {
   SrcLoc at = p->ls.pos.t.loc;
   ExpDesc e;
   if (T(p) == TK_NAME) {
@@ -4664,30 +4725,38 @@ static Ref for_header(Parser* p) {
     primary(p, &e);
     p->loop_var_at = (SrcLoc){0};
     if ((e.shape == SH_NAME || e.shape == SH_PARAM) && (T(p) == TK_IN || T(p) == TK_COMMA)) {
-      if (EMIT) {
-        error_at(p, at, "Iterating isn't supported yet.");
-      }
       Targets t;
       for_targets(p, &t, name, at);
       check(p, TK_IN);
       SrcLoc iterable_at = p->ls.pos.t.loc;
       ExpDesc iterable;
       subexpr(p, -1, &iterable);
-      TypeId types[MAX_TARGETS];
-      iter_elem_types(p, iterable.type, t.num_targets, types, iterable_at);
+      ForIter it;
+      for_iter_find(p, iterable.type, t.num_targets, &it, iterable_at);
+      if (EMIT && !it.make) {
+        error_at(p, at, "Iterating isn't supported yet.");
+      }
+      Local* vars[MAX_TARGETS];
       for (u32 i = 0; i < t.num_targets; ++i) {
-        Local* l = declare_if_new(p, t.name[i], t.at[i], types[i]);
-        if (!assignable(p, types[i], l->type)) {
-          assign_type_error(p, types[i], l->type, t.at[i]);
+        u32 num_locals = p->num_locals;
+        vars[i] = declare_if_new(p, t.name[i], t.at[i], it.types[i]);
+        if (p->num_locals != num_locals) {
+          emit_local_slot(p, vars[i], t.at[i]);
+          emit_local_init(p, vars[i], NULL, t.at[i]);
+        } else if (vars[i]->kind == LK_PARAM) {
+          error_at(p, t.at[i], "Function parameters are immutable.");
+        } else if (!assignable(p, it.types[i], vars[i]->type)) {
+          assign_type_error(p, it.types[i], vars[i]->type, t.at[i]);
         }
       }
-      return 0;
+      emit_iterate(p, loop, &iterable, &it, vars, t.num_targets, iterable_at);
+      return;
     }
     binop_rest(p, -1, &e, at);
   } else {
     subexpr(p, -1, &e);
   }
-  return cond_value(p, &e, at);
+  emit_loop_cond(p, loop, cond_value(p, &e, at));
 }
 
 // stat -> 'if' expr ':' suite {'elif' expr ':' suite} ['else' ':' suite]
@@ -4727,8 +4796,7 @@ static Flow stat(Parser* p) {
       emit_loop_begin(p, &loop);
       if (!forever) {
         emit_source_pos(p, at);
-        Ref condition = for_header(p);
-        emit_loop_cond(p, &loop, condition);
+        for_header(p, &loop);
       }
       check(p, TK_COLON);
       Loop* outer = p->loop;

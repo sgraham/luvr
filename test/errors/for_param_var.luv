@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:9:    for x in range(3):
+# CERR: {ssss}             ^ error: Function parameters are immutable.
+
+def f(int x):
+    for x in range(3):
+        print x
