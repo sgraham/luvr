@@ -1,4 +1,4 @@
-# D38 Scoped cleanup: `with` or `defer` (open, waiting on D12)
+# D38 Scoped cleanup: `with` or `defer` (open)
 
 Written 2026-11-27, at the start of implementing `with`. Nothing here is
 decided. luv60 has Python's `with`, and luvr parses it, but without
@@ -210,13 +210,11 @@ is Go's rule. But then `n` would be read at the `defer` while `p` in
 complicated an argument is. So with approach 1, deferred arguments are
 restricted, and anything else is either a helper function
 (`defer log_done(n)`, which reads `n` at exit) or waits for approach 3. Deferring
-a nested function that makes the call depends on how nested functions
-capture. With luv60's capture by value, `n` would be copied when the
-function is made, at the `defer`, which is Go's rule again. With capture by
-reference, which [D12](D12-nested-functions.md) is reconsidering,
-`defer log_done()` with a nested `log_done` reads `n` at exit, which makes
-nested functions the general way to defer anything that isn't a simple
-call.
+a nested function that makes the call works with
+[D12](D12-nested-functions.md)'s capture lists: `defer log_done()`, where
+`log_done` is `def log_done() uses &n:`, reads `n` at exit, and a bare `n`
+in its list would be a copy made at the definition. So nested functions
+are the general way to defer anything that isn't a simple call.
 
 ### 2. Parse the deferred statement again at each exit
 
@@ -340,9 +338,6 @@ code.
 
 ## Open questions
 
-- Waiting on [D12](D12-nested-functions.md)'s capture by value or by
-  reference, which decides how much a restricted `defer` can do through
-  nested functions.
 
 - B, C, or both. Whether A stays at all.
 - For B: whether the operand restriction is acceptable, or whether

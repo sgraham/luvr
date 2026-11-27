@@ -2,7 +2,7 @@
 def int main():
     cutoff = 20
 
-    def bool helper(int x):
+    def bool helper(int x) uses cutoff:
         return x < cutoff
 
     all = [i for i in range(100)]

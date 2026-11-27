@@ -411,7 +411,6 @@ static inline u32* namemap_find(const NameMap* m, NameId name) {
   KW(IF, "if")                      \
   KW(IMPORT, "import")              \
   KW(IN, "in")                      \
-  KW(NONLOCAL, "nonlocal")          \
   KW(NOT, "not")                    \
   KW(NULL, "null")                  \
   KW(OFFSETOF, "offsetof")          \
@@ -424,6 +423,7 @@ static inline u32* namemap_find(const NameMap* m, NameId name) {
   KW(STRUCT, "struct")              \
   KW(TRUE, "true")                  \
   KW(TYPEOF, "typeof")              \
+  KW(USES, "uses")                  \
   KW(WITH, "with")                  \
   TY(BOOL, "bool")                  \
   TY(CODEPT, "codept")              \

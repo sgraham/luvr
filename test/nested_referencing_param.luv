@@ -1,6 +1,6 @@
 # OUT: 59
 def int something(int z):
-    def int inner():
+    def int inner() uses z:
         return z + 4
     return inner()
 

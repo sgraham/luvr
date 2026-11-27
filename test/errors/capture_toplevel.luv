@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:16:def int main() uses n:
+# CERR: {ssss}                     ^ error: Only nested functions can capture.
+
+def int main() uses n:
+    return 0

@@ -4,7 +4,7 @@ def int main():
     something = 1
     ps = &something
 
-    def func_b():
+    def func_b() uses ps:
         ps[0] = 99
 
     print something

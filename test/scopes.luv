@@ -6,7 +6,7 @@ something = 1
 def int main():
     something = 2
 
-    def func_a():
+    def func_a() uses something:
         print something
 
     def func_b():

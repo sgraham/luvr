@@ -4,7 +4,7 @@ def int main():
     def bool helper(int x):
         return x < 20
 
-    def sub():
+    def sub() uses helper:
         print helper(10)
         print helper(50)
 

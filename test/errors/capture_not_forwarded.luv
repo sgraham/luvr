@@ -1,0 +1,11 @@
+# CRET: 1
+# CERR: {self}:8:30:        def int inner() uses x:
+# CERR: {ssss}                                   ^ error: 'x' isn't captured by the enclosing function.
+
+def int main():
+    x = 1
+    def int middle():
+        def int inner() uses x:
+            return x
+        return inner()
+    return middle()

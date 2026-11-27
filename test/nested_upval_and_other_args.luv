@@ -2,7 +2,7 @@
 def int main():
     z = 8
 
-    def int inner(int a, int b):
+    def int inner(int a, int b) uses z:
         return a + b + z
 
     print inner(10, 100)

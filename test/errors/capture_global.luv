@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:8:26:    def int inner() uses count:
+# CERR: {ssss}                               ^ error: 'count' isn't a variable of an enclosing function.
+
+count = 1
+
+def int main():
+    def int inner() uses count:
+        return count
+    return inner()

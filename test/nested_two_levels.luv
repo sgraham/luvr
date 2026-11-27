@@ -2,10 +2,10 @@
 def int main():
     x = 3
 
-    def int middle():
+    def int middle() uses x:
         y = 4
 
-        def int inner():
+        def int inner() uses x, y:
             return x + y + 5
         #inner.ref2 == ALLOCA(sizeof(x)+sizeof(y))
         #inner.ref2.x = $middleup->x

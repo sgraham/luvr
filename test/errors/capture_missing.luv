@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:16:        return n + 1
+# CERR: {ssss}                     ^ error: 'n' isn't captured.
+
+def int main():
+    n = 1
+    def int inner():
+        return n + 1
+    return inner()

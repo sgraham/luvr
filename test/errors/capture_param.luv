@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:7:31:    def int inner(int n) uses n:
+# CERR: {ssss}                                    ^ error: 'n' is already a parameter or capture.
+
+def int main():
+    n = 1
+    def int inner(int n) uses n:
+        return n
+    return inner(2)

@@ -5,10 +5,10 @@ def int main():
     x = 3
     px = &x
 
-    def int middle():
+    def int middle() uses x, px:
         y = 4
 
-        def int inner():
+        def int inner() uses x, y:
             return x + y + 5
 
         # Ensure inner() captured by value at def point.

@@ -18,7 +18,7 @@
 # Most constants are small, most operands are names, and most expressions are
 # shallow, as in real code. The rarer paths (large constants, typed literals,
 # shifts, division) are present but uncommon.
-import random, sys
+import random, re, sys
 
 nfuncs = int(sys.argv[1])
 rnd = random.Random(int(sys.argv[2]) if len(sys.argv) > 2 else 1)
@@ -679,11 +679,17 @@ def gen_stat(b, ind, depth, in_loop, last):
     elif kind == "check":
         b.line(f"check {bool_expr(sc, 0).text}", ind)
     elif kind == "nested":
-        captured = [(n, vt) for n, vt in sc.vars if vt == "int"]
+        visible = [(n, vt) for n, vt in sc.vars if vt == "int" and n != "z"]
         name = sc.fresh("helper")
-        b.line(f"def int {name}(int z):", ind)
-        inner = Scope(captured + [("z", "int")])
-        b.line(f"return {expr('int', inner, 1).text}", ind + 1)
+        inner = Scope(visible + [("z", "int")])
+        body = expr('int', inner, 1).text
+        # Nested functions list the locals that they capture (D12). Globals are
+        # visible without being listed.
+        global_names = set(n for n, _ in globals_)
+        uses = [n for n, _ in visible if n not in global_names and re.search(rf"\b{n}\b", body)]
+        trailer = f" uses {', '.join(uses)}" if uses else ""
+        b.line(f"def int {name}(int z){trailer}:", ind)
+        b.line(f"return {body}", ind + 1)
         b.line(f"{sc.fresh('r')} = {name}({expr('int', sc, 1).text})", ind)
     elif kind == "pass":
         b.line("pass", ind)

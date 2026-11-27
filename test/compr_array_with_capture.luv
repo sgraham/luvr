@@ -6,7 +6,7 @@ def int main():
 
     scale = 100
     offset = 7
-    def int magic(int x):
+    def int magic(int x) uses scale, offset:
         return x * scale + offset
 
     [10]int res = [magic(x) for x in nums]

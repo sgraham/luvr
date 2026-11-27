@@ -2,7 +2,7 @@
 def int main():
     z = 4
 
-    def int inner():
+    def int inner() uses z:
         return z + 10
 
     # ensure captured at function defintion

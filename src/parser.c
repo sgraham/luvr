@@ -93,11 +93,21 @@ static const TypeId ty_f64 = {TY_F64};
 typedef enum LocalKind {
   LK_VAR,
   LK_PARAM,
-  LK_CONST,
   // Named in a 'global' statement, so assignments in this function go to the
   // global rather than declaring a local.
   LK_GLOBAL,
+  // A nested function's capture of an enclosing function's variable, as a
+  // copy made at the definition, or as the variable itself.
+  LK_CAPTURE_VALUE,
+  LK_CAPTURE_REF,
+  // The kinds that need special handling when a name is used are last, so
+  // that one comparison finds them.
+  LK_CONST,
+  // Set in the kind of an enclosing function's variable while a nested
+  // function's body is parsed, so that it's only visible through a capture.
+  LK_HIDDEN = 8,
 } LocalKind;
+static_assert(LK_CONST < LK_HIDDEN, "LocalKind values must be below LK_HIDDEN");
 
 // Untyped integer constants need more than 64 bits so that every value of
 // every integer type fits, as well as intermediates like (1 << 64) - 1.
@@ -729,8 +739,29 @@ static u32 func_open(Parser* p) {
   return outer;
 }
 
+// Marks the enclosing function's variables, from outer up to the nested
+// function's first local, as hidden. Constants and names declared 'global'
+// aren't variables of the function, so they stay visible.
+static NOINLINE void hide_enclosing(Parser* p, u32 outer) {
+  for (u32 i = outer; i < p->func_base; ++i) {
+    Local* l = &p->locals[i];
+    if (l->kind != LK_GLOBAL && l->kind != LK_CONST) {
+      l->kind |= LK_HIDDEN;
+    }
+  }
+}
+
+static NOINLINE void unhide_enclosing(Parser* p, u32 outer) {
+  for (u32 i = outer; i < p->func_base; ++i) {
+    p->locals[i].kind &= ~LK_HIDDEN;
+  }
+}
+
 static void func_close(Parser* p, u32 outer) {
   pop_locals(p, p->func_base);
+  if (p->func_depth > 1) {
+    unhide_enclosing(p, outer);
+  }
   p->func_base = outer;
   --p->func_depth;
 }
@@ -1268,6 +1299,15 @@ static u32 array_size(Parser* p) {
 // doesn't need to know about for headers.
 static bool is_loop_var(Parser* p, SrcLoc at) {
   return at.u == p->loop_var_at.u && (T(p) == TK_IN || T(p) == TK_COMMA);
+}
+
+// An enclosing function's variable can only be used through a capture. It
+// can still be the target of an assignment or a loop variable, which
+// declare a new local.
+static NOINLINE void check_captured(Parser* p, const Name* n, SrcLoc at) {
+  if (T(p) != TK_EQ && !is_loop_var(p, at)) {
+    error_at(p, at, "'%.*s' isn't captured.", (int)n->len, (const char*)n->str);
+  }
 }
 
 // There's no syntax for function types, so functions can't be values. A
@@ -3998,8 +4038,12 @@ static void primary(Parser* p, ExpDesc* e) {
       if (n->binding) {
         const Local* l = (const Local*)n->binding;
         e->type = l->type;
-        if (l->kind == LK_CONST) {
-          load_named_const(p, e, &p->local_consts[l - p->locals]);
+        if (l->kind >= LK_CONST) {
+          if (l->kind == LK_CONST) {
+            load_named_const(p, e, &p->local_consts[l - p->locals]);
+          } else {
+            check_captured(p, n, at);
+          }
         }
         emit_local_use(p, e, l, name);
       } else if (kind == GK_CONST) {
@@ -4366,11 +4410,11 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
 
 // simple_stat -> 'return' [expr] | 'break' | 'continue' | 'pass'
 //              | 'print' expr | 'check' expr
-//              | ('global' | 'nonlocal') name {',' name}
+//              | 'global' name {',' name}
 //              | decl_or_expr_stat
 static void simple_stat(Parser* p) {
   emit_source_pos(p, p->ls.pos.t.loc);
-  if (EMIT && (T(p) == TK_CHECK || T(p) == TK_NONLOCAL)) {
+  if (EMIT && T(p) == TK_CHECK) {
     error_at(p, p->ls.pos.t.loc, "This statement isn't supported yet.");
   }
   switch (T(p)) {
@@ -4449,15 +4493,6 @@ static void simple_stat(Parser* p) {
         if ((GlobalKind)(info & GLOBAL_KIND_MASK) == GK_VAR) {
           l->type = p->global_vars.items[info >> GLOBAL_KIND_BITS].type;
         }
-        if (!optional(p, TK_COMMA)) {
-          break;
-        }
-      }
-      return;
-    case TK_NONLOCAL:
-      next(p);
-      for (;;) {
-        check_name(p, "variable name");
         if (!optional(p, TK_COMMA)) {
           break;
         }
@@ -4603,7 +4638,44 @@ static void declare_method(Parser* p,
   hashtable_insert(p->ls.ctx, &p->method_index, slot, tag, idx);
 }
 
-// funcsig -> [type] name '(' [param {',' param}] ')'
+// captures -> 'uses' ['&'] name {',' ['&'] name}
+//
+// Each capture is declared as a local of the nested function, which shadows
+// the enclosing function's variable, so later uses of the name find it.
+static NOINLINE void captures(Parser* p) {
+  if (p->func_depth == 1) {
+    error_at(p, p->ls.pos.t.loc, "Only nested functions can capture.");
+  }
+  next(p);
+  for (;;) {
+    bool by_ref = optional(p, TK_AMP);
+    SrcLoc at;
+    NameId name = expect_name(p, "captured variable name", &at);
+    const Local* outer = lookup(p, name);
+    const Name* n = name_of(p, name);
+    if (outer && outer >= &p->locals[p->func_base]) {
+      error_at(p, at, "'%.*s' is already a parameter or capture.", (int)n->len,
+               (const char*)n->str);
+    }
+    // An enclosing function's variable that the enclosing function didn't
+    // capture itself is hidden here.
+    if (outer && (outer->kind & LK_HIDDEN)) {
+      error_at(p, at, "'%.*s' isn't captured by the enclosing function.", (int)n->len,
+               (const char*)n->str);
+    }
+    if (!outer || outer->kind == LK_GLOBAL || outer->kind == LK_CONST) {
+      error_at(p, at, "'%.*s' isn't a variable of an enclosing function.", (int)n->len,
+               (const char*)n->str);
+    }
+    TypeId t = outer->type;
+    declare_local(p, name, at, by_ref ? LK_CAPTURE_REF : LK_CAPTURE_VALUE)->type = t;
+    if (!optional(p, TK_COMMA)) {
+      break;
+    }
+  }
+}
+
+// funcsig -> [type] name '(' [param {',' param}] ')' [captures]
 // param   -> type name | name    (bare name: a method's first parameter)
 //
 // The return type is optional, so after `def` a NAME is either the function
@@ -4691,6 +4763,12 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
     }
   }
   check_match(p, TK_RPAREN, TK_LPAREN, lparen);
+  if (T(p) == TK_USES) {
+    captures(p);
+  }
+  if (p->func_depth > 1) {
+    hide_enclosing(p, outer);
+  }
   // A method is declared after its parameters, because whether it's static
   // depends on its first one.
   if (is_method && p->receiver.u != TY_UNKNOWN) {
