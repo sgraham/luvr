@@ -34,15 +34,25 @@ INT_RANGE = {
     "u64": (0, (1 << 64) - 1),
 }
 INT_BITS = {"i8": 8, "i16": 16, "i32": 32, "int": 64, "u8": 8, "u16": 16, "u32": 32, "u64": 64}
-SUFFIX = {"i8": "i8", "i16": "i16", "i32": "i32", "int": "i64", "u8": "u8", "u16": "u16",
-          "u32": "u32", "u64": "u64", "f32": "f32", "f64": "f64"}
+SUFFIX = {
+    "i8": "i8",
+    "i16": "i16",
+    "i32": "i32",
+    "int": "i64",
+    "u8": "u8",
+    "u16": "u16",
+    "u32": "u32",
+    "u64": "u64",
+    "f32": "f32",
+    "f64": "f64"
+}
 FLOATS = ("f32", "f64")
 RESERVED = set(INT_BITS) | {"i64", "f32", "f64"}
 NUMERIC = tuple(INT_RANGE) + FLOATS
 
 # How often each type is chosen for variables, parameters and returns.
-VAR_TYPES = [("int", 40), ("i32", 8), ("u8", 6), ("u32", 5), ("u64", 5), ("i16", 2),
-             ("u16", 2), ("i8", 1), ("f64", 8), ("f32", 4), ("bool", 8), ("str", 8)]
+VAR_TYPES = [("int", 40), ("i32", 8), ("u8", 6), ("u32", 5), ("u64", 5), ("i16", 2), ("u16", 2),
+             ("i8", 1), ("f64", 8), ("f32", 4), ("bool", 8), ("str", 8)]
 
 WORDS = ("count total index offset size width height value result sum acc base "
          "limit start end pos step delta flags mask code kind level depth score cost "
@@ -105,12 +115,31 @@ def trunc_mod(a, b):
 # constant value, or None when it isn't constant. Untyped constants have type
 # "untyped_int" or "untyped_float" until they meet a typed operand.
 class E:
+
     def __init__(self, text, ty, prio=12, const=None):
         self.text, self.ty, self.prio, self.const = text, ty, prio, const
 
 
-PRIO = {"or": 1, "and": 2, "==": 4, "!=": 4, "<": 4, "<=": 4, ">": 4, ">=": 4,
-        "|": 5, "^": 6, "&": 7, "<<": 8, ">>": 8, "+": 9, "-": 9, "*": 10, "/": 10, "%": 10}
+PRIO = {
+    "or": 1,
+    "and": 2,
+    "==": 4,
+    "!=": 4,
+    "<": 4,
+    "<=": 4,
+    ">": 4,
+    ">=": 4,
+    "|": 5,
+    "^": 6,
+    "&": 7,
+    "<<": 8,
+    ">>": 8,
+    "+": 9,
+    "-": 9,
+    "*": 10,
+    "/": 10,
+    "%": 10
+}
 
 
 def paren(e, need):
@@ -118,11 +147,13 @@ def paren(e, need):
 
 
 class Struct:
+
     def __init__(self, name, fields, methods):
         self.name, self.fields, self.methods = name, fields, methods
 
 
 class Func:
+
     def __init__(self, name, params, ret):
         self.name, self.params, self.ret = name, params, ret
 
@@ -134,6 +165,7 @@ globals_ = []  # (name, type), read but not written by functions
 
 
 class Scope:
+
     def __init__(self, names=None):
         self.vars = list(names or [])  # (name, type)
         self.used = set(n for n, _ in self.vars)
@@ -163,7 +195,7 @@ def small_int(t):
     elif r < 0.98:
         v = rnd.choice((0xff, 0xffff, 255, 256, 1000, 1024, 4096, 65535, 100000))
     else:
-        v = rnd.choice((1 << 20, 1 << 31, 0x7fff_ffff, 10 ** 9, 1 << 40, 0xdead_beef))
+        v = rnd.choice((1 << 20, 1 << 31, 0x7fff_ffff, 10**9, 1 << 40, 0xdead_beef))
     if is_int(t) and not fits(v, t):
         v = rnd.randint(0, min(100, INT_RANGE[t][1]))
     return v
@@ -215,8 +247,9 @@ def pointer_arg(t, sc, depth):
 
 
 def call_args(params, sc, depth):
-    return ", ".join(pointer_arg(t, sc, depth) if t.startswith("*") else
-                     expr(t, sc, depth + 1).text for _, t in params)
+    return ", ".join(
+        pointer_arg(t, sc, depth) if t.startswith("*") else expr(t, sc, depth + 1).text
+        for _, t in params)
 
 
 def leaf(t, sc, depth):
@@ -228,15 +261,15 @@ def leaf(t, sc, depth):
     rets = [f for f in funcs if f.ret == t]
     if rets and depth < 3:
         options.append(("call", 3))
-    fields = [(n, s, f) for n, vt in sc.vars for s in structs
-              if vt == s.name or vt == "*" + s.name for f, ft, _ in s.fields if ft == t]
+    fields = [(n, s, f) for n, vt in sc.vars for s in structs if vt == s.name or vt == "*" + s.name
+              for f, ft, _ in s.fields if ft == t]
     if fields:
         options.append(("field", 3))
     # Methods take self by pointer, so they can't be called on a parameter or
     # other read-only struct, only on a pointer or an assignable local.
     meths = [(n, s, m) for n, vt in sc.vars for s in structs
-             if (vt == s.name and n not in sc.ro) or vt == "*" + s.name
-             for m in s.methods if m.ret == t]
+             if (vt == s.name and n not in sc.ro) or vt == "*" + s.name for m in s.methods
+             if m.ret == t]
     if meths and depth < 3:
         options.append(("method", 1))
     if t == "int" and depth < 3:
@@ -352,8 +385,8 @@ def numeric_expr(t, sc, depth):
     if t in FLOATS:
         op = pick_weighted([("+", 5), ("-", 3), ("*", 5), ("/", 2)])
     else:
-        op = pick_weighted([("+", 10), ("-", 6), ("*", 6), ("/", 2), ("%", 2), ("&", 2),
-                            ("|", 1), ("^", 1), ("<<", 1), (">>", 1)])
+        op = pick_weighted([("+", 10), ("-", 6), ("*", 6), ("/", 2), ("%", 2), ("&", 2), ("|", 1),
+                            ("^", 1), ("<<", 1), (">>", 1)])
     for _ in range(4):
         a = numeric_expr(t, sc, depth + 1)
         if op in ("<<", ">>"):
@@ -449,8 +482,10 @@ def expr(t, sc, depth=0):
         if s.name == t:
             if sc.of_type(t) and rnd.random() < 0.5:
                 return E(rnd.choice(sc.of_type(t)), t)
-            inits = [f".{f}={expr(ft, sc, depth + 1).text}" for f, ft, _ in s.fields
-                     if rnd.random() < 0.6]
+            inits = [
+                f".{f}={expr(ft, sc, depth + 1).text}" for f, ft, _ in s.fields
+                if rnd.random() < 0.6
+            ]
             return E(f"{t}({', '.join(inits)})", t)
     raise ValueError(t)
 
@@ -464,6 +499,7 @@ def default_type(e, t):
 
 
 class Body:
+
     def __init__(self, sc, ret, indent):
         self.sc, self.ret, self.out = sc, ret, []
         self.indent = indent
@@ -532,15 +568,15 @@ def gen_stat(b, ind, depth, in_loop, last):
         if t in FLOATS:
             op = rnd.choice(("+=", "+=", "-=", "*=", "/="))
         else:
-            op = pick_weighted([("+=", 10), ("-=", 4), ("*=", 2), ("|=", 1), ("&=", 1),
-                                ("^=", 0.5), ("<<=", 0.5), (">>=", 0.5)])
+            op = pick_weighted([("+=", 10), ("-=", 4), ("*=", 2), ("|=", 1), ("&=", 1), ("^=", 0.5),
+                                ("<<=", 0.5), (">>=", 0.5)])
         if op in ("<<=", ">>="):
             rhs = str(rnd.randint(1, min(7, INT_BITS[t] - 1)))
         elif op == "/=":
             rhs = rnd.choice(("2.0", "10.0", "4")) if t in FLOATS else rnd.choice(("2", "10", "4"))
         else:
             e = expr(t, sc)
-            if e.const is not None and op in ("*=",) and e.const == 0:
+            if e.const is not None and op == "*=" and e.const == 0:
                 e = const_leaf(t)
             rhs = e.text
         b.line(f"{n} {op} {rhs}", ind)
