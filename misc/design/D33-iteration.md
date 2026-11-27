@@ -1,14 +1,33 @@
-# D33 Iteration (open)
+# D33 Iteration
 
-Written 2026-11-24 to collect where the discussion is. Nothing here is
-decided. [D30](D30-emission.md)'s slice was paused before `for` over
-`range`, because `range` needs some form of the iteration protocol. The
-emitting build currently rejects every `for` ("'for' isn't supported
-yet."), and the checking build declares loop variables as `ty_unknown`.
+Written 2026-11-24 to collect where the discussion is. The decisions are
+in the next section, and the rest is the discussion behind them, with the
+questions that are still open. [D30](D30-emission.md)'s slice was paused
+before `for` over `range`, because `range` needs some form of the
+iteration protocol. The emitting build currently rejects every `for`
+("'for' isn't supported yet."), and the checking build declares loop
+variables as `ty_unknown`.
 
 The question is where to start. One option is the least work that makes
 `for i in range(10)` run. The other is a general protocol that every
 iterable uses, with fast integer loops added later as an optimization.
+
+## Decided
+
+2026-11-26, after methods were typed and emitted:
+
+- **Approach 2, the protocol first**, with `bool __next__(self, *T out)`.
+  Range and RangeIter go in the prelude, and every `for` calls `__iter__`
+  and `__next__`. Baked cases come later, with benchmarks, once there's
+  native code to measure.
+- **A type with `__next__` is iterated directly**, without `__iter__`.
+  Otherwise `__iter__` is called, and its result must have `__next__`.
+- **A zero step traps in `range()`** at run time. A constant zero isn't
+  checked at compile time, because it's too rare to be worth the code.
+- **The loop variable is visible after the loop** (function scoping, as
+  in Python) and keeps the last element. If the loop doesn't run, it keeps
+  the value it had before, which is zero for a variable that the loop
+  declares.
 
 ## Leanings so far
 

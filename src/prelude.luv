@@ -13,52 +13,40 @@ struct str:
 on str foreign str join(self, []str parts)
 
 
-### struct Range:
-###     int start
-###     int stop
-###     int step
-###
-###
-### struct RangeIter:
-###     Range _over
-###     int _cur
-###
-###
-### on Range def RangeIter __iter__(self):
-###     return RangeIter(self, start)
-###
-###
-### on RangeIter def IterResult{int} __next__(self):
-###     if self._over.step < 0:
-###         # TODO
-###         pass
-###     else:
-###         if self._cur >= stop:
-###             return IterResult{int}(false, 0)
-###         ret = IterResult{int}(true, self._cur)
-###         self._cur += self._over.step
-###         return ret
-###
-###
-### on Range def bool __contains__(self, int value):
-###     if self.step == 0:
-###         return false
-###
-###     # Outside the range bounds.
-###     if self.step > 0:
-###         if value < self.start or value >= self.stop:
-###             return false
-###     else:
-###         if value > self.start or value <= self.stop:
-###             return false
-###
-###     # Check if value is on the corect stride.
-###     diff = value - self.start
-###     return diff % self.step == 0
-###
-###
-### on Range def str __str__(self):
-###     if self.step == 1:
-###         return "range(\(self.start), \(self.stop))"
-###     else:
-###         return "range(\(self.start), \(self.stop), \(self.step))"
+struct Range:
+    int start
+    int stop
+    int step
+
+
+# The position of a loop over a Range. It doesn't refer to the Range, so it
+# stays valid if the Range is a temporary. The number of elements is found
+# up front, as Python does, so that a step past either end of int can't wrap
+# into another element. The fields are unsigned because they're expected
+# to wrap.
+struct RangeIter:
+    u64 _cur
+    u64 _step
+    u64 _left
+
+
+on Range def RangeIter __iter__(self):
+    u64 start = cast u64(self.start)
+    u64 step = cast u64(self.step)
+    u64 left = 0
+    # Unsigned subtraction of the bits gives the exact distance between two
+    # ints, even when the signed difference would overflow.
+    if self.step > 0 and self.start < self.stop:
+        left = (cast u64(self.stop) - start - 1) / step + 1
+    if self.step < 0 and self.start > self.stop:
+        left = (start - cast u64(self.stop) - 1) / (~step + 1) + 1
+    return RangeIter(start, step, left)
+
+
+on RangeIter def bool __next__(self, *int out):
+    if self._left == 0:
+        return false
+    out[0] = cast int(self._cur)
+    self._cur += self._step
+    self._left -= 1
+    return true

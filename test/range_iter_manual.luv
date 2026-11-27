@@ -1,0 +1,33 @@
+# OUT: 0
+# OUT: 1
+# OUT: 2
+# OUT: 5
+# OUT: 3
+# OUT: 1
+# OUT: 1
+# OUT: 0
+# OUT: 3
+# OUT: 3
+# OUT: 9223372036854775806
+def int main():
+    r = Range(0, 3, 1)
+    it = r.__iter__()
+    int x
+    for it.__next__(&x):
+        print x
+    down = Range(5, 0, -2).__iter__()
+    for down.__next__(&x):
+        print x
+    print x
+    past = Range(0, 5, 3).__iter__()
+    for past.__next__(&x):
+        print x
+    empty = Range(3, 3, 1).__iter__()
+    for empty.__next__(&x):
+        print x
+    print x
+    # Stepping past the end of int doesn't wrap into another element.
+    edge = Range(9223372036854775806, 9223372036854775807, 2).__iter__()
+    for edge.__next__(&x):
+        print x
+    return 0
