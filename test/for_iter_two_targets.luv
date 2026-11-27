@@ -18,12 +18,12 @@ on Words def WordsIter __iter__(self):
 on WordsIter def bool __next__(self, *int index, *str word):
     if self._i == self._count:
         return false
-    index[0] = self._i
-    word[0] = "zero"
+    *index = self._i
+    *word = "zero"
     if self._i == 1:
-        word[0] = "one"
+        *word = "one"
     if self._i == 2:
-        word[0] = "two"
+        *word = "two"
     self._i += 1
     return true
 

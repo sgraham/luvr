@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:7:6:    *n = 1
+# CERR: {ssss}          ^ error: '*' expects a pointer, not int.
+
+def main():
+    n = 5
+    *n = 1

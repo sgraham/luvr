@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:9:1:b.x = 2
+# CERR: {ssss}     ^ error: Only a name can be assigned to at top level.
+
+struct Box:
+    int x
+
+b = Box(1)
+b.x = 2

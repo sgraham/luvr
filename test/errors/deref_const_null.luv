@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:8:6:    *NOWHERE = 1
+# CERR: {ssss}          ^ error: Can't dereference a null constant.
+
+*int NOWHERE = null
+
+def main():
+    *NOWHERE = 1

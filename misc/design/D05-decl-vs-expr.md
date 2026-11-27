@@ -5,18 +5,20 @@ Statement-start FIRST sets, assuming [D4](D04-types-vs-values.md)(a):
 | First token | Can be | Decision |
 |---|---|---|
 | keyword (`if`, `for`, `def`, `return`, ...) | that statement | LL(1) switch, like Lua's `stat()` (`lparser.c:1022`) |
-| builtin type, `*`, `[`, `{` | **declaration only** | Requires the rules below: no expression statement may start with these |
+| builtin type, `[`, `{` | **declaration only** | Requires the rules below: no expression statement may start with these |
+| `*` | `*int p` (decl) or `*p = 1` (assignment) | Count the `*`s, then parse the operand as in the next two rows. A type gives a pointer declaration, a value gives the dereferenced target ([D37](D37-dereference.md)) |
 | `TK_TYPENAME` | `Stuff s` (decl) or `Stuff(1).f()` (expr) | **Left-factor**: parse the type. If the next token is `NAME` it's a declaration. If it's `(`, it's a compound literal; continue as a postfix expression |
 | `TK_NAME` | `x = ...`, `x += ...`, `f()`, `a.b = ...`, `mod.Type v` | Parse the postfix chain into an `expdesc` (Lua `var_or_func`). Then branch on `v.k` and `t`: `VTYPE` followed by `NAME` → declaration. Lvalue followed by `=` or augmented op → assignment. A call → call statement. Otherwise "syntax error" |
 | anything else | — | error "statement expected" |
 
 Constraints this puts on the expression language:
 
-- **No prefix dereference `*p`.** luv already uses `p[0]` and auto-deref on
-  `.`, so a statement starting with `*` is always a pointer type. If deref
-  syntax is ever needed, make it postfix (`p.*` or `p^`) so it doesn't take
-  `*` away from types. (`*` followed by `NAME` would be LL(1) for one level,
-  but `**p` vs `**int` makes it LL(k).)
+- **A statement starting with `*` is decided after its operand.** The `*`s
+  are counted, then the operand is parsed: a type makes it a pointer
+  declaration (`**int p`, `*Stuff s`), and a value makes it an assignment
+  through that many dereferences (`**pp = 1`). Deciding at the `*` would
+  need unbounded lookahead (`**p` vs `**int`), so it's left-factored the
+  same way as `TK_NAME`. See [D37](D37-dereference.md).
 - **Only certain expression statements are allowed**: calls, assignments,
   augmented assignments. Lua enforces the same rule (`namestat` +
   `check_condition(... "syntax error")`). That makes `[f(x) for x in xs]` or

@@ -2165,6 +2165,70 @@ static void emit_complement(Parser* p, ExpDesc* e, SrcLoc at) {
 #endif
 }
 
+static void emit_deref(Parser* p, ExpDesc* e, TypeId pointee, SrcLoc at) {
+#if EMIT
+  if (!type_has_layout(p, pointee)) {
+    error_at(p, at, "This expression isn't supported yet.");
+  }
+  Ref ptr = emit_to_ref(p, e, e->type, at);
+  e->kind = EK_ADDR;
+  e->base = ptr;
+  e->offset = 0;
+#else
+  exp_mark_non_const(e);
+#endif
+}
+
+// Makes e, a pointer, the value that it points to.
+static void deref(Parser* p, ExpDesc* e, SrcLoc at) {
+  e->shape = SH_LVALUE;
+  if (e->type.u == TY_UNKNOWN) {
+    emit_unsupported(e);
+    return;
+  }
+  if (!type_is_pointer(p, e->type)) {
+    error_at(p, at, "'*' expects a pointer, not %s.", type_str(p, e->type));
+  }
+  // Pointer constants can only be null.
+  if (e->kind == EK_CONST) {
+    error_at(p, at, "Can't dereference a null constant.");
+  }
+  TypeId pointee = type_info(p, e->type)->pointee;
+  emit_deref(p, e, pointee, at);
+  e->type = pointee;
+}
+
+// star_operand -> '*' {'*'} (type | primary)
+//
+// The '*'s are counted first, so that whether it's a type is decided after
+// the operand, without lookahead. A type gives a pointer to it in *t, and a
+// value gives that many dereferences of it in *e. Returns whether it was a
+// type.
+static bool star_operand(Parser* p, ExpDesc* e, TypeId* t) {
+  u32 stars = 0;
+  while (optional(p, TK_STAR)) {
+    ++stars;
+  }
+  TokenKind k = T(p);
+  SrcLoc at = p->ls.pos.t.loc;
+  if (k != TK_NAME && k != TK_TYPENAME && k != TK_TYPEPARAM && is_type_start(k)) {
+    *t = type(p);
+  } else {
+    primary(p, e);
+    if (e->shape != SH_TYPE) {
+      for (u32 i = 0; i < stars; ++i) {
+        deref(p, e, at);
+      }
+      return false;
+    }
+    *t = e->type;
+  }
+  for (u32 i = 0; i < stars; ++i) {
+    *t = type_pointer_to(p, *t);
+  }
+  return true;
+}
+
 // Unary '-' or '~', which give the operand's type. Constants are folded.
 static void unary_arith(Parser* p, bool neg, ExpDesc* e, SrcLoc at) {
   TypeId t = e->type;
@@ -2235,6 +2299,13 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       subexpr(p, PRIORITY_UNARY, e);
       unary_arith(p, neg, e, at);
       e->shape = SH_VALUE;
+      break;
+    }
+    case TK_STAR: {
+      next(p);
+      SrcLoc at = p->ls.pos.t.loc;
+      subexpr(p, PRIORITY_UNARY, e);
+      deref(p, e, at);
       break;
     }
     case TK_AMP: {
@@ -2836,19 +2907,27 @@ static void dict_literal(Parser* p) {
 }
 
 // The operand of sizeof or alignof is either a type or an expression.
-// Builtin types, '*', 'typeof', '[' and '{' always start a type, so
-// sizeof([2]int) is a type, and an expression needs extra parentheses, as in
+// Builtin types, 'typeof', '[' and '{' always start a type, so sizeof([2]int)
+// is a type, and an expression needs extra parentheses, as in
 // sizeof(([1, 2])). A name or TypeName is parsed as a postfix chain, which is
 // a type if it's TypeName or module.TypeName, and is otherwise continued as an
-// expression. Returns the type, or the expression's type.
+// expression. Leading '*'s are decided after their operand, so sizeof(*int)
+// is a pointer's size and sizeof(*p) is the pointee's. Returns the type, or
+// the expression's type.
 static TypeId sizeof_operand(Parser* p) {
   TokenKind k = T(p);
-  if (is_builtin_type(k) || k == TK_STAR || k == TK_LSQUARE || k == TK_LBRACE || k == TK_TYPEOF) {
+  if (is_builtin_type(k) || k == TK_LSQUARE || k == TK_LBRACE || k == TK_TYPEOF) {
     return type(p);
   }
   ExpDesc e;
-  if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
-    SrcLoc start = p->ls.pos.t.loc;
+  SrcLoc start = p->ls.pos.t.loc;
+  if (k == TK_STAR) {
+    TypeId t;
+    if (star_operand(p, &e, &t)) {
+      return t;
+    }
+    binop_rest(p, -1, &e, start);
+  } else if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
     primary(p, &e);
     if (e.shape == SH_TYPE) {
       return e.type;
@@ -4132,7 +4211,9 @@ static_assert(COUNTOF(augassign_opr) == TK_SHREQ - TK_PLUSEQ + 1,
               "augassign_opr doesn't match tokens");
 
 // A declaration, assignment, or call. The postfix chain is parsed first, and
-// then its shape and the next token decide which it is.
+// then its shape and the next token decide which it is. A leading '*' is
+// parsed by star_operand() instead, and is a pointer type, or a dereference to
+// assign to.
 //
 //   decl   -> type name ['=' expr]
 //   assign -> name_or_lvalue ('=' | augop) expr
@@ -4140,13 +4221,21 @@ static_assert(COUNTOF(augassign_opr) == TK_SHREQ - TK_PLUSEQ + 1,
 static void decl_or_expr_stat(Parser* p, bool toplevel) {
   TokenKind k = T(p);
   SrcLoc at = p->ls.pos.t.loc;
-  if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM) {
+  if (k == TK_NAME || k == TK_TYPENAME || k == TK_TYPEPARAM || k == TK_STAR) {
     NameId name = p->ls.pos.t.v.name;
     ExpDesc exp;
-    primary(p, &exp);
-    if (exp.shape == SH_TYPE) {
-      decl_rest(p, toplevel, exp.type);
-      return;
+    if (k == TK_STAR) {
+      TypeId t;
+      if (star_operand(p, &exp, &t)) {
+        decl_rest(p, toplevel, t);
+        return;
+      }
+    } else {
+      primary(p, &exp);
+      if (exp.shape == SH_TYPE) {
+        decl_rest(p, toplevel, exp.type);
+        return;
+      }
     }
     if (T(p) == TK_EQ || is_augassign(T(p))) {
       if (exp.shape == SH_PARAM) {
@@ -4157,6 +4246,9 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
       }
       if (toplevel && T(p) != TK_EQ) {
         error_at(p, p->ls.pos.t.loc, "Augmented assignment isn't allowed at top level.");
+      }
+      if (toplevel && exp.shape != SH_NAME) {
+        error_at(p, at, "Only a name can be assigned to at top level.");
       }
       // The current function's local that's assigned to, if it already exists.
       Local* loc = NULL;

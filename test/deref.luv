@@ -1,0 +1,41 @@
+# OUT: 5
+# OUT: 7
+# OUT: 10
+# OUT: 30
+# OUT: 42
+# OUT: 4
+# OUT: 3
+# OUT: 16
+# OUT: 8
+# OUT: 48
+
+struct Point:
+    int x
+    int y
+
+def set(*int out, int v):
+    *out = v
+
+def int main():
+    x = 1
+    *int p = &x
+    **int pp = &p
+    *p = 5
+    print x
+    **pp = 7
+    print x
+    *p += 3
+    print *p
+    y = *p * 2 + **pp
+    print y
+    set(&x, 42)
+    print x
+    Point pt
+    *Point sp = &pt
+    *sp = Point(3, 4)
+    print pt.y
+    print (*sp).x
+    print sizeof(*sp)
+    print sizeof(*Point)
+    print 3 * sizeof(*sp)
+    return 0

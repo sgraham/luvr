@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:6:1:*ptr = 2
+# CERR: {ssss}     ^ error: Only a name can be assigned to at top level.
+
+*int ptr = null
+*ptr = 2
