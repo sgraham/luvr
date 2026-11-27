@@ -3528,6 +3528,10 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   SrcLoc at = p->ls.pos.t.loc;
   bool is_pointer = type_is_pointer(p, e->type);
   bool is_array = type_is_array(p, e->type);
+  // Pointer constants can only be null.
+  if (is_pointer && e->kind == EK_CONST) {
+    error_at(p, at, "Can't index a null constant.");
+  }
   // The pointer is loaded, or the array's address found, before the index is
   // evaluated, like the left operand of a binary operator.
   u32 offset;

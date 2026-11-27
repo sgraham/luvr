@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:8:12:    NOWHERE[0] = 1
+# CERR: {ssss}                 ^ error: Can't index a null constant.
+
+*int NOWHERE = null
+
+def main():
+    NOWHERE[0] = 1
