@@ -3450,8 +3450,8 @@ static void emit_method_use(Parser* p, ExpDesc* e, const Method* method, SrcLoc 
 
 // Passes the address of e, the receiver, as self, and makes e the method to
 // call. A receiver that's reached through pointers is already in memory, and
-// the address of an assignable struct can be taken. Temporaries aren't
-// supported yet.
+// so are assignable structs and the temporaries for call results and struct
+// literals.
 static void emit_self_arg(Parser* p,
                           CallEmit* call,
                           ExpDesc* e,
@@ -3460,7 +3460,7 @@ static void emit_self_arg(Parser* p,
                           SrcLoc at) {
 #if EMIT
   bool through_pointer = type_is_pointer(p, e->type);
-  if (!type_is_pointer(p, self_type) || (!through_pointer && exp_part_shape(e) != SH_LVALUE)) {
+  if (!type_is_pointer(p, self_type)) {
     error_at(p, at, "This method call isn't supported yet.");
   }
   Ref self = through_pointer ? emit_through_pointers(p, e, at) : emit_agg_addr(p, e, at);
@@ -3477,7 +3477,7 @@ static void method_call(Parser* p, ExpDesc* e, const Method* method, SrcLoc name
              (const char*)n->str);
   }
   // When self is a pointer, the method could modify the receiver through it.
-  // Call results and struct literals are temporaries, so they're copied.
+  // Call results and struct literals are already in temporaries of their own.
   TypeId self_type = p->param_types.items[type_info(p, method->type)->first_param];
   if (type_is_pointer(p, self_type) && !type_is_pointer(p, e->type)) {
     if (exp_is_const(e)) {

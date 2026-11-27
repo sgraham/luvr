@@ -1,0 +1,25 @@
+# OUT: 3
+# OUT: 4
+# OUT: 5
+# OUT: 7
+struct Stuff:
+    int a
+
+on Stuff def int get(self):
+    return self.a
+
+on Stuff def Stuff plus(self, int b):
+    return Stuff(self.a + b)
+
+on Stuff def Stuff new(int a):
+    return Stuff(a)
+
+def Stuff make(int a):
+    return Stuff(a)
+
+def int main():
+    print make(3).get()
+    print Stuff(4).get()
+    print Stuff.new(5).get()
+    print Stuff.new(5).plus(2).get()
+    return 0
