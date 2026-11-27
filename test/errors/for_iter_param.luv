@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:14:    for x in it:
+# CERR: {ssss}                   ^ error: Can't iterate over a non-lvalue.
+
+def f(RangeIter it):
+    for x in it:
+        print x

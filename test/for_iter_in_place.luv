@@ -1,0 +1,32 @@
+# OUT: 0
+# OUT: 1
+# OUT: ---
+# OUT: 2
+# OUT: 3
+# OUT: ---
+# OUT: ---
+# OUT: 7
+# OUT: 8
+
+struct Box:
+    RangeIter it
+
+
+def int main():
+    it = range(4).__iter__()
+    for x in it:
+        print x
+        if x == 1:
+            break
+    print "---"
+    # The first loop advanced it, so this one carries on from there.
+    for x in it:
+        print x
+    print "---"
+    for x in it:
+        print x
+    print "---"
+    box = Box(range(7, 9).__iter__())
+    for x in box.it:
+        print x
+    return 0

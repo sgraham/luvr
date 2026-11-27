@@ -3067,8 +3067,7 @@ static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, Src
 typedef struct CallEmit {
   Ref args[MAX_CALL_ARGS + 1];
   u32 first;
-  SlotId agg_temp;  // an aggregate result's temporary
-  Ref agg_result;   // the address of agg_temp
+  Ref agg_result;  // the address of an aggregate result's temporary
 } CallEmit;
 #else
 typedef int CallEmit;  // Unused.
@@ -3084,8 +3083,8 @@ static void emit_call_begin(Parser* p, CallEmit* call, TypeId ret) {
   call->agg_result = 0;
   if (type_is_aggregate(p, ret) && type_has_layout(p, ret)) {
     AggId agg = type_agg(p, ret);
-    call->agg_temp = il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED});
-    call->agg_result = il_slot_addr(&p->il, call->agg_temp);
+    SlotId temp = il_slot_add_agg(&p->il, agg, (NameId){IL_SLOT_UNNAMED});
+    call->agg_result = il_slot_addr(&p->il, temp);
     call->args[0] = il_emit(&p->il, OP_RESULTAGG, IT_I64, call->agg_result, agg.u);
     call->first = 1;
   }
@@ -4664,11 +4663,22 @@ static void funcdef(Parser* p, bool is_method) {
   p->loop = outer_loop;
 }
 
-// The iterator stays in __iter__'s result temporary for the whole loop. Each
-// pass calls __next__ with the addresses of hidden out slots, and then loads
-// them into the loop variables, so that the loop variables aren't
-// address-taken. The head block is moved to the call of __next__, so that the
-// setup before it only runs once.
+// An iterator is advanced in place, so it has to be somewhere that can be
+// modified, as for the receiver of a method whose self is a pointer.
+static void check_iterated_in_place(Parser* p, const ExpDesc* e, SrcLoc at) {
+  if (exp_is_const(e)) {
+    error_at(p, at, "Can't iterate over a constant.");
+  }
+  if (exp_part_shape(e) != SH_LVALUE && e->shape != SH_CALL && e->shape != SH_STRUCT_LITERAL) {
+    error_at(p, at, "Can't iterate over a non-lvalue.");
+  }
+}
+
+// The iterator is __iter__'s result temporary, or the iterable itself if it has
+// __next__, so that it's advanced in place. Each pass calls __next__ with the
+// addresses of hidden out slots, and then loads them into the loop variables,
+// so that the loop variables aren't address-taken. The head block is moved to
+// the call of __next__, so that the setup before it only runs once.
 static void emit_iterate(Parser* p,
                          Loop* loop,
                          ExpDesc* iterable,
@@ -4677,13 +4687,16 @@ static void emit_iterate(Parser* p,
                          u32 num_vars,
                          SrcLoc at) {
 #if EMIT
-  const TypeInfo* make_info = type_info(p, it->make->type);
-  TypeId self_type = p->param_types.items[make_info->first_param];
-  CallEmit make;
-  emit_call_begin(p, &make, make_info->ret);
-  emit_self_arg(p, &make, iterable, it->make, self_type, at);
-  iterable->type = make_info->ret;
-  emit_call_end(p, &make, iterable, 1, at);
+  if (it->make) {
+    const TypeInfo* make_info = type_info(p, it->make->type);
+    TypeId self_type = p->param_types.items[make_info->first_param];
+    CallEmit make;
+    emit_call_begin(p, &make, make_info->ret);
+    emit_self_arg(p, &make, iterable, it->make, self_type, at);
+    iterable->type = make_info->ret;
+    emit_call_end(p, &make, iterable, 1, at);
+  }
+  Ref iter = emit_agg_addr(p, iterable, at);
   SlotId outs[MAX_TARGETS];
   for (u32 i = 0; i < num_vars; ++i) {
     TypeId t = it->types[i];
@@ -4697,7 +4710,7 @@ static void emit_iterate(Parser* p,
   il_block_start(&p->il, loop->head);
   CallEmit next;
   emit_call_begin(p, &next, ty_bool);
-  next.args[0] = il_slot_addr(&p->il, make.agg_temp);
+  next.args[0] = iter;
   for (u32 i = 0; i < num_vars; ++i) {
     next.args[1 + i] = il_slot_addr(&p->il, outs[i]);
   }
@@ -4733,7 +4746,10 @@ static void for_header(Parser* p, Loop* loop) {
       subexpr(p, -1, &iterable);
       ForIter it;
       for_iter_find(p, iterable.type, t.num_targets, &it, iterable_at);
-      if (EMIT && !it.make) {
+      if (it.next && !it.make) {
+        check_iterated_in_place(p, &iterable, iterable_at);
+      }
+      if (EMIT && !it.next) {
         error_at(p, at, "Iterating isn't supported yet.");
       }
       Local* vars[MAX_TARGETS];

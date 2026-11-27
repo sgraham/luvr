@@ -22,6 +22,9 @@ iterable uses, with fast integer loops added later as an optimization.
   native code to measure.
 - **A type with `__next__` is iterated directly**, without `__iter__`.
   Otherwise `__iter__` is called, and its result must have `__next__`.
+  An iterator that's iterated directly is advanced in place, as in Python,
+  and isn't copied. The loop is the same as calling `__next__` on it by
+  hand, so afterwards it's consumed.
 - **A zero step gives an empty loop.** RangeIter works out the number of
   elements up front, and finds none for a zero step. That's reasonable
   behaviour, so there's no trap and no compile-time check.
