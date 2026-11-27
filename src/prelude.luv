@@ -30,6 +30,12 @@ struct RangeIter:
     u64 _left
 
 
+# range() takes one to three ints, so it's a builtin, and it calls this with
+# all three.
+def Range _range(int start, int stop, int step):
+    return Range(start, stop, step)
+
+
 on Range def RangeIter __iter__(self):
     u64 start = cast u64(self.start)
     u64 step = cast u64(self.step)

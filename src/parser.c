@@ -316,6 +316,8 @@ struct Parser {
   // Set at the end of its definition.
   u32 str_data_offset;
   u32 str_len_offset;
+  // The prelude's _range, which range() calls, in global_funcs.
+  u32 range_func;
 #if EMIT
   IlFunc il;  // of the current function
 #endif
@@ -3665,6 +3667,60 @@ static void len_call(Parser* p, ExpDesc* e) {
   }
 }
 
+// Parses one of range's arguments, which are ints.
+static void range_arg(Parser* p, ExpDesc* arg, u32 num) {
+  SrcLoc at = p->ls.pos.t.loc;
+  expr_expect(p, ty_i64, arg);
+  if (!assignable(p, arg->type, ty_i64)) {
+    error_at(p, at, "Argument %u is %s, but the parameter is int.", num, type_str(p, arg->type));
+  }
+  check_const_conversion(p, ty_i64, arg, at);
+}
+
+// range_call -> 'range' '(' expr [',' expr [',' expr]] ')'
+//
+// range(stop) and range(start, stop) call the prelude's _range with a start
+// of 0 and a step of 1 filled in.
+static void range_call(Parser* p, ExpDesc* e) {
+  SrcLoc at = p->ls.pos.t.loc;
+  const GlobalFunc* gf = &p->global_funcs.items[p->range_func];
+  TypeId ret = type_info(p, gf->type)->ret;
+  CallEmit call;
+  emit_call_begin(p, &call, ret);
+  next(p);  // '('
+  if (T(p) == TK_RPAREN) {
+    error_at(p, p->ls.pos.t.loc, "range expects 1 to 3 arguments.");
+  }
+  ExpDesc zero = {.type = ty_i64, .kind = EK_CONST};
+  ExpDesc one = {.type = ty_i64, .kind = EK_CONST, .cv.i = 1};
+  ExpDesc arg;
+  range_arg(p, &arg, 1);
+  // The first argument is start if there's a second, and otherwise it's stop.
+  if (!optional(p, TK_COMMA)) {
+    emit_arg(p, &call, 0, &zero, ty_i64, at);
+    emit_arg(p, &call, 1, &arg, ty_i64, at);
+    emit_arg(p, &call, 2, &one, ty_i64, at);
+  } else {
+    emit_arg(p, &call, 0, &arg, ty_i64, at);
+    range_arg(p, &arg, 2);
+    emit_arg(p, &call, 1, &arg, ty_i64, at);
+    if (optional(p, TK_COMMA)) {
+      range_arg(p, &arg, 3);
+      emit_arg(p, &call, 2, &arg, ty_i64, at);
+    } else {
+      emit_arg(p, &call, 2, &one, ty_i64, at);
+    }
+  }
+  if (T(p) == TK_COMMA) {
+    error_at(p, p->ls.pos.t.loc, "range expects 1 to 3 arguments.");
+  }
+  check_match(p, TK_RPAREN, TK_LPAREN, at);
+  emit_func_use(e, gf);
+  e->shape = SH_CALL;
+  e->type = ret;
+  emit_call_end(p, &call, e, 3, at);
+}
+
 #if EMIT
 // Writes the low size bytes of bits to dst. Every target is little-endian.
 static void store_le(u8* dst, u64 bits, u32 size) {
@@ -3782,9 +3838,15 @@ static void primary(Parser* p, ExpDesc* e) {
       }
       bool defined = n->binding || kind != GK_NONE;
       next(p);
-      if (kind == GK_BUILTIN && name.u == p->ls.ctx->name_len.u && T(p) == TK_LPAREN) {
-        len_call(p, e);
-        break;
+      if (kind == GK_BUILTIN && T(p) == TK_LPAREN) {
+        if (name.u == p->ls.ctx->name_len.u) {
+          len_call(p, e);
+          break;
+        }
+        if (name.u == p->ls.ctx->name_range.u) {
+          range_call(p, e);
+          break;
+        }
       }
       // A name followed by '=' is an assignment target, which declares the name
       // if it's new. Similarly, a loop variable is declared after the
@@ -5303,6 +5365,9 @@ static void prelude_load(Ctx* ctx, Parser* p) {
   for (u32 i = 0; i < end; ++i) {
     p->prelude_globals[i] = module_global_info(m, (NameId){i});
   }
+  GlobalInfo range_info = module_global_info(m, lex_intern_safe(ctx, "_range"));
+  ASSERT((GlobalKind)(range_info & GLOBAL_KIND_MASK) == GK_FUNC);
+  p->range_func = range_info >> GLOBAL_KIND_BITS;
   for (u32 i = 0; i < COUNTOF(builtins); ++i) {
     ASSERT(p->prelude_globals[builtin_names[i].u] == GK_NONE);
     p->prelude_globals[builtin_names[i].u] = GK_BUILTIN;

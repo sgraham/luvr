@@ -164,6 +164,7 @@ bool lex_intern_init(Ctx* ctx) {
     intern(ctx, (const u8*)kws[i].s, len, hash_ident_safe(kws[i].s, len), kws[i].kind);
   }
   ctx->name_len = lex_intern_safe(ctx, "len");
+  ctx->name_range = lex_intern_safe(ctx, "range");
   return true;
 }
 

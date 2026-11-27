@@ -1,0 +1,24 @@
+# OUT: 0
+# OUT: 3
+# OUT: 1
+# OUT: 2
+# OUT: 5
+# OUT: 1
+# OUT: 10
+# OUT: 7
+# OUT: 4
+# OUT: 1
+def int main():
+    r = range(3)
+    print r.start
+    print r.stop
+    print r.step
+    r = range(2, 5)
+    print r.start
+    print r.stop
+    print r.step
+    it = range(10, 0, -3).__iter__()
+    int x
+    for it.__next__(&x):
+        print x
+    return 0

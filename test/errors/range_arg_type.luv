@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:18:    r = range(0, "ten")
+# CERR: {ssss}                       ^ error: Argument 2 is str, but the parameter is int.
+def main():
+    r = range(0, "ten")

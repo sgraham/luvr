@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:5:11:    x = 4 + range(3)
-# CERR: {ssss}                ^ error: Cannot add i32 to range
+# CERR: {ssss}                ^ error: Can't add an integer constant and Range.
 def int main():
     x = 4 + range(3)
     return 0

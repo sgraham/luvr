@@ -6,10 +6,10 @@
 
 struct ListData_int:
     *int data
-    u64 length
-    u64 capacity
+    int length
+    int capacity
 
-on ListData_int def ensure_capacity(self, u64 cap):
+on ListData_int def ensure_capacity(self, int cap):
     if self.capacity >= cap:
         return
     # TODO: handle {null,0,0}, grow by at least 16 or double or something
@@ -26,10 +26,10 @@ on ListData_int def append(self, int item):
     self.data[self.length] = item
     self.length = self.length + 1
 
-on ListData_int def u64 __len__(self):
+on ListData_int def int __len__(self):
     return self.length
 
-on ListData_int def int __getitem__(self, u64 index):
+on ListData_int def int __getitem__(self, int index):
     #check index < self.length
     return self.data[index]
 

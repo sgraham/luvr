@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:22:    r = range(1, 2, 3, 4)
+# CERR: {ssss}                           ^ error: range expects 1 to 3 arguments.
+def main():
+    r = range(1, 2, 3, 4)
