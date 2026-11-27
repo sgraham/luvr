@@ -4,8 +4,8 @@
   "betterbench": {
    "name": "betterbench",
    "path": "/home/scott/luvr/scratch/inputs/betterbench.luv",
-   "md5": "9e18a11b040eb0cbd27de6b4ddd8431e",
-   "bytes": 195224068,
+   "md5": "ab1cc2ef2e7e00584a5c92bacf8eea62",
+   "bytes": 195240404,
    "lines": 3645803
   },
   "dumbbench": {
@@ -35721,6 +35721,886 @@
       "ghz": 3.268603595822338,
       "instructions_per_token": 3126.441311082317,
       "cycles_per_token": 902.9180241430723
+     }
+    }
+   ]
+  },
+  {
+   "commit": "c13890d9191d96414ad4bb58ccfdb7415a085f8b",
+   "short": "c13890d",
+   "date": "2026-11-27T12:45:28-07:00",
+   "subject": "bench update",
+   "measured_at": "2026-11-27T22:46:40+00:00",
+   "machine": {
+    "cpu_model": "AMD Ryzen 9 5900XT 16-Core Processor",
+    "logical_cpus": "32",
+    "threads_per_core": "2",
+    "cpu_max_mhz": "3301.0000",
+    "cpu_min_mhz": "570.1730",
+    "scaling_driver": "amd-pstate-epp",
+    "governor": "powersave",
+    "energy_performance_preference": "performance",
+    "boost": "0",
+    "perf_event_paranoid": "1",
+    "nmi_watchdog": "0",
+    "mem_total_kb": 32770540,
+    "kernel": "7.0.0-44-generic",
+    "os": "Linux Mint 22.3"
+   },
+   "toolchain": {
+    "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "perf": "perf version 7.0.14",
+    "hyperfine": "hyperfine 1.18.0",
+    "python": "3.12.3"
+   },
+   "settings": {
+    "cpu": 6,
+    "perf_runs": 10,
+    "hyperfine_runs": 20,
+    "hyperfine_warmup": 3,
+    "modes": {
+     "parse": "{luv} parse -q {input}",
+     "il": "{luv} il {input}"
+    }
+   },
+   "build_ok": true,
+   "build_error": "",
+   "cflags": "-g -std=c11 -Wall -Wextra -Werror -Wpedantic -Wimplicit-fallthrough -Iout/lr/gen -O2 -DBUILD_DEBUG=0 -falign-functions=64",
+   "tokens": {
+    "betterbench": 37822753,
+    "dumbbench": 41250011
+   },
+   "benches": [
+    {
+     "input": "betterbench",
+     "input_md5": "ab1cc2ef2e7e00584a5c92bacf8eea62",
+     "mode": "parse",
+     "ok": false,
+     "error": "/home/scott/luvr/scratch/inputs/betterbench.luv:52:28:    def int helper3(int z) uses code2:\n                                                                                 ^ error: Expected ':', found 'uses'.",
+     "max_rss_kb": 0,
+     "temp_c_before": 0,
+     "temp_c_after": 0,
+     "perf": {},
+     "times": null,
+     "derived": {}
+    },
+    {
+     "input": "betterbench",
+     "input_md5": "ab1cc2ef2e7e00584a5c92bacf8eea62",
+     "mode": "il",
+     "ok": false,
+     "error": "/home/scott/luvr/scratch/inputs/betterbench.luv:25:13:    tick3 = \"time \\(pad_queue_0) step \\(shift1)\"\n                                                                  ^ error: This expression isn't supported yet.",
+     "max_rss_kb": 0,
+     "temp_c_before": 0,
+     "temp_c_after": 0,
+     "perf": {},
+     "times": null,
+     "derived": {}
+    },
+    {
+     "input": "dumbbench",
+     "input_md5": "17840a6d237f958fefcc04449d8e9411",
+     "mode": "parse",
+     "ok": true,
+     "error": "",
+     "max_rss_kb": 318484,
+     "temp_c_before": 38.875,
+     "temp_c_after": 36.625,
+     "perf": {
+      "instructions": {
+       "value": 9001054376.0,
+       "unit": "",
+       "stddev_pct": 0.01
+      },
+      "cycles": {
+       "value": 3445090610.0,
+       "unit": "",
+       "stddev_pct": 0.29
+      },
+      "branches": {
+       "value": 1713060050.0,
+       "unit": "",
+       "stddev_pct": 0.01
+      },
+      "branch-misses": {
+       "value": 17226193.0,
+       "unit": "",
+       "stddev_pct": 0.03
+      },
+      "task-clock": {
+       "value": 1054.02,
+       "unit": "msec",
+       "stddev_pct": 0.29
+      },
+      "page-faults": {
+       "value": 105472.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      }
+     },
+     "times": {
+      "runs": 20,
+      "mean_s": 1.0580738992000003,
+      "stddev_s": 0.020541327670574826,
+      "median_s": 1.055683203,
+      "min_s": 1.041706469,
+      "max_s": 1.140176928,
+      "user_s": 0.76441015,
+      "system_s": 0.29328109999999996
+     },
+     "derived": {
+      "mb_per_s": 196.11109314471213,
+      "lines_per_s": 9451137.588367796,
+      "tokens_per_s": 38985945.15107947,
+      "ipc": 2.612719198117114,
+      "ghz": 3.2685248951632797,
+      "instructions_per_token": 218.20732062350237,
+      "cycles_per_token": 83.51732584992523
+     }
+    },
+    {
+     "input": "dumbbench",
+     "input_md5": "17840a6d237f958fefcc04449d8e9411",
+     "mode": "il",
+     "ok": true,
+     "error": "",
+     "max_rss_kb": 446628,
+     "temp_c_before": 37.625,
+     "temp_c_after": 37.875,
+     "perf": {
+      "instructions": {
+       "value": 128969033835.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "cycles": {
+       "value": 37080827523.0,
+       "unit": "",
+       "stddev_pct": 0.13
+      },
+      "branches": {
+       "value": 25572220229.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "branch-misses": {
+       "value": 62648788.0,
+       "unit": "",
+       "stddev_pct": 0.14
+      },
+      "task-clock": {
+       "value": 11344.6,
+       "unit": "msec",
+       "stddev_pct": 0.13
+      },
+      "page-faults": {
+       "value": 138490.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      }
+     },
+     "times": {
+      "runs": 20,
+      "mean_s": 11.347094695749998,
+      "stddev_s": 0.04049074049926947,
+      "median_s": 11.335291774,
+      "min_s": 11.282081015,
+      "max_s": 11.440327264,
+      "user_s": 10.864967400000001,
+      "system_s": 0.47981464999999995
+     },
+     "derived": {
+      "mb_per_s": 18.286621779733466,
+      "lines_per_s": 881283.0304258812,
+      "tokens_per_s": 3635292.7428595447,
+      "ipc": 3.4780516630866667,
+      "ghz": 3.2685883612467608,
+      "instructions_per_token": 3126.52119862465,
+      "cycles_per_token": 898.9289123583507
+     }
+    }
+   ]
+  },
+  {
+   "commit": "168d6a40c52556cd03c19adae330a5c480289696",
+   "short": "168d6a4",
+   "date": "2026-11-27T12:46:12-07:00",
+   "subject": "notes on defer and nested function thinking",
+   "measured_at": "2026-11-27T22:53:58+00:00",
+   "machine": {
+    "cpu_model": "AMD Ryzen 9 5900XT 16-Core Processor",
+    "logical_cpus": "32",
+    "threads_per_core": "2",
+    "cpu_max_mhz": "3301.0000",
+    "cpu_min_mhz": "570.1730",
+    "scaling_driver": "amd-pstate-epp",
+    "governor": "powersave",
+    "energy_performance_preference": "performance",
+    "boost": "0",
+    "perf_event_paranoid": "1",
+    "nmi_watchdog": "0",
+    "mem_total_kb": 32770540,
+    "kernel": "7.0.0-44-generic",
+    "os": "Linux Mint 22.3"
+   },
+   "toolchain": {
+    "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "perf": "perf version 7.0.14",
+    "hyperfine": "hyperfine 1.18.0",
+    "python": "3.12.3"
+   },
+   "settings": {
+    "cpu": 6,
+    "perf_runs": 10,
+    "hyperfine_runs": 20,
+    "hyperfine_warmup": 3,
+    "modes": {
+     "parse": "{luv} parse -q {input}",
+     "il": "{luv} il {input}"
+    }
+   },
+   "build_ok": true,
+   "build_error": "",
+   "cflags": "-g -std=c11 -Wall -Wextra -Werror -Wpedantic -Wimplicit-fallthrough -Iout/lr/gen -O2 -DBUILD_DEBUG=0 -falign-functions=64",
+   "tokens": {
+    "betterbench": 37822753,
+    "dumbbench": 41250011
+   },
+   "benches": [
+    {
+     "input": "betterbench",
+     "input_md5": "ab1cc2ef2e7e00584a5c92bacf8eea62",
+     "mode": "parse",
+     "ok": false,
+     "error": "/home/scott/luvr/scratch/inputs/betterbench.luv:52:28:    def int helper3(int z) uses code2:\n                                                                                 ^ error: Expected ':', found 'uses'.",
+     "max_rss_kb": 0,
+     "temp_c_before": 0,
+     "temp_c_after": 0,
+     "perf": {},
+     "times": null,
+     "derived": {}
+    },
+    {
+     "input": "betterbench",
+     "input_md5": "ab1cc2ef2e7e00584a5c92bacf8eea62",
+     "mode": "il",
+     "ok": false,
+     "error": "/home/scott/luvr/scratch/inputs/betterbench.luv:25:13:    tick3 = \"time \\(pad_queue_0) step \\(shift1)\"\n                                                                  ^ error: This expression isn't supported yet.",
+     "max_rss_kb": 0,
+     "temp_c_before": 0,
+     "temp_c_after": 0,
+     "perf": {},
+     "times": null,
+     "derived": {}
+    },
+    {
+     "input": "dumbbench",
+     "input_md5": "17840a6d237f958fefcc04449d8e9411",
+     "mode": "parse",
+     "ok": true,
+     "error": "",
+     "max_rss_kb": 318276,
+     "temp_c_before": 37.25,
+     "temp_c_after": 37.25,
+     "perf": {
+      "instructions": {
+       "value": 8996808658.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "cycles": {
+       "value": 3512179265.0,
+       "unit": "",
+       "stddev_pct": 0.7
+      },
+      "branches": {
+       "value": 1712219863.0,
+       "unit": "",
+       "stddev_pct": 0.01
+      },
+      "branch-misses": {
+       "value": 17727119.0,
+       "unit": "",
+       "stddev_pct": 2.82
+      },
+      "task-clock": {
+       "value": 1074.53,
+       "unit": "msec",
+       "stddev_pct": 0.7
+      },
+      "page-faults": {
+       "value": 105472.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      }
+     },
+     "times": {
+      "runs": 20,
+      "mean_s": 1.07878243175,
+      "stddev_s": 0.05529345142096743,
+      "median_s": 1.0649612785,
+      "min_s": 1.050601863,
+      "max_s": 1.307433429,
+      "user_s": 0.77952365,
+      "system_s": 0.2988803
+     },
+     "derived": {
+      "mb_per_s": 192.34650369991067,
+      "lines_per_s": 9269711.580098689,
+      "tokens_per_s": 38237562.81707727,
+      "ipc": 2.5616029192063463,
+      "ghz": 3.2685725526509266,
+      "instructions_per_token": 218.10439415397974,
+      "cycles_per_token": 85.14371705258455
+     }
+    },
+    {
+     "input": "dumbbench",
+     "input_md5": "17840a6d237f958fefcc04449d8e9411",
+     "mode": "il",
+     "ok": true,
+     "error": "",
+     "max_rss_kb": 446684,
+     "temp_c_before": 37.625,
+     "temp_c_after": 38.375,
+     "perf": {
+      "instructions": {
+       "value": 128967477096.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "cycles": {
+       "value": 37217638805.0,
+       "unit": "",
+       "stddev_pct": 0.21
+      },
+      "branches": {
+       "value": 25571888667.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "branch-misses": {
+       "value": 62867862.0,
+       "unit": "",
+       "stddev_pct": 0.19
+      },
+      "task-clock": {
+       "value": 11386.36,
+       "unit": "msec",
+       "stddev_pct": 0.21
+      },
+      "page-faults": {
+       "value": 138491.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      }
+     },
+     "times": {
+      "runs": 20,
+      "mean_s": 11.45513745015,
+      "stddev_s": 0.2961375079699528,
+      "median_s": 11.3946389005,
+      "min_s": 11.317253909,
+      "max_s": 12.701587147,
+      "user_s": 10.974777349999998,
+      "system_s": 0.47802699999999987
+     },
+     "derived": {
+      "mb_per_s": 18.11414571872142,
+      "lines_per_s": 872970.9305992705,
+      "tokens_per_s": 3601005.3287889487,
+      "ipc": 3.4652245880432875,
+      "ghz": 3.26861602873965,
+      "instructions_per_token": 3126.4834595074412,
+      "cycles_per_token": 902.2455486133083
+     }
+    }
+   ]
+  },
+  {
+   "commit": "c71e02c4667ce28b0c4ac7cdcf5b2f167c127f24",
+   "short": "c71e02c",
+   "date": "2026-11-27T15:26:46-07:00",
+   "subject": "redesign nested functions, and handle parsing of them",
+   "measured_at": "2026-11-27T23:01:20+00:00",
+   "machine": {
+    "cpu_model": "AMD Ryzen 9 5900XT 16-Core Processor",
+    "logical_cpus": "32",
+    "threads_per_core": "2",
+    "cpu_max_mhz": "3301.0000",
+    "cpu_min_mhz": "570.1730",
+    "scaling_driver": "amd-pstate-epp",
+    "governor": "powersave",
+    "energy_performance_preference": "performance",
+    "boost": "0",
+    "perf_event_paranoid": "1",
+    "nmi_watchdog": "0",
+    "mem_total_kb": 32770540,
+    "kernel": "7.0.0-44-generic",
+    "os": "Linux Mint 22.3"
+   },
+   "toolchain": {
+    "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "perf": "perf version 7.0.14",
+    "hyperfine": "hyperfine 1.18.0",
+    "python": "3.12.3"
+   },
+   "settings": {
+    "cpu": 6,
+    "perf_runs": 10,
+    "hyperfine_runs": 20,
+    "hyperfine_warmup": 3,
+    "modes": {
+     "parse": "{luv} parse -q {input}",
+     "il": "{luv} il {input}"
+    }
+   },
+   "build_ok": true,
+   "build_error": "",
+   "cflags": "-g -std=c11 -Wall -Wextra -Werror -Wpedantic -Wimplicit-fallthrough -Iout/lr/gen -O2 -DBUILD_DEBUG=0 -falign-functions=64",
+   "tokens": {
+    "betterbench": 37822753,
+    "dumbbench": 41250011
+   },
+   "benches": [
+    {
+     "input": "betterbench",
+     "input_md5": "ab1cc2ef2e7e00584a5c92bacf8eea62",
+     "mode": "parse",
+     "ok": true,
+     "error": "",
+     "max_rss_kb": 214260,
+     "temp_c_before": 37.375,
+     "temp_c_after": 36.625,
+     "perf": {
+      "instructions": {
+       "value": 8502936415.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "cycles": {
+       "value": 5443535090.0,
+       "unit": "",
+       "stddev_pct": 0.9
+      },
+      "branches": {
+       "value": 1635818933.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "branch-misses": {
+       "value": 78371788.0,
+       "unit": "",
+       "stddev_pct": 0.32
+      },
+      "task-clock": {
+       "value": 1665.41,
+       "unit": "msec",
+       "stddev_pct": 0.9
+      },
+      "page-faults": {
+       "value": 56694.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      }
+     },
+     "times": {
+      "runs": 20,
+      "mean_s": 1.6478099381000004,
+      "stddev_s": 0.007087438774662342,
+      "median_s": 1.645874455,
+      "min_s": 1.638224202,
+      "max_s": 1.666285023,
+      "user_s": 1.4390216,
+      "system_s": 0.2083094
+     },
+     "derived": {
+      "mb_per_s": 118.48478364265787,
+      "lines_per_s": 2212514.2686078083,
+      "tokens_per_s": 22953346.818390567,
+      "ipc": 1.5620247273908912,
+      "ghz": 3.2685855675179085,
+      "instructions_per_token": 224.81008759462856,
+      "cycles_per_token": 143.92223352964285
+     }
+    },
+    {
+     "input": "betterbench",
+     "input_md5": "ab1cc2ef2e7e00584a5c92bacf8eea62",
+     "mode": "il",
+     "ok": false,
+     "error": "/home/scott/luvr/scratch/inputs/betterbench.luv:25:13:    tick3 = \"time \\(pad_queue_0) step \\(shift1)\"\n                                                                  ^ error: This expression isn't supported yet.",
+     "max_rss_kb": 0,
+     "temp_c_before": 0,
+     "temp_c_after": 0,
+     "perf": {},
+     "times": null,
+     "derived": {}
+    },
+    {
+     "input": "dumbbench",
+     "input_md5": "17840a6d237f958fefcc04449d8e9411",
+     "mode": "parse",
+     "ok": true,
+     "error": "",
+     "max_rss_kb": 318732,
+     "temp_c_before": 37.125,
+     "temp_c_after": 37.5,
+     "perf": {
+      "instructions": {
+       "value": 9029553415.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "cycles": {
+       "value": 3524047871.0,
+       "unit": "",
+       "stddev_pct": 0.16
+      },
+      "branches": {
+       "value": 1716701616.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "branch-misses": {
+       "value": 17107379.0,
+       "unit": "",
+       "stddev_pct": 0.01
+      },
+      "task-clock": {
+       "value": 1078.16,
+       "unit": "msec",
+       "stddev_pct": 0.16
+      },
+      "page-faults": {
+       "value": 105473.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      }
+     },
+     "times": {
+      "runs": 20,
+      "mean_s": 1.0771396077500002,
+      "stddev_s": 0.01386377458311345,
+      "median_s": 1.0767353155000001,
+      "min_s": 1.052525566,
+      "max_s": 1.115240214,
+      "user_s": 0.7784172,
+      "system_s": 0.29833009999999993
+     },
+     "derived": {
+      "mb_per_s": 192.63986534989618,
+      "lines_per_s": 9283849.491793046,
+      "tokens_per_s": 38295881.706704415,
+      "ipc": 2.562267524600264,
+      "ghz": 3.2685759729539217,
+      "instructions_per_token": 218.8982062332056,
+      "cycles_per_token": 85.4314407576764
+     }
+    },
+    {
+     "input": "dumbbench",
+     "input_md5": "17840a6d237f958fefcc04449d8e9411",
+     "mode": "il",
+     "ok": true,
+     "error": "",
+     "max_rss_kb": 446968,
+     "temp_c_before": 38.0,
+     "temp_c_after": 38.25,
+     "perf": {
+      "instructions": {
+       "value": 129003561151.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "cycles": {
+       "value": 37803354504.0,
+       "unit": "",
+       "stddev_pct": 0.08
+      },
+      "branches": {
+       "value": 25579002879.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "branch-misses": {
+       "value": 62875904.0,
+       "unit": "",
+       "stddev_pct": 0.29
+      },
+      "task-clock": {
+       "value": 11565.6,
+       "unit": "msec",
+       "stddev_pct": 0.08
+      },
+      "page-faults": {
+       "value": 138491.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      }
+     },
+     "times": {
+      "runs": 20,
+      "mean_s": 11.569403379899999,
+      "stddev_s": 0.0467616603999264,
+      "median_s": 11.576074241499999,
+      "min_s": 11.480014506,
+      "max_s": 11.639877377,
+      "user_s": 11.081631549999999,
+      "system_s": 0.48547704999999997
+     },
+     "derived": {
+      "mb_per_s": 17.935240235507592,
+      "lines_per_s": 864348.9790816193,
+      "tokens_per_s": 3565439.7764076013,
+      "ipc": 3.412489786782018,
+      "ghz": 3.268602969495746,
+      "instructions_per_token": 3127.3582242438674,
+      "cycles_per_token": 916.4447132874704
+     }
+    }
+   ]
+  },
+  {
+   "commit": "7f6b39c1071da4ac6c693c9d59d4b9d61e25208e",
+   "short": "7f6b39c",
+   "date": "2026-11-27T15:44:13-07:00",
+   "subject": "typecheck nested functions assignment rules",
+   "measured_at": "2026-11-27T23:09:44+00:00",
+   "machine": {
+    "cpu_model": "AMD Ryzen 9 5900XT 16-Core Processor",
+    "logical_cpus": "32",
+    "threads_per_core": "2",
+    "cpu_max_mhz": "3301.0000",
+    "cpu_min_mhz": "570.1730",
+    "scaling_driver": "amd-pstate-epp",
+    "governor": "powersave",
+    "energy_performance_preference": "performance",
+    "boost": "0",
+    "perf_event_paranoid": "1",
+    "nmi_watchdog": "0",
+    "mem_total_kb": 32770540,
+    "kernel": "7.0.0-44-generic",
+    "os": "Linux Mint 22.3"
+   },
+   "toolchain": {
+    "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "perf": "perf version 7.0.14",
+    "hyperfine": "hyperfine 1.18.0",
+    "python": "3.12.3"
+   },
+   "settings": {
+    "cpu": 6,
+    "perf_runs": 10,
+    "hyperfine_runs": 20,
+    "hyperfine_warmup": 3,
+    "modes": {
+     "parse": "{luv} parse -q {input}",
+     "il": "{luv} il {input}"
+    }
+   },
+   "build_ok": true,
+   "build_error": "",
+   "cflags": "-g -std=c11 -Wall -Wextra -Werror -Wpedantic -Wimplicit-fallthrough -Iout/lr/gen -O2 -DBUILD_DEBUG=0 -falign-functions=64",
+   "tokens": {
+    "betterbench": 37822753,
+    "dumbbench": 41250011
+   },
+   "benches": [
+    {
+     "input": "betterbench",
+     "input_md5": "ab1cc2ef2e7e00584a5c92bacf8eea62",
+     "mode": "parse",
+     "ok": true,
+     "error": "",
+     "max_rss_kb": 213736,
+     "temp_c_before": 37.5,
+     "temp_c_after": 36.625,
+     "perf": {
+      "instructions": {
+       "value": 8511177651.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "cycles": {
+       "value": 5428243273.0,
+       "unit": "",
+       "stddev_pct": 0.15
+      },
+      "branches": {
+       "value": 1636910289.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "branch-misses": {
+       "value": 78519669.0,
+       "unit": "",
+       "stddev_pct": 0.21
+      },
+      "task-clock": {
+       "value": 1660.73,
+       "unit": "msec",
+       "stddev_pct": 0.15
+      },
+      "page-faults": {
+       "value": 56694.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      }
+     },
+     "times": {
+      "runs": 20,
+      "mean_s": 1.6561901665499998,
+      "stddev_s": 0.01106887965725477,
+      "median_s": 1.6564753054999999,
+      "min_s": 1.640151978,
+      "max_s": 1.68534727,
+      "user_s": 1.44859245,
+      "system_s": 0.20714164999999998
+     },
+     "derived": {
+      "mb_per_s": 117.88525734741208,
+      "lines_per_s": 2201319.0717069353,
+      "tokens_per_s": 22837204.18337488,
+      "ipc": 1.5679432963762823,
+      "ghz": 3.2685886766662855,
+      "instructions_per_token": 225.02797855565933,
+      "cycles_per_token": 143.51793146839418
+     }
+    },
+    {
+     "input": "betterbench",
+     "input_md5": "ab1cc2ef2e7e00584a5c92bacf8eea62",
+     "mode": "il",
+     "ok": false,
+     "error": "/home/scott/luvr/scratch/inputs/betterbench.luv:25:13:    tick3 = \"time \\(pad_queue_0) step \\(shift1)\"\n                                                                  ^ error: This expression isn't supported yet.",
+     "max_rss_kb": 0,
+     "temp_c_before": 0,
+     "temp_c_after": 0,
+     "perf": {},
+     "times": null,
+     "derived": {}
+    },
+    {
+     "input": "dumbbench",
+     "input_md5": "17840a6d237f958fefcc04449d8e9411",
+     "mode": "parse",
+     "ok": true,
+     "error": "",
+     "max_rss_kb": 318836,
+     "temp_c_before": 37.125,
+     "temp_c_after": 37.375,
+     "perf": {
+      "instructions": {
+       "value": 9044000349.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "cycles": {
+       "value": 3543105266.0,
+       "unit": "",
+       "stddev_pct": 0.14
+      },
+      "branches": {
+       "value": 1718741953.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "branch-misses": {
+       "value": 17103480.0,
+       "unit": "",
+       "stddev_pct": 0.03
+      },
+      "task-clock": {
+       "value": 1083.99,
+       "unit": "msec",
+       "stddev_pct": 0.14
+      },
+      "page-faults": {
+       "value": 105473.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      }
+     },
+     "times": {
+      "runs": 20,
+      "mean_s": 1.0800730412500001,
+      "stddev_s": 0.00720578742193369,
+      "median_s": 1.0808560100000002,
+      "min_s": 1.064782683,
+      "max_s": 1.091227229,
+      "user_s": 0.7813,
+      "system_s": 0.29840420000000006
+     },
+     "derived": {
+      "mb_per_s": 192.11666348032736,
+      "lines_per_s": 9258634.942343071,
+      "tokens_per_s": 38191871.68328927,
+      "ipc": 2.552563265841168,
+      "ghz": 3.268577446286405,
+      "instructions_per_token": 219.24843484284162,
+      "cycles_per_token": 85.89343808902257
+     }
+    },
+    {
+     "input": "dumbbench",
+     "input_md5": "17840a6d237f958fefcc04449d8e9411",
+     "mode": "il",
+     "ok": true,
+     "error": "",
+     "max_rss_kb": 446132,
+     "temp_c_before": 38.25,
+     "temp_c_after": 38.375,
+     "perf": {
+      "instructions": {
+       "value": 129012049766.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "cycles": {
+       "value": 38185967518.0,
+       "unit": "",
+       "stddev_pct": 0.18
+      },
+      "branches": {
+       "value": 25579221048.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      },
+      "branch-misses": {
+       "value": 62864585.0,
+       "unit": "",
+       "stddev_pct": 0.29
+      },
+      "task-clock": {
+       "value": 11682.62,
+       "unit": "msec",
+       "stddev_pct": 0.18
+      },
+      "page-faults": {
+       "value": 138490.0,
+       "unit": "",
+       "stddev_pct": 0.0
+      }
+     },
+     "times": {
+      "runs": 20,
+      "mean_s": 11.67225826205,
+      "stddev_s": 0.06493481800586692,
+      "median_s": 11.655041784,
+      "min_s": 11.606977729,
+      "max_s": 11.842827973,
+      "user_s": 11.179883999999998,
+      "system_s": 0.4899729
+     },
+     "derived": {
+      "mb_per_s": 17.77719652371338,
+      "lines_per_s": 856732.4141989725,
+      "tokens_per_s": 3534021.4441721286,
+      "ipc": 3.378519863486152,
+      "ghz": 3.2686133348512576,
+      "instructions_per_token": 3127.5640087950524,
+      "cycles_per_token": 925.7201778200738
      }
     }
    ]
