@@ -1,0 +1,9 @@
+# IMPORTED
+struct Thing:
+    int x
+
+on Thing def int get(self, int a):
+    return self.x + a
+
+on Thing def Thing new(int x):
+    return Thing(x)

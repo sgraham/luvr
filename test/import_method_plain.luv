@@ -1,0 +1,11 @@
+# OUT: 42
+# OUT: 4
+import "impmethod_plain" as imp
+
+def int main():
+    t = imp.Thing(40)
+    u = imp.Thing.new(1)
+    *imp.Thing p = &u
+    print t.get(2)
+    print p.get(3)
+    return 0
