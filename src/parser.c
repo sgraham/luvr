@@ -4728,7 +4728,11 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
       emit_func_sym(p, gf, name);
       declare_definition(p, name, at, GK_FUNC | (idx << GLOBAL_KIND_BITS));
     } else {
-      declare_if_new(p, name, at, ft);
+      if (lookup_in_func(p, name)) {
+        const Name* n = name_of(p, name);
+        error_at(p, at, "'%.*s' is already declared.", (int)n->len, (const char*)n->str);
+      }
+      declare_local(p, name, at, LK_VAR)->type = ft;
     }
   }
   if (T(p) == TK_LBRACE) {

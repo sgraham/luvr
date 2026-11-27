@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:7:13:    def int h():
+# CERR: {ssss}                  ^ error: 'h' is already declared.
+
+def int main():
+    int h = 1
+    def int h():
+        return 2
+    return h
