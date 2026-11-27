@@ -1,0 +1,11 @@
+# CRET: 1
+# CERR: {self}:10:14:    for x in Point(1, 2):
+# CERR: {ssss}                    ^ error: Point isn't iterable.
+
+struct Point:
+    int x
+    int y
+
+def main():
+    for x in Point(1, 2):
+        print x

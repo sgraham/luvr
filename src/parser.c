@@ -701,11 +701,9 @@ static Local* lookup_in_func(Parser* p, NameId name) {
 }
 
 // Declares name in the current function with type t, unless it's already one
-// of the function's locals. Returns the local, or NULL at top level.
+// of the function's locals. Returns the local, new or existing.
 static Local* declare_if_new(Parser* p, NameId name, SrcLoc at, TypeId t) {
-  if (p->func_depth == 0) {
-    return NULL;
-  }
+  ASSERT(p->func_depth > 0);
   Local* l = lookup_in_func(p, name);
   if (!l) {
     l = declare_local(p, name, at, LK_VAR);
@@ -2982,6 +2980,45 @@ static const Method* method_find(Parser* p, TypeId receiver, NameId name) {
   return slot->tag != 0 ? &p->methods.items[slot->val] : NULL;
 }
 
+static const Method* struct_method_find(Parser* p, TypeId t, NameId name) {
+  return type_is_struct(p, t) ? method_find(p, t, name) : NULL;
+}
+
+// Sets types[i] to the type of loop variable i, which is the pointee of the
+// iterator's out parameter i. Arrays, lists, dicts, and str don't have
+// iterators until there are generics, so their loop variables are untyped.
+static void iter_elem_types(Parser* p, TypeId iterable, u32 num_targets, TypeId* types, SrcLoc at) {
+  if (iterable.u == TY_UNKNOWN || iterable.u == TY_STR || type_is_array(p, iterable)) {
+    for (u32 i = 0; i < num_targets; ++i) {
+      types[i] = ty_unknown;
+    }
+    return;
+  }
+  Ctx* ctx = p->ls.ctx;
+  TypeId iter = iterable;
+  const Method* next = struct_method_find(p, iter, ctx->name___next__);
+  if (!next) {
+    const Method* make = struct_method_find(p, iterable, ctx->name___iter__);
+    if (!make) {
+      error_at(p, at, "%s isn't iterable.", type_str(p, iterable));
+    }
+    iter = type_info(p, make->type)->ret;
+    next = struct_method_find(p, iter, ctx->name___next__);
+    if (!next) {
+      error_at(p, at, "%s.__iter__ returns %s, which isn't an iterator.", type_str(p, iterable),
+               type_str(p, iter));
+    }
+  }
+  const TypeInfo* next_info = type_info(p, next->type);
+  if (next_info->num_params - 1 != num_targets) {
+    error_at(p, at, "The loop has %u variable%s, but %s.__next__ gives %u.", num_targets,
+             num_targets == 1 ? "" : "s", type_str(p, iter), next_info->num_params - 1);
+  }
+  for (u32 i = 0; i < num_targets; ++i) {
+    types[i] = type_info(p, p->param_types.items[next_info->first_param + 1 + i])->pointee;
+  }
+}
+
 static const Field* struct_field(Parser* p, TypeId st, NameId name) {
   const TypeInfo* info = type_info(p, st);
   for (u32 i = 0; i < info->num_fields; ++i) {
@@ -4391,6 +4428,26 @@ static void emit_method_sym(Parser* p, Method* method) {
 #endif
 }
 
+// The compiler calls special methods itself, as 'for' calls __iter__ and
+// __next__, so their signatures are checked where they're defined rather than
+// at each use.
+static void check_special_method(Parser* p, NameId name, SrcLoc at, TypeId ft, bool has_self) {
+  Ctx* ctx = p->ls.ctx;
+  const TypeInfo* info = type_info(p, ft);
+  if (name.u == ctx->name___iter__.u && (!has_self || info->num_params != 1)) {
+    error_at(p, at, "__iter__ must take only self.");
+  }
+  if (name.u == ctx->name___next__.u) {
+    bool valid = has_self && info->ret.u == TY_BOOL;
+    for (u32 i = 1; i < info->num_params; ++i) {
+      valid &= type_is_pointer(p, p->param_types.items[info->first_param + i]);
+    }
+    if (!valid) {
+      error_at(p, at, "__next__ must take self and pointers, and return bool.");
+    }
+  }
+}
+
 static void declare_method(Parser* p,
                            TypeId receiver,
                            NameId name,
@@ -4409,6 +4466,7 @@ static void declare_method(Parser* p,
     error_at(p, at, "'%.*s' is already a field of %s.", (int)n->len, (const char*)n->str,
              type_str(p, receiver));
   }
+  check_special_method(p, name, at, ft, has_self);
   u32 idx = p->methods.num;
   Method* method = vec_push(p->ls.ctx, &p->methods);
   *method = (Method){.receiver = receiver, .name = name, .type = ft, .has_self = has_self};
@@ -4612,9 +4670,16 @@ static Ref for_header(Parser* p) {
       Targets t;
       for_targets(p, &t, name, at);
       check(p, TK_IN);
-      expr(p);
+      SrcLoc iterable_at = p->ls.pos.t.loc;
+      ExpDesc iterable;
+      subexpr(p, -1, &iterable);
+      TypeId types[MAX_TARGETS];
+      iter_elem_types(p, iterable.type, t.num_targets, types, iterable_at);
       for (u32 i = 0; i < t.num_targets; ++i) {
-        declare_if_new(p, t.name[i], t.at[i], ty_unknown);
+        Local* l = declare_if_new(p, t.name[i], t.at[i], types[i]);
+        if (!assignable(p, types[i], l->type)) {
+          assign_type_error(p, types[i], l->type, t.at[i]);
+        }
       }
       return 0;
     }

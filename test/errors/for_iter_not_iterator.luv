@@ -1,0 +1,13 @@
+# CRET: 1
+# CERR: {self}:12:14:    for x in Thing():
+# CERR: {ssss}                    ^ error: Thing.__iter__ returns Range, which isn't an iterator.
+
+struct Thing:
+    int n
+
+on Thing def Range __iter__(self):
+    return range(self.n)
+
+def main():
+    for x in Thing():
+        print x

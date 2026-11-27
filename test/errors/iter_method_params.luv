@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:20:on Thing def Range __iter__(self, int n):
+# CERR: {ssss}                         ^ error: __iter__ must take only self.
+
+struct Thing:
+    int n
+
+on Thing def Range __iter__(self, int n):
+    return range(n)

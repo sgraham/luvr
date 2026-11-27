@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:7:17:        str s = x
+# CERR: {ssss}                      ^ error: Can't assign int to str.
+
+def main():
+    for x in range(3):
+        str s = x

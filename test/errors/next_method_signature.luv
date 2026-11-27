@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:21:on Counter def bool __next__(self, int out):
+# CERR: {ssss}                          ^ error: __next__ must take self and pointers, and return bool.
+
+struct Counter:
+    int n
+
+on Counter def bool __next__(self, int out):
+    return false

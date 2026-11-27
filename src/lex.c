@@ -165,6 +165,8 @@ bool lex_intern_init(Ctx* ctx) {
   }
   ctx->name_len = lex_intern_safe(ctx, "len");
   ctx->name_range = lex_intern_safe(ctx, "range");
+  ctx->name___iter__ = lex_intern_safe(ctx, "__iter__");
+  ctx->name___next__ = lex_intern_safe(ctx, "__next__");
   return true;
 }
 

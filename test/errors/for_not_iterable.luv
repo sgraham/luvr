@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:14:    for x in n:
+# CERR: {ssss}                   ^ error: int isn't iterable.
+
+def main():
+    n = 5
+    for x in n:
+        print x

@@ -1,0 +1,34 @@
+# OUT: 0 zero
+# OUT: 1 one
+# OUT: 2 two
+
+struct Words:
+    int count
+
+
+struct WordsIter:
+    int _i
+    int _count
+
+
+on Words def WordsIter __iter__(self):
+    return WordsIter(0, self.count)
+
+
+on WordsIter def bool __next__(self, *int index, *str word):
+    if self._i == self._count:
+        return false
+    index[0] = self._i
+    word[0] = "zero"
+    if self._i == 1:
+        word[0] = "one"
+    if self._i == 2:
+        word[0] = "two"
+    self._i += 1
+    return true
+
+
+def int main():
+    for i, w in Words(3):
+        print "\(i) \(w)"
+    return 0

@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:17:    for i, x in range(3):
+# CERR: {ssss}                      ^ error: The loop has 2 variables, but RangeIter.__next__ gives 1.
+
+def main():
+    for i, x in range(3):
+        print x

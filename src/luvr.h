@@ -505,9 +505,12 @@ struct Ctx {
   char err_scratch[1024];
   u32 err_scratch_used;
 
-  // The builtins len and range, which the parser types itself.
+  // The builtins len and range, which the parser types itself, and the
+  // methods that 'for' calls.
   NameId name_len;
   NameId name_range;
+  NameId name___iter__;
+  NameId name___next__;
 
   // Intern table. A slot's tag is from the hash of the name, and its val is
   // the index in names.
