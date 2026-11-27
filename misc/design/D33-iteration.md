@@ -22,8 +22,9 @@ iterable uses, with fast integer loops added later as an optimization.
   native code to measure.
 - **A type with `__next__` is iterated directly**, without `__iter__`.
   Otherwise `__iter__` is called, and its result must have `__next__`.
-- **A zero step traps in `range()`** at run time. A constant zero isn't
-  checked at compile time, because it's too rare to be worth the code.
+- **A zero step gives an empty loop.** RangeIter works out the number of
+  elements up front, and finds none for a zero step. That's reasonable
+  behaviour, so there's no trap and no compile-time check.
 - **The loop variable is visible after the loop** (function scoping, as
   in Python) and keeps the last element. If the loop doesn't run, it keeps
   the value it had before, which is zero for a variable that the loop
@@ -229,12 +230,7 @@ cases in step 2 before step 4 exists.
 
 ## Open questions
 
-- Approach 1, approach 2, or the order above.
-- `bool __next__(self, *T out)` or `IterResult{T}`.
-- Whether a type with `__next__` can be iterated directly without
-  `__iter__`.
 - Whether an iterator with two out parameters can be used with one target.
-- Zero step, and non-constant step signs.
 - Which cases are baked, and whether a general inliner replaces them.
 - Whether the size check during iteration is a length comparison, which
   misses a shrink followed by a grow back to the same length, or a
