@@ -1,0 +1,12 @@
+# CRET: 1
+# CERR: {self}:11:21:on Counter def bool __next__(self, *int out):
+# CERR: {ssss}                           ^ error: Counter can't have both __iter__ and __next__.
+
+struct Counter:
+    int n
+
+on Counter def Counter __iter__(self):
+    return *self
+
+on Counter def bool __next__(self, *int out):
+    return false

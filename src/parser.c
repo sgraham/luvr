@@ -3088,20 +3088,24 @@ static void for_iter_find(Parser* p, TypeId iterable, u32 num_targets, ForIter* 
     }
     return;
   }
+  // A type can't have both methods, so the order they're looked up in doesn't
+  // matter. Containers are more common than iterators, so __iter__ is first.
   Ctx* ctx = p->ls.ctx;
   TypeId iter = iterable;
-  const Method* next = struct_method_find(p, iter, ctx->name___next__);
-  if (!next) {
-    const Method* make = struct_method_find(p, iterable, ctx->name___iter__);
-    if (!make) {
-      error_at(p, at, "%s isn't iterable.", type_str(p, iterable));
-    }
+  const Method* make = struct_method_find(p, iterable, ctx->name___iter__);
+  const Method* next;
+  if (make) {
     it->make = make;
     iter = type_info(p, make->type)->ret;
     next = struct_method_find(p, iter, ctx->name___next__);
     if (!next) {
       error_at(p, at, "%s.__iter__ returns %s, which isn't an iterator.", type_str(p, iterable),
                type_str(p, iter));
+    }
+  } else {
+    next = struct_method_find(p, iterable, ctx->name___next__);
+    if (!next) {
+      error_at(p, at, "%s isn't iterable.", type_str(p, iterable));
     }
   }
   const TypeInfo* next_info = type_info(p, next->type);
@@ -4544,13 +4548,25 @@ static void emit_method_sym(Parser* p, Method* method) {
 // The compiler calls special methods itself, as 'for' calls __iter__ and
 // __next__, so their signatures are checked where they're defined rather than
 // at each use.
-static void check_for_special_methods(Parser* p, NameId name, SrcLoc at, TypeId ft, bool has_self) {
+static void check_for_special_methods(Parser* p,
+                                      TypeId receiver,
+                                      NameId name,
+                                      SrcLoc at,
+                                      TypeId ft,
+                                      bool has_self) {
   Ctx* ctx = p->ls.ctx;
   const TypeInfo* info = type_info(p, ft);
-  if (name.u == ctx->name___iter__.u && (!has_self || info->num_params != 1)) {
+  // A type is either something to iterate over, or the iterator.
+  bool is_iter = name.u == ctx->name___iter__.u;
+  bool is_next = name.u == ctx->name___next__.u;
+  if ((is_iter && method_find(p, receiver, ctx->name___next__)) ||
+      (is_next && method_find(p, receiver, ctx->name___iter__))) {
+    error_at(p, at, "%s can't have both __iter__ and __next__.", type_str(p, receiver));
+  }
+  if (is_iter && (!has_self || info->num_params != 1)) {
     error_at(p, at, "__iter__ must take only self.");
   }
-  if (name.u == ctx->name___next__.u) {
+  if (is_next) {
     bool valid = has_self && info->ret.u == TY_BOOL;
     for (u32 i = 1; i < info->num_params; ++i) {
       valid &= type_is_pointer(p, p->param_types.items[info->first_param + i]);
@@ -4579,7 +4595,7 @@ static void declare_method(Parser* p,
     error_at(p, at, "'%.*s' is already a field of %s.", (int)n->len, (const char*)n->str,
              type_str(p, receiver));
   }
-  check_for_special_methods(p, name, at, ft, has_self);
+  check_for_special_methods(p, receiver, name, at, ft, has_self);
   u32 idx = p->methods.num;
   Method* method = vec_push(p->ls.ctx, &p->methods);
   *method = (Method){.receiver = receiver, .name = name, .type = ft, .has_self = has_self};

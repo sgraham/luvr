@@ -22,6 +22,10 @@ iterable uses, with fast integer loops added later as an optimization.
   native code to measure.
 - **A type with `__next__` is iterated directly**, without `__iter__`.
   Otherwise `__iter__` is called, and its result must have `__next__`.
+  A type can't have both (decided 2026-11-27, an error at the second
+  method's definition): it's either something to iterate over or the
+  iterator. Python's iterators define `__iter__` to return themselves, but
+  that's covered by iterating a `__next__` type directly.
   An iterator that's iterated directly is advanced in place, as in Python,
   and isn't copied. The loop is the same as calling `__next__` on it by
   hand, so afterwards it's consumed.
@@ -198,6 +202,27 @@ Options, not exclusive:
   - A slice, `for x in xs[1:]`. Slices copy (D23 option B), so this avoids
     an allocation, which inlining wouldn't.
   - `for i, x in xs` for lists, arrays and `str`, in place of `enumerate`.
+
+## Compile time
+
+Typing loop variables (2026-11-26) cost about 300M instructions on
+dumbbench, which has 1.25M `for i in range(5)` loops, or about 240 per loop.
+About 70M of that is checking the loop bodies, now that `i` is an `int`
+rather than untyped, which is real work. Most of the rest was three method
+lookups per loop: `__next__` on Range (a miss), `__iter__`, and `__next__`
+on RangeIter. Ruling out types with both methods let `__iter__` be looked
+up first, which removes the miss. That was measured at 46M instructions
+(0.5%) on dumbbench, so most of the per-loop cost is still in the two
+lookups that hit and the rest of `for_iter_find()`.
+
+A one-entry cache of the last loop's iterable type and its methods
+recovered about 200M on dumbbench, but only because every loop there is
+over Range. Real code alternates between ranges, lists of different
+element types, dict views, and strs, so it wasn't kept. If the lookups
+still show up once there's a benchmark with a mix of iterables, the next
+step is a map from iterable type to its resolved methods and loop variable
+types, filled on first use and cleared when that type gets an `__iter__`
+or `__next__`. That's one hash lookup per loop for any number of types.
 
 ## Adapters
 
