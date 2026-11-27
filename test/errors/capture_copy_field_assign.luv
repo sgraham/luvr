@@ -1,0 +1,13 @@
+# CRET: 1
+# CERR: {self}:11:14:        pt.x = 2
+# CERR: {ssss}                    ^ error: Captured copies are immutable.
+
+struct Point:
+    int x
+
+def int main():
+    pt = Point(1)
+    def inner() uses pt:
+        pt.x = 2
+    inner()
+    return pt.x

@@ -1,0 +1,13 @@
+# OUT: 99
+# OUT: 1
+def int main():
+    something = 1
+
+    # Not captured, so this declares func_b's own local.
+    def func_b():
+        something = 99
+        print something
+
+    func_b()
+    print something
+    return 0

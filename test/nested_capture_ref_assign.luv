@@ -1,0 +1,11 @@
+# OUT: 7
+def int main():
+    n = 1
+
+    def bump() uses &n:
+        n = 5
+        n += 2
+
+    bump()
+    print n
+    return 0

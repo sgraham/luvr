@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:8:11:        n = 2
+# CERR: {ssss}                ^ error: Captured copies are immutable.
+
+def int main():
+    n = 1
+    def inner() uses n:
+        n = 2
+    inner()
+    return n

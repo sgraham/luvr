@@ -1,0 +1,10 @@
+# CRET: 1
+# CERR: {self}:8:19:        *int q = &n
+# CERR: {ssss}                        ^ error: Can't take the address of non-lvalue.
+
+def int main():
+    n = 1
+    def inner() uses n:
+        *int q = &n
+    inner()
+    return n

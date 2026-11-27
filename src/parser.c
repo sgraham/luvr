@@ -1301,6 +1301,14 @@ static bool is_loop_var(Parser* p, SrcLoc at) {
   return at.u == p->loop_var_at.u && (T(p) == TK_IN || T(p) == TK_COMMA);
 }
 
+// l is a parameter or a captured copy.
+static NOINLINE NORETURN void immutable_error(Parser* p, const Local* l, SrcLoc at) {
+  if (l->kind == LK_CAPTURE_VALUE) {
+    error_at(p, at, "Captured copies are immutable.");
+  }
+  error_at(p, at, "Function parameters are immutable.");
+}
+
 // An enclosing function's variable can only be used through a capture. It
 // can still be the target of an assignment or a loop variable, which
 // declare a new local.
@@ -2356,7 +2364,7 @@ static void subexpr(Parser* p, int limit, ExpDesc* e) {
       subexpr(p, PRIORITY_UNARY, e);
       const Local* l = e->shape == SH_NAME ? lookup(p, name) : NULL;
       if ((e->shape != SH_NAME && e->shape != SH_LVALUE && e->shape != SH_STRUCT_LITERAL) ||
-          (l && l->kind == LK_PARAM)) {
+          (l && (l->kind == LK_PARAM || l->kind == LK_CAPTURE_VALUE))) {
         error_at(p, at, "Can't take the address of non-lvalue.");
       }
       if (exp_is_const(e)) {
@@ -4059,7 +4067,9 @@ static void primary(Parser* p, ExpDesc* e) {
         check_function_called(p, e, at);
       }
       const Local* l = (const Local*)n->binding;
-      bool is_param = l && l->kind == LK_PARAM && l >= &p->locals[p->func_base];
+      // A captured copy is immutable, as a parameter is.
+      bool is_param = l && (l->kind == LK_PARAM || l->kind == LK_CAPTURE_VALUE) &&
+                      l >= &p->locals[p->func_base];
       e->shape = is_param ? SH_PARAM : SH_NAME;
       break;
     }
@@ -4291,7 +4301,7 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
     }
     if (T(p) == TK_EQ || is_augassign(T(p))) {
       if (exp.shape == SH_PARAM) {
-        error_at(p, p->ls.pos.t.loc, "Function parameters are immutable.");
+        immutable_error(p, lookup(p, name), p->ls.pos.t.loc);
       }
       if (exp.shape != SH_NAME && exp.shape != SH_LVALUE) {
         error_at(p, at, "Can't assign to this expression.");
@@ -4309,13 +4319,11 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
           check_not_global(p, name, p->ls.pos.t.loc);
         }
         loc = lookup(p, name);
-        // An enclosing function's 'global' doesn't apply to this function, so
-        // this assignment declares a new local.
-        if (loc && loc < &p->locals[p->func_base] && loc->kind == LK_GLOBAL) {
+        // An enclosing function's variables are hidden unless they're
+        // captured, and its 'global' doesn't apply to this function, so the
+        // assignment declares a new local. Its constants are still constants.
+        if (loc && loc < &p->locals[p->func_base] && loc->kind != LK_CONST) {
           loc = NULL;
-        }
-        if (loc && loc < &p->locals[p->func_base]) {
-          error_at(p, p->ls.pos.t.loc, "Upvalues are immutable.");
         }
         if (loc &&
             (loc->kind == LK_CONST || (loc->kind == LK_GLOBAL && name_of(p, name)->is_const))) {
@@ -4953,8 +4961,8 @@ static void for_header(Parser* p, Loop* loop) {
         if (p->num_locals != num_locals) {
           emit_local_slot(p, vars[i], t.at[i]);
           emit_local_init(p, vars[i], NULL, t.at[i]);
-        } else if (vars[i]->kind == LK_PARAM) {
-          error_at(p, t.at[i], "Function parameters are immutable.");
+        } else if (vars[i]->kind == LK_PARAM || vars[i]->kind == LK_CAPTURE_VALUE) {
+          immutable_error(p, vars[i], t.at[i]);
         } else if (!assignable(p, it.types[i], vars[i]->type)) {
           assign_type_error(p, it.types[i], vars[i]->type, t.at[i]);
         }
