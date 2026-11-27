@@ -232,7 +232,10 @@ def leaf(t, sc, depth):
               if vt == s.name or vt == "*" + s.name for f, ft, _ in s.fields if ft == t]
     if fields:
         options.append(("field", 3))
-    meths = [(n, s, m) for n, vt in sc.vars for s in structs if vt == s.name
+    # Methods take self by pointer, so they can't be called on a parameter or
+    # other read-only struct, only on a pointer or an assignable local.
+    meths = [(n, s, m) for n, vt in sc.vars for s in structs
+             if (vt == s.name and n not in sc.ro) or vt == "*" + s.name
              for m in s.methods if m.ret == t]
     if meths and depth < 3:
         options.append(("method", 1))
@@ -699,10 +702,6 @@ def gen_struct(idx):
         default = None
         if rnd.random() < 0.25:
             default = const_leaf(t).text
-            # Field defaults have to be constants, which strings can't be yet.
-            # The leaf is still made so that the random sequence is unchanged.
-            if t == "str":
-                default = None
         fields.append((f, t, default))
     out = [f"struct {name}:\n"]
     for f, t, d in fields:
@@ -718,7 +717,7 @@ def gen_struct(idx):
         mname = f"{rnd.choice(VERBS)}_{rnd.choice(WORDS)}"
         while any(m.name == mname for m in s.methods):
             mname += "2"
-        sc.vars = [(n, t) for n, t in params] + [("self", name)]
+        sc.vars = [(n, t) for n, t in params] + [("self", "*" + name)]
         sc.ro = set(n for n, _ in sc.vars)
         out += gen_func(mname, params, ret, sc, f"on {name} ", receiver="self")
         s.methods.append(Func(mname, params, ret))
@@ -735,7 +734,7 @@ for i in range(nfuncs):
         out.append(f"{cname} = {v}\n\n")
         consts.append((cname, v))
     if i % 25 == 0:
-        t = rnd.choice(("int", "int", "u32", "f64", "bool"))
+        t = rnd.choice(("int", "int", "u32", "f64", "bool", "str"))
         gname = f"{rnd.choice(WORDS)}_{rnd.choice(NOUNS)}_{i}"
         out.append(f"{t} {gname} = {const_leaf(t).text}\n\n")
         globals_.append((gname, t))
