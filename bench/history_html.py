@@ -52,6 +52,7 @@ def cell(bench, tokens):
         "temp": [bench.get("temp_c_before", 0),
                  bench.get("temp_c_after", 0)],
         "tokens": tokens,
+        "md5": bench.get("input_md5", ""),
     }
 
 
@@ -279,6 +280,8 @@ function rowId(key, r) {
 function delta(metric, cur, prev) {
   if (!cur || !prev || !cur.ok || !prev.ok || cur[metric] == null || !prev[metric]) return null;
   const pct = (cur[metric] - prev[metric]) / prev[metric] * 100;
+  // Results from different inputs can't be compared.
+  if (cur.md5 !== prev.md5) return {pct, cls: "muted", newInput: true};
   let noise = DATA.noise[metric];
   // A time is the mean of several runs, so it's uncertain by the standard
   // error, not by the stddev of single runs. A change is noise if it's within
@@ -292,6 +295,7 @@ function delta(metric, cur, prev) {
 
 function deltaHtml(d) {
   if (!d) return '<span class="muted">-</span>';
+  if (d.newInput) return '<span class="muted">new input</span>';
   const arrow = d.cls === "bad" ? "▲ " : d.cls === "good" ? "▼ " : "";
   const sign = d.pct > 0 ? "+" : "";
   return `<span class="${d.cls}">${arrow}${sign}${d.pct.toFixed(2)}%</span>`;
@@ -316,7 +320,7 @@ function points(key, metric) {
 function linePath(pts, x, y) {
   let d = "", prevI = -2;
   for (const p of pts) {
-    d += (p.i === prevI + 1 ? "L" : "M") + x(p.i).toFixed(1) + "," + y(p.v).toFixed(1);
+    d += (p.i === prevI + 1 && !(p.d && p.d.newInput) ? "L" : "M") + x(p.i).toFixed(1) + "," + y(p.v).toFixed(1);
     prevI = p.i;
   }
   return d;

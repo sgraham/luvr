@@ -17,10 +17,11 @@ given. Commits
 that are already in the log are skipped, unless --force is given. The log is
 rewritten after each commit, so an interrupted run loses at most one.
 
-The same input files are used for every commit, so that the numbers can be
-compared. A commit that fails to build, or a mode that fails on an input, is
-recorded with the error, so that it shows as a gap rather than being measured
-again.
+The inputs are regenerated when the language changes and they stop being
+valid. Each result records the md5 of the input it measured, so that the page
+doesn't compare results from different inputs. A commit that fails to build,
+or a mode that fails on an input, is recorded with the error, so that it shows
+as a gap rather than being measured again.
 """
 
 import argparse
@@ -86,6 +87,7 @@ class Times:
 @dataclass
 class BenchResult:
     input: str  # Input.name
+    input_md5: str
     mode: str  # a key of Settings.modes
     ok: bool
     error: str = ""
@@ -262,8 +264,8 @@ def measure(settings, mode, luv, inp, tokens, scratch):
     cmd = settings.modes[mode].format(luv=luv, input=inp.path).split()
     r = run(cmd, check=False, quiet=True)
     if r.returncode != 0:
-        return BenchResult(inp.name, mode, False, error=r.stderr.strip()[-2000:])
-    res = BenchResult(inp.name, mode, True)
+        return BenchResult(inp.name, inp.md5, mode, False, error=r.stderr.strip()[-2000:])
+    res = BenchResult(inp.name, inp.md5, mode, True)
     res.max_rss_kb = max_rss_kb(cmd)
     res.temp_c_before = cpu_temp_c()
     res.perf = perf_stat(settings, cmd)
@@ -327,10 +329,12 @@ def main():
     })
     inputs = [describe_input(spec) for spec in args.input]
     log = load_log(args.log)
+    # Results from before input_md5 was recorded all measured the input that's in
+    # the log, since a different one was refused then.
+    for e in log["entries"]:
+        for b in e["benches"]:
+            b.setdefault("input_md5", log["inputs"].get(b["input"], {}).get("md5", ""))
     for inp in inputs:
-        known = log["inputs"].get(inp.name)
-        if known and known["md5"] != inp.md5:
-            sys.exit(f"{inp.name}: md5 {inp.md5} differs from the log's {known['md5']}")
         log["inputs"][inp.name] = asdict(inp)
     if args.keep_clocks:
         measure_commits(args, settings, inputs, log)
