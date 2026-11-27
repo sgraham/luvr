@@ -1,0 +1,11 @@
+# CRET: 1
+# CERR: {self}:11:19:    s = Stuff.new("x")
+# CERR: {ssss}                         ^ error: Argument 1 is str, but the parameter is int.
+struct Stuff:
+    int a
+
+on Stuff def Stuff new(int a):
+    return Stuff(a)
+
+def main():
+    s = Stuff.new("x")

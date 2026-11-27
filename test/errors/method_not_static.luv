@@ -1,0 +1,11 @@
+# CRET: 1
+# CERR: {self}:11:15:    x = Stuff.get()
+# CERR: {ssss}                     ^ error: 'get' isn't a static method of Stuff.
+struct Stuff:
+    int a
+
+on Stuff def int get(self):
+    return self.a
+
+def main():
+    x = Stuff.get()

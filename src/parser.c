@@ -3488,6 +3488,37 @@ static void method_call(Parser* p, ExpDesc* e, const Method* method, SrcLoc name
   emit_call_end(p, &call, e, num_args + 1, name_at);
 }
 
+// static_call -> TypeName '.' name '(' args ')'
+//
+// e is the struct type, and becomes the result of calling its static method.
+static void static_call(Parser* p, ExpDesc* e) {
+  next(p);  // '.'
+  SrcLoc name_at;
+  NameId name = expect_name(p, "method name", &name_at);
+  const Method* method = method_find(p, e->type, name);
+  if (!method) {
+    method_error(p, e->type, name, name_at);
+  }
+  if (method->has_self) {
+    const Name* n = name_of(p, name);
+    error_at(p, name_at, "'%.*s' isn't a static method of %s.", (int)n->len, (const char*)n->str,
+             type_str(p, e->type));
+  }
+  if (T(p) != TK_LPAREN) {
+    error_expected(p, "'('");
+  }
+  if (EMIT) {
+    error_at(p, name_at, "Static method calls aren't supported yet.");
+  }
+  TypeId ret = type_info(p, method->type)->ret;
+  CallEmit call;
+  emit_call_begin(p, &call, ret);
+  call_args(p, method->type, /*skip=*/0, &call);
+  e->shape = SH_CALL;
+  e->type = ret;
+  emit_unsupported(e);
+}
+
 // postfix -> { '.' name | '.' TypeName | '[' index_or_slice ']' | '(' args ')'
 //            | type_args }
 //
@@ -3499,6 +3530,10 @@ static void postfix(Parser* p, ExpDesc* e) {
   for (;;) {
     switch (T(p)) {
       case TK_DOT: {
+        if (e->shape == SH_TYPE && type_is_struct(p, e->type)) {
+          static_call(p, e);
+          break;
+        }
         // '.' auto-dereferences any number of pointers. That's never ambiguous,
         // because there are no methods on pointers.
         TypeId base = e->shape == SH_TYPE ? ty_unknown : e->type;
