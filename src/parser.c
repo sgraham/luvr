@@ -3437,6 +3437,17 @@ static void index_or_slice(Parser* p, ExpDesc* e) {
   }
 }
 
+// Makes e the method to call. Foreign methods don't have symbols yet.
+static void emit_method_use(Parser* p, ExpDesc* e, const Method* method, SrcLoc at) {
+#if EMIT
+  if (method->sym.u == FUNC_NO_SYM) {
+    error_at(p, at, "This method call isn't supported yet.");
+  }
+  e->kind = EK_FUNC;
+  e->sym = method->sym;
+#endif
+}
+
 // Passes the address of e, the receiver, as self, and makes e the method to
 // call. A receiver that's reached through pointers is already in memory, and
 // the address of an assignable struct can be taken. Temporaries aren't
@@ -3449,14 +3460,12 @@ static void emit_self_arg(Parser* p,
                           SrcLoc at) {
 #if EMIT
   bool through_pointer = type_is_pointer(p, e->type);
-  if (method->sym.u == FUNC_NO_SYM || !type_is_pointer(p, self_type) ||
-      (!through_pointer && exp_part_shape(e) != SH_LVALUE)) {
+  if (!type_is_pointer(p, self_type) || (!through_pointer && exp_part_shape(e) != SH_LVALUE)) {
     error_at(p, at, "This method call isn't supported yet.");
   }
   Ref self = through_pointer ? emit_through_pointers(p, e, at) : emit_agg_addr(p, e, at);
   call->args[call->first] = self;
-  e->kind = EK_FUNC;
-  e->sym = method->sym;
+  emit_method_use(p, e, method, at);
 #endif
 }
 
@@ -3507,16 +3516,14 @@ static void static_call(Parser* p, ExpDesc* e) {
   if (T(p) != TK_LPAREN) {
     error_expected(p, "'('");
   }
-  if (EMIT) {
-    error_at(p, name_at, "Static method calls aren't supported yet.");
-  }
   TypeId ret = type_info(p, method->type)->ret;
   CallEmit call;
   emit_call_begin(p, &call, ret);
-  call_args(p, method->type, /*skip=*/0, &call);
+  emit_method_use(p, e, method, name_at);
+  u32 num_args = call_args(p, method->type, /*skip=*/0, &call);
   e->shape = SH_CALL;
   e->type = ret;
-  emit_unsupported(e);
+  emit_call_end(p, &call, e, num_args, name_at);
 }
 
 // postfix -> { '.' name | '.' TypeName | '[' index_or_slice ']' | '(' args ')'

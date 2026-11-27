@@ -1,0 +1,16 @@
+# RET: 42
+# OUT: 7
+struct Stuff:
+    int a
+    int b
+
+on Stuff def Stuff new(int a, int b):
+    return Stuff(a, b)
+
+on Stuff def int count():
+    return 7
+
+def int main():
+    s = Stuff.new(40, 2)
+    print Stuff.count()
+    return s.a + s.b
