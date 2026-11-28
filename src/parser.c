@@ -241,8 +241,8 @@ struct Local {
     u32 offset;   // LK_CAPTURE_VALUE and LK_CAPTURE_REF, in the capture block
     struct {      // LK_FUNC
       SymId sym;
-      // The capture block, a slot of the enclosing function. Only set if the
-      // function captures anything.
+      // The capture block, a slot of the enclosing function, or
+      // CAPTURE_BLOCK_NONE if the function doesn't capture anything.
       SlotId capture_block;
     };
   };
@@ -251,6 +251,8 @@ struct Local {
   // function ends.
   Local* shadowed;
 };
+
+#define CAPTURE_BLOCK_NONE UINT32_MAX
 
 typedef enum GlobalKind {
   GK_NONE,
@@ -304,6 +306,9 @@ struct Parser {
   // Otherwise it's a spare, whose buffers are reused by the next nested
   // function at depth d.
   VEC(IlFunc) il_outer;
+  // The address of the current function's capture block, its first
+  // parameter, or 0 if it doesn't capture anything.
+  Ref capture_block;
 #endif
   // Each [N]T, by a hash of N and T. The slot's val is the TypeId.
   HashTable array_types;
@@ -1909,6 +1914,12 @@ static void emit_local_use(Parser* p, ExpDesc* e, const Local* l, NameId name) {
   } else if (l->kind == LK_PARAM) {
     e->kind = EK_REF;
     e->ref = l->ref;
+  } else if (l->kind == LK_CAPTURE_VALUE) {
+    e->kind = EK_ADDR;
+    e->base = p->capture_block;
+    e->offset = l->offset;
+  } else if (l->kind == LK_FUNC && l->capture_block.u != CAPTURE_BLOCK_NONE) {
+    emit_unsupported(e);
   } else if (l->kind == LK_FUNC) {
     e->kind = EK_FUNC;
     e->sym = l->sym;
@@ -4598,6 +4609,7 @@ static void emit_func_sym(Parser* p, GlobalFunc* gf, NameId name) {
 static void emit_nested_func_sym(Parser* p, Local* l) {
 #if EMIT
   l->sym = ctx_nested_sym_add(p->ls.ctx, p->il.sym, l->name);
+  l->capture_block = (SlotId){CAPTURE_BLOCK_NONE};
 #endif
 }
 
@@ -4870,26 +4882,35 @@ static void emit_swap_il(Parser* p) {
 }
 #endif
 
-// Starts the function, after its signature, with its parameters as its only
-// locals.
-static void emit_func_begin(Parser* p, NameId name, bool is_method, SrcLoc name_at) {
+// Starts the function, after its signature, with its parameters and captures
+// as its only locals. Returns the enclosing function's capture block, to pass
+// to emit_func_end().
+static Ref emit_func_begin(Parser* p, NameId name, bool is_method, SrcLoc name_at) {
 #if EMIT
   if (is_method && p->receiver.u == TY_UNKNOWN) {
     error_at(p, name_at, "Methods of generic and builtin types aren't supported yet.");
   }
   SymId sym;
+  TypeId ft;
+  bool has_captures = false;
   if (p->func_depth > 1) {
     // The nested function's name is declared right before its scope is
     // opened.
     const Local* l = &p->locals[p->func_base - 1];
     ASSERT(l->name.u == name.u && (l->kind & ~LK_HIDDEN) == LK_FUNC);
     sym = l->sym;
+    ft = l->type;
+    has_captures = l->capture_block.u != CAPTURE_BLOCK_NONE;
     emit_swap_il(p);
   } else if (is_method) {
-    sym = method_find(p, p->receiver, name)->sym;
+    const Method* method = method_find(p, p->receiver, name);
+    sym = method->sym;
+    ft = method->type;
   } else {
     GlobalInfo info = module_global_info(p->mod, name);
-    sym = p->global_funcs.items[info >> GLOBAL_KIND_BITS].sym;
+    const GlobalFunc* gf = &p->global_funcs.items[info >> GLOBAL_KIND_BITS];
+    sym = gf->sym;
+    ft = gf->type;
   }
   if (type_is_aggregate(p, p->ret_type) && type_has_layout(p, p->ret_type)) {
     il_reset(&p->il, sym, IT_AGG);
@@ -4898,20 +4919,33 @@ static void emit_func_begin(Parser* p, NameId name, bool is_method, SrcLoc name_
     il_reset(&p->il, sym, il_type_of(p, p->ret_type, name_at));
   }
   il_block_start(&p->il, il_block_declare(&p->il));
-  for (u32 i = p->func_base; i < p->num_locals; ++i) {
-    Local* l = &p->locals[i];
-    u32 index = i - p->func_base;
+  Ref outer_capture_block = p->capture_block;
+  p->capture_block = 0;
+  u32 first_index = 0;
+  if (has_captures) {
+    p->capture_block = il_emit(&p->il, OP_PARAM, IT_I64, 0, 0);
+    first_index = 1;
+  }
+  // The parameters are the function's first locals, and its captures follow
+  // them.
+  u32 num_params = type_info(p, ft)->num_params;
+  for (u32 i = 0; i < num_params; ++i) {
+    Local* l = &p->locals[p->func_base + i];
+    u32 index = first_index + i;
     if (type_is_aggregate(p, l->type) && type_has_layout(p, l->type)) {
       l->ref = il_emit(&p->il, OP_PARAMAGG, IT_I64, index, type_agg(p, l->type).u);
     } else {
       l->ref = il_emit(&p->il, OP_PARAM, il_type_of(p, l->type, name_at), index, 0);
     }
   }
+  return outer_capture_block;
+#else
+  return 0;
 #endif
 }
 
 // Ends the function after its body, and passes it to Ctx.on_func.
-static void emit_func_end(Parser* p, Flow flow) {
+static void emit_func_end(Parser* p, Flow flow, Ref outer_capture_block) {
 #if EMIT
   if (flow == FLOW_FALLS_THROUGH) {
     il_emit(&p->il, OP_RET, IT_VOID, 0, 0);
@@ -4923,6 +4957,7 @@ static void emit_func_end(Parser* p, Flow flow) {
   if (p->func_depth > 1) {
     emit_swap_il(p);
   }
+  p->capture_block = outer_capture_block;
 #endif
 }
 
@@ -4934,14 +4969,14 @@ static void funcdef(Parser* p, bool is_method) {
   NameId name;
   SrcLoc name_at;
   u32 outer = funcsig(p, is_method, &name, &name_at);
-  emit_func_begin(p, name, is_method, name_at);
+  Ref outer_capture_block = emit_func_begin(p, name, is_method, name_at);
   check(p, TK_COLON);
   Flow flow = suite(p);
   if (flow == FLOW_FALLS_THROUGH && p->ret_type.u != TY_VOID) {
     error_at(p, name_at, "Missing return at the end of a function returning %s.",
              type_str(p, p->ret_type));
   }
-  emit_func_end(p, flow);
+  emit_func_end(p, flow, outer_capture_block);
   func_close(p, outer);
   p->ret_type = outer_ret;
   p->loop = outer_loop;
