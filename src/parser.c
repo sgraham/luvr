@@ -399,9 +399,9 @@ struct ExpDesc {
     DataId data;  // EK_CONST_DATA
     struct {      // EK_FUNC
       SymId sym;
-      // The capture block of a nested function that captures, or
-      // CAPTURE_BLOCK_NONE.
-      SlotId capture_block;
+      // The address of the capture block of a nested function that
+      // captures, or 0.
+      Ref capture_block;
     };
     struct {  // EK_ADDR
       Ref base;
@@ -1923,7 +1923,10 @@ static void emit_local_use(Parser* p, ExpDesc* e, const Local* l, NameId name) {
   } else if (l->kind == LK_FUNC) {
     e->kind = EK_FUNC;
     e->sym = l->sym;
-    e->capture_block = l->capture_block;
+    e->capture_block = 0;
+    if (l->capture_block.u != CAPTURE_BLOCK_NONE) {
+      e->capture_block = il_slot_addr(&p->il, l->capture_block);
+    }
   } else if (l->kind == LK_GLOBAL) {
     GlobalInfo global = module_global_info(p->mod, name);
     if ((GlobalKind)(global & GLOBAL_KIND_MASK) == GK_VAR) {
@@ -1940,7 +1943,7 @@ static void emit_func_use(ExpDesc* e, const GlobalFunc* gf) {
   }
   e->kind = EK_FUNC;
   e->sym = gf->sym;
-  e->capture_block = (SlotId){CAPTURE_BLOCK_NONE};
+  e->capture_block = 0;
 #endif
 }
 
@@ -3259,10 +3262,10 @@ static void emit_call_begin(Parser* p, CallEmit* call, TypeId ret) {
 
 // Passes the address of the capture block, if callee is a nested function that
 // captures. It goes before the arguments, so this is called before them.
-static void emit_capture_block_arg(Parser* p, CallEmit* call, const ExpDesc* callee) {
+static void emit_capture_block_arg(CallEmit* call, const ExpDesc* callee) {
 #if EMIT
-  if (callee->capture_block.u != CAPTURE_BLOCK_NONE) {
-    call->args[call->first++] = il_slot_addr(&p->il, callee->capture_block);
+  if (callee->capture_block) {
+    call->args[call->first++] = callee->capture_block;
   }
 #endif
 }
@@ -3677,7 +3680,7 @@ static void emit_method_use(Parser* p, ExpDesc* e, const Method* method, SrcLoc 
   }
   e->kind = EK_FUNC;
   e->sym = method->sym;
-  e->capture_block = (SlotId){CAPTURE_BLOCK_NONE};
+  e->capture_block = 0;
 #endif
 }
 
@@ -3832,7 +3835,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         TypeId ret = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
         CallEmit call;
         emit_call_begin(p, &call, ret);
-        emit_capture_block_arg(p, &call, e);
+        emit_capture_block_arg(&call, e);
         u32 num_args = call_args(p, callee, /*skip=*/0, &call);
         e->shape = SH_CALL;
         e->type = ret;
