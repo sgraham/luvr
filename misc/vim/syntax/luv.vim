@@ -22,7 +22,6 @@ syn keyword     luvKeyword       global
 syn keyword     luvKeyword       if
 syn keyword     luvKeyword       import
 syn keyword     luvKeyword       in
-syn keyword     luvKeyword       nonlocal
 syn keyword     luvKeyword       not
 syn keyword     luvKeyword       offsetof
 syn keyword     luvKeyword       on
@@ -33,6 +32,7 @@ syn keyword     luvKeyword       return
 syn keyword     luvKeyword       sizeof
 syn keyword     luvKeyword       struct
 syn keyword     luvKeyword       typeof
+syn keyword     luvKeyword       uses
 syn keyword     luvKeyword       with
 hi def link     luvKeyword       Keyword
 
