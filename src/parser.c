@@ -1903,6 +1903,9 @@ static void emit_local_use(Parser* p, ExpDesc* e, const Local* l, NameId name) {
   } else if (l->kind == LK_PARAM) {
     e->kind = EK_REF;
     e->ref = l->ref;
+  } else if (l->kind == LK_FUNC) {
+    e->kind = EK_FUNC;
+    e->sym = l->sym;
   } else if (l->kind == LK_GLOBAL) {
     GlobalInfo global = module_global_info(p->mod, name);
     if ((GlobalKind)(global & GLOBAL_KIND_MASK) == GK_VAR) {
