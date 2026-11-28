@@ -397,8 +397,13 @@ struct ExpDesc {
     SlotId slot;  // EK_LOCAL
     Ref ref;      // EK_REF
     DataId data;  // EK_CONST_DATA
-    SymId sym;    // EK_FUNC
-    struct {      // EK_ADDR
+    struct {      // EK_FUNC
+      SymId sym;
+      // The capture block of a nested function that captures, or
+      // CAPTURE_BLOCK_NONE.
+      SlotId capture_block;
+    };
+    struct {  // EK_ADDR
       Ref base;
       u32 offset;
     };
@@ -1918,11 +1923,10 @@ static void emit_local_use(Parser* p, ExpDesc* e, const Local* l, NameId name) {
     e->kind = EK_ADDR;
     e->base = p->capture_block;
     e->offset = l->offset;
-  } else if (l->kind == LK_FUNC && l->capture_block.u != CAPTURE_BLOCK_NONE) {
-    emit_unsupported(e);
   } else if (l->kind == LK_FUNC) {
     e->kind = EK_FUNC;
     e->sym = l->sym;
+    e->capture_block = l->capture_block;
   } else if (l->kind == LK_GLOBAL) {
     GlobalInfo global = module_global_info(p->mod, name);
     if ((GlobalKind)(global & GLOBAL_KIND_MASK) == GK_VAR) {
@@ -1939,6 +1943,7 @@ static void emit_func_use(ExpDesc* e, const GlobalFunc* gf) {
   }
   e->kind = EK_FUNC;
   e->sym = gf->sym;
+  e->capture_block = (SlotId){CAPTURE_BLOCK_NONE};
 #endif
 }
 
@@ -3226,9 +3231,10 @@ static NOINLINE NORETURN void field_error(Parser* p, TypeId st, NameId name, Src
 
 #if EMIT
 // A call's emitted arguments. A RESULTAGG for an aggregate result is at
-// args[0], and the arguments start at args[first].
+// args[0]. It's followed by the address of the capture block, for a nested
+// function that captures, and then the arguments start at args[first].
 typedef struct CallEmit {
-  Ref args[MAX_CALL_ARGS + 1];
+  Ref args[MAX_CALL_ARGS + 2];
   u32 first;
   Ref agg_result;  // the address of an aggregate result's temporary
 } CallEmit;
@@ -3250,6 +3256,16 @@ static void emit_call_begin(Parser* p, CallEmit* call, TypeId ret) {
     call->agg_result = il_slot_addr(&p->il, temp);
     call->args[0] = il_emit(&p->il, OP_RESULTAGG, IT_I64, call->agg_result, agg.u);
     call->first = 1;
+  }
+#endif
+}
+
+// Passes the address of the capture block, if callee is a nested function that
+// captures. It goes before the arguments, so this is called before them.
+static void emit_capture_block_arg(Parser* p, CallEmit* call, const ExpDesc* callee) {
+#if EMIT
+  if (callee->capture_block.u != CAPTURE_BLOCK_NONE) {
+    call->args[call->first++] = il_slot_addr(&p->il, callee->capture_block);
   }
 #endif
 }
@@ -3276,13 +3292,13 @@ static void emit_arg(Parser* p, CallEmit* call, u32 index, const ExpDesc* e, Typ
 static void emit_call_end(Parser* p, const CallEmit* call, ExpDesc* e, u32 num_args, SrcLoc at) {
 #if EMIT
   Ref sym = il_const_sym(&p->il, e->sym);
-  if (call->first) {
-    il_call(&p->il, IT_VOID, sym, call->args, num_args + 1);
+  if (call->agg_result) {
+    il_call(&p->il, IT_VOID, sym, call->args, call->first + num_args);
     e->kind = EK_ADDR;
     e->base = call->agg_result;
     e->offset = 0;
   } else {
-    e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, call->args, num_args);
+    e->ref = il_call(&p->il, il_type_of(p, e->type, at), sym, call->args, call->first + num_args);
     e->kind = EK_REF;
   }
 #else
@@ -3664,6 +3680,7 @@ static void emit_method_use(Parser* p, ExpDesc* e, const Method* method, SrcLoc 
   }
   e->kind = EK_FUNC;
   e->sym = method->sym;
+  e->capture_block = (SlotId){CAPTURE_BLOCK_NONE};
 #endif
 }
 
@@ -3818,6 +3835,7 @@ static void postfix(Parser* p, ExpDesc* e) {
         TypeId ret = type_is_function(p, callee) ? type_info(p, callee)->ret : ty_unknown;
         CallEmit call;
         emit_call_begin(p, &call, ret);
+        emit_capture_block_arg(p, &call, e);
         u32 num_args = call_args(p, callee, /*skip=*/0, &call);
         e->shape = SH_CALL;
         e->type = ret;
