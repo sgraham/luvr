@@ -1,0 +1,14 @@
+# OUT: 6
+def int main():
+    x = 1
+
+    def middle() uses &x:
+
+        def inner() uses &x:
+            x += 5
+
+        inner()
+
+    middle()
+    print x
+    return 0
