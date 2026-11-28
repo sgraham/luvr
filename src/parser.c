@@ -1841,33 +1841,21 @@ static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e,
   il_emit(&p->il, OP_STORE, il_mem_type_of(p, dst->type), v, emit_addr(p, dst));
 }
 
-static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, SrcLoc at) {
-  if (l->kind == LK_CAPTURE_REF) {
-    error_at(p, at, "Assigning to & captures isn't supported yet.");
-  }
-  Ref addr = il_slot_addr(&p->il, l->slot);
-  if (type_is_aggregate(p, l->type)) {
-    il_copy(&p->il, addr, emit_agg_addr(p, e, at), type_agg(p, l->type));
-    return;
-  }
-  Ref v = emit_to_ref(p, e, l->type, at);
-  il_emit(&p->il, OP_STORE, il_type_of(p, l->type, at), v, addr);
-}
 #endif
 
-// Stores v to the local loc, or if loc is NULL or a global, to the address that
-// dst is.
-static void emit_store(Parser* p,
-                       const Local* loc,
-                       const ExpDesc* dst,
-                       const ExpDesc* v,
-                       SrcLoc at) {
+static void emit_assign(Parser* p, const ExpDesc* dst, const ExpDesc* e, SrcLoc at) {
 #if EMIT
-  if (loc && loc->kind != LK_GLOBAL) {
-    emit_assign_to_local(p, loc, v, at);
-  } else {
-    emit_assign_to_addr(p, dst, v, at);
+  if (dst->kind != EK_LOCAL) {
+    emit_assign_to_addr(p, dst, e, at);
+    return;
   }
+  Ref addr = il_slot_addr(&p->il, dst->slot);
+  if (type_is_aggregate(p, dst->type)) {
+    il_copy(&p->il, addr, emit_agg_addr(p, e, at), type_agg(p, dst->type));
+    return;
+  }
+  Ref v = emit_to_ref(p, e, dst->type, at);
+  il_emit(&p->il, OP_STORE, il_type_of(p, dst->type, at), v, addr);
 #endif
 }
 
@@ -1893,7 +1881,8 @@ static void emit_local_init(Parser* p, const Local* l, const ExpDesc* v, SrcLoc 
     return;
   }
   ExpDesc zero = {.type = l->type, .kind = EK_CONST};
-  emit_assign_to_local(p, l, v ? v : &zero, at);
+  ExpDesc dst = {.type = l->type, .kind = EK_LOCAL, .slot = l->slot};
+  emit_assign(p, &dst, v ? v : &zero, at);
 #endif
 }
 
@@ -4436,18 +4425,20 @@ static void decl_or_expr_stat(Parser* p, bool toplevel) {
         if (toplevel) {
           declare_global_var(p, name, t, &v, data_mark, value_at);
         } else {
-          if (!loc) {
+          if (loc) {
+            emit_assign(p, &exp, &v, value_at);
+          } else {
             loc = declare_local(p, name, at, LK_VAR);
             loc->type = t;
             emit_local_slot(p, loc, at);
+            emit_local_init(p, loc, &v, value_at);
           }
-          emit_store(p, loc, &exp, &v, value_at);
         }
       } else if (augmented) {
         emit_arith(p, op, exp.type, &cur, at, &v, value_at, op_at);
-        emit_store(p, loc, &exp, &cur, value_at);
+        emit_assign(p, &exp, &cur, value_at);
       } else {
-        emit_store(p, NULL, &exp, &v, value_at);
+        emit_assign(p, &exp, &v, value_at);
       }
       return;
     }
@@ -5094,7 +5085,9 @@ static void emit_iterate(Parser* p,
   il_branch(&p->il, more.ref, loop->exit);
   for (u32 i = 0; i < num_vars; ++i) {
     ExpDesc out = {.type = it->types[i], .kind = EK_LOCAL, .slot = outs[i]};
-    emit_assign_to_local(p, vars[i], &out, at);
+    ExpDesc dst = {.type = vars[i]->type};
+    emit_local_use(p, &dst, vars[i], vars[i]->name);
+    emit_assign(p, &dst, &out, at);
   }
 #endif
 }
