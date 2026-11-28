@@ -1,0 +1,11 @@
+# CRET: 1
+# CERR: {self}:8:21:    def sub() uses &helper:
+# CERR: {ssss}                          ^ error: Functions can't be captured with &.
+
+def int main():
+    def int helper():
+        return 1
+    def sub() uses &helper:
+        print helper()
+    sub()
+    return 0

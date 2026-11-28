@@ -4789,6 +4789,9 @@ static NOINLINE void captures(Parser* p) {
     if (by_ref && (outer->kind == LK_PARAM || outer->kind == LK_CAPTURE_VALUE)) {
       immutable_error(p, outer, at);
     }
+    if (by_ref && outer->kind == LK_FUNC) {
+      error_at(p, at, "Functions can't be captured with &.");
+    }
     TypeId t = outer->type;
     declare_local(p, name, at, by_ref ? LK_CAPTURE_REF : LK_CAPTURE_VALUE)->type = t;
     if (!optional(p, TK_COMMA)) {
