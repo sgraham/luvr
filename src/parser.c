@@ -238,7 +238,13 @@ struct Local {
   union {
     SlotId slot;  // LK_VAR
     Ref ref;      // LK_PARAM
-    SymId sym;    // LK_FUNC
+    u32 offset;   // LK_CAPTURE_VALUE and LK_CAPTURE_REF, in the capture block
+    struct {      // LK_FUNC
+      SymId sym;
+      // The capture block, a slot of the enclosing function. Only set if the
+      // function captures anything.
+      SlotId capture_block;
+    };
   };
 #endif
   // The Name's binding before this was declared. It's restored when the
@@ -4663,6 +4669,37 @@ static void declare_method(Parser* p,
   hashtable_insert(p->ls.ctx, &p->method_index, slot, tag, idx);
 }
 
+// Lays out the capture block for the captures from locals[first] on, and adds
+// it to the enclosing function as a slot. Copies are stored by value, and &
+// captures by address.
+static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
+#if EMIT
+  u32 size = 0;
+  u32 align = 1;
+  for (u32 i = first; i < p->num_locals; ++i) {
+    Local* l = &p->locals[i];
+    u32 capture_size = 8;
+    u32 capture_align = 8;
+    if (l->kind == LK_CAPTURE_VALUE) {
+      if (!type_has_layout(p, l->type)) {
+        error_at(p, at, "This capture isn't supported yet.");
+      }
+      capture_size = type_size(p, l->type);
+      capture_align = type_align(p, l->type);
+    }
+    size = align_up(size, capture_align);
+    l->offset = size;
+    size += capture_size;
+    align = capture_align > align ? capture_align : align;
+  }
+  // The block is only ever passed by address, so it doesn't need the leaves
+  // that classify it for passing by value.
+  AggId agg = il_agg_add(p->ls.ctx, align_up(size, align), align, NULL, 0);
+  Local* func = &p->locals[p->func_base - 1];
+  func->capture_block = il_slot_add_agg(&p->il, agg, func->name);
+#endif
+}
+
 // captures -> 'uses' ['&'] name {',' ['&'] name}
 //
 // Each capture is declared as a local of the nested function, which shadows
@@ -4671,7 +4708,9 @@ static NOINLINE void captures(Parser* p) {
   if (p->func_depth == 1) {
     error_at(p, p->ls.pos.t.loc, "Only nested functions can capture.");
   }
+  SrcLoc uses_at = p->ls.pos.t.loc;
   next(p);
+  u32 first = p->num_locals;
   for (;;) {
     bool by_ref = optional(p, TK_AMP);
     SrcLoc at;
@@ -4698,6 +4737,7 @@ static NOINLINE void captures(Parser* p) {
       break;
     }
   }
+  emit_capture_block(p, first, uses_at);
 }
 
 // funcsig -> [type] name '(' [param {',' param}] ')' [captures]
