@@ -1842,6 +1842,9 @@ static void emit_assign_to_addr(Parser* p, const ExpDesc* dst, const ExpDesc* e,
 }
 
 static void emit_assign_to_local(Parser* p, const Local* l, const ExpDesc* e, SrcLoc at) {
+  if (l->kind == LK_CAPTURE_REF) {
+    error_at(p, at, "Assigning to & captures isn't supported yet.");
+  }
   Ref addr = il_slot_addr(&p->il, l->slot);
   if (type_is_aggregate(p, l->type)) {
     il_copy(&p->il, addr, emit_agg_addr(p, e, at), type_agg(p, l->type));
@@ -1923,6 +1926,11 @@ static void emit_local_use(Parser* p, ExpDesc* e, const Local* l, NameId name) {
     e->kind = EK_ADDR;
     e->base = p->capture_block;
     e->offset = l->offset;
+  } else if (l->kind == LK_CAPTURE_REF) {
+    Ref addr = emit_offset_addr(p, p->capture_block, l->offset);
+    e->kind = EK_ADDR;
+    e->base = il_emit(&p->il, OP_LOAD, IT_I64, addr, 0);
+    e->offset = 0;
   } else if (l->kind == LK_FUNC) {
     e->kind = EK_FUNC;
     e->sym = l->sym;
@@ -4731,9 +4739,6 @@ static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
   Ref block = il_slot_addr(&p->il, func->capture_block);
   for (u32 i = first; i < p->num_locals; ++i) {
     const Local* l = &p->locals[i];
-    if (l->kind == LK_CAPTURE_REF) {
-      error_at(p, at, "& captures aren't supported yet.");
-    }
     // Each capture was declared with the same name as the enclosing
     // function's variable that it captures, which is l->shadowed.
     // It's read as a use of the name in the enclosing function would be: a
@@ -4743,6 +4748,14 @@ static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
     // captures are parsed.
     ExpDesc value = {.type = l->type};
     emit_local_use(p, &value, l->shadowed, l->name);
+    if (l->kind == LK_CAPTURE_REF) {
+      if (value.kind != EK_LOCAL && value.kind != EK_ADDR) {
+        error_at(p, at, "This capture isn't supported yet.");
+      }
+      Ref addr = value.kind == EK_LOCAL ? il_slot_addr(&p->il, value.slot) : emit_addr(p, &value);
+      il_emit(&p->il, OP_STORE, IT_I64, addr, emit_offset_addr(p, block, l->offset));
+      continue;
+    }
     ExpDesc dst = {.type = l->type, .kind = EK_ADDR, .base = block, .offset = l->offset};
     emit_assign_to_addr(p, &dst, &value, at);
   }

@@ -1,0 +1,10 @@
+# OUT: 5
+def int main():
+    n = 1
+
+    def int get() uses &n:
+        return n
+
+    n = 5
+    print get()
+    return 0
