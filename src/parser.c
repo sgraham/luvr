@@ -241,9 +241,31 @@ struct Local {
     u32 offset;   // LK_CAPTURE_VALUE and LK_CAPTURE_REF, in the capture block
     struct {      // LK_FUNC
       SymId sym;
-      // The capture block, a slot of the enclosing function, or
-      // CAPTURE_BLOCK_NONE if the function doesn't capture anything.
-      SlotId capture_block;
+      // An LK_FUNC local is either a nested function's definition, in the
+      // function that defines it, or a capture of it by another nested
+      // function. A call to it passes its capture block if it has one. For
+      // example:
+      //
+      //     def int main():
+      //         cutoff = 20
+      //         def bool h(int x) uses cutoff:
+      //             return x < cutoff
+      //         def sub() uses h:
+      //             print h(25)
+      //
+      // In main, h is the definition, and capture_block is h's block, which
+      // is a slot of main holding cutoff.
+      //
+      // In sub, h is a capture. h's block is in main's frame, so its address
+      // is stored in sub's own capture block at block_offset.
+      //
+      // Either one is CAPTURE_BLOCK_NONE if the function doesn't capture
+      // anything.
+      union {
+        SlotId capture_block;  // is_definition
+        u32 block_offset;      // !is_definition
+      };
+      bool is_definition;
     };
   };
 #endif
@@ -1924,8 +1946,11 @@ static void emit_local_use(Parser* p, ExpDesc* e, const Local* l, NameId name) {
     e->kind = EK_FUNC;
     e->sym = l->sym;
     e->capture_block = 0;
-    if (l->capture_block.u != CAPTURE_BLOCK_NONE) {
+    if (l->is_definition && l->capture_block.u != CAPTURE_BLOCK_NONE) {
       e->capture_block = il_slot_addr(&p->il, l->capture_block);
+    } else if (!l->is_definition && l->block_offset != CAPTURE_BLOCK_NONE) {
+      Ref addr = emit_offset_addr(p, p->capture_block, l->block_offset);
+      e->capture_block = il_emit(&p->il, OP_LOAD, IT_I64, addr, 0);
     }
   } else if (l->kind == LK_GLOBAL) {
     GlobalInfo global = module_global_info(p->mod, name);
@@ -4630,6 +4655,7 @@ static void emit_nested_func_sym(Parser* p, Local* l) {
 #if EMIT
   l->sym = ctx_nested_sym_add(p->ls.ctx, p->il.sym, l->name);
   l->capture_block = (SlotId){CAPTURE_BLOCK_NONE};
+  l->is_definition = true;
 #endif
 }
 
@@ -4714,16 +4740,17 @@ static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
     u32 capture_size = 8;
     u32 capture_align = 8;
     if (l->kind == LK_FUNC) {
-      // The function itself is known statically, so only its capture block
-      // would be needed at run time.
-      if (l->shadowed->capture_block.u != CAPTURE_BLOCK_NONE) {
-        error_at(p, at, "This capture isn't supported yet.");
+      // The function itself is known statically, so only the address of its
+      // capture block is needed at run time, if it has one.
+      const Local* outer = l->shadowed;
+      l->sym = outer->sym;
+      l->block_offset = CAPTURE_BLOCK_NONE;
+      l->is_definition = false;
+      u32 outer_block = outer->is_definition ? outer->capture_block.u : outer->block_offset;
+      if (outer_block == CAPTURE_BLOCK_NONE) {
+        continue;
       }
-      l->sym = l->shadowed->sym;
-      l->capture_block = (SlotId){CAPTURE_BLOCK_NONE};
-      continue;
-    }
-    if (l->kind == LK_CAPTURE_VALUE) {
+    } else if (l->kind == LK_CAPTURE_VALUE) {
       if (!type_has_layout(p, l->type)) {
         error_at(p, at, "This capture isn't supported yet.");
       }
@@ -4731,7 +4758,11 @@ static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
       capture_align = type_align(p, l->type);
     }
     size = align_up(size, capture_align);
-    l->offset = size;
+    if (l->kind == LK_FUNC) {
+      l->block_offset = size;
+    } else {
+      l->offset = size;
+    }
     size += capture_size;
     align = capture_align > align ? capture_align : align;
   }
@@ -4746,7 +4777,7 @@ static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
   Ref block = il_slot_addr(&p->il, func->capture_block);
   for (u32 i = first; i < p->num_locals; ++i) {
     const Local* l = &p->locals[i];
-    if (l->kind == LK_FUNC) {
+    if (l->kind == LK_FUNC && l->block_offset == CAPTURE_BLOCK_NONE) {
       continue;
     }
     // Each capture was declared with the same name as the enclosing
@@ -4758,6 +4789,11 @@ static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
     // captures are parsed.
     ExpDesc value = {.type = l->type};
     emit_local_use(p, &value, l->shadowed, l->name);
+    if (l->kind == LK_FUNC) {
+      il_emit(&p->il, OP_STORE, IT_I64, value.capture_block,
+              emit_offset_addr(p, block, l->block_offset));
+      continue;
+    }
     if (l->kind == LK_CAPTURE_REF) {
       if (value.kind != EK_LOCAL && value.kind != EK_ADDR) {
         error_at(p, at, "This capture isn't supported yet.");
