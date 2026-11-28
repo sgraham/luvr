@@ -4681,9 +4681,10 @@ static void declare_method(Parser* p,
   hashtable_insert(p->ls.ctx, &p->method_index, slot, tag, idx);
 }
 
-// Lays out the capture block for the captures from locals[first] on, and adds
-// it to the enclosing function as a slot. Copies are stored by value, and &
-// captures by address.
+// Lays out the capture block for the captures from locals[first] on, adds it
+// to the enclosing function as a slot, and stores the captures in it. Copies
+// are stored by value, and & captures by address. The enclosing function's
+// code is still being emitted, so this is where the definition is in it.
 static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
 #if EMIT
   u32 size = 0;
@@ -4709,6 +4710,24 @@ static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
   AggId agg = il_agg_add(p->ls.ctx, align_up(size, align), align, NULL, 0);
   Local* func = &p->locals[p->func_base - 1];
   func->capture_block = il_slot_add_agg(&p->il, agg, func->name);
+  Ref block = il_slot_addr(&p->il, func->capture_block);
+  for (u32 i = first; i < p->num_locals; ++i) {
+    const Local* l = &p->locals[i];
+    if (l->kind == LK_CAPTURE_REF) {
+      error_at(p, at, "& captures aren't supported yet.");
+    }
+    // Each capture was declared with the same name as the enclosing
+    // function's variable that it captures, which is l->shadowed.
+    // It's read as a use of the name in the enclosing function would be: a
+    // load from its slot, a parameter's value, or, if the enclosing function
+    // captured it too, a load from the enclosing function's own capture
+    // block. Its local isn't hidden yet, because that happens after the
+    // captures are parsed.
+    ExpDesc value = {.type = l->type};
+    emit_local_use(p, &value, l->shadowed, l->name);
+    ExpDesc dst = {.type = l->type, .kind = EK_ADDR, .base = block, .offset = l->offset};
+    emit_assign_to_addr(p, &dst, &value, at);
+  }
 #endif
 }
 
