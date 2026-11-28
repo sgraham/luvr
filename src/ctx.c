@@ -48,11 +48,17 @@ void ctx_free(Ctx* ctx) {
 }
 
 SymId ctx_sym_add(Ctx* ctx, NameId name, const Module* module) {
-  return ctx_method_sym_add(ctx, (NameId){SYM_NO_RECEIVER}, name, module);
+  *vec_push(ctx, &ctx->syms) = (Sym){name, {SYM_NO_RECEIVER}, module, {SYM_NO_PARENT}};
+  return (SymId){ctx->syms.num - 1};
 }
 
 SymId ctx_method_sym_add(Ctx* ctx, NameId receiver, NameId name, const Module* module) {
-  *vec_push(ctx, &ctx->syms) = (Sym){name, receiver, module};
+  *vec_push(ctx, &ctx->syms) = (Sym){name, receiver, module, {SYM_NO_PARENT}};
+  return (SymId){ctx->syms.num - 1};
+}
+
+SymId ctx_nested_sym_add(Ctx* ctx, SymId parent, NameId name) {
+  *vec_push(ctx, &ctx->syms) = (Sym){name, {SYM_NO_RECEIVER}, NULL, parent};
   return (SymId){ctx->syms.num - 1};
 }
 

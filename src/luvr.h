@@ -559,18 +559,24 @@ struct SymId {
 // can have the same name, so module is part of the symbol. It's NULL for the
 // runtime's functions and the root module's. Methods of different types can
 // also have the same name, so a method's symbol includes its receiver's type
-// name. receiver.u is SYM_NO_RECEIVER for other functions.
+// name. receiver.u is SYM_NO_RECEIVER for other functions. Nested functions
+// in different functions can have the same name too, so a nested function's
+// symbol is qualified by its enclosing function's, parent. parent.u is
+// SYM_NO_PARENT for functions that aren't nested.
 struct Sym {
   NameId name;
   NameId receiver;
   const Module* module;
+  SymId parent;
 };
 
 #define SYM_NO_RECEIVER UINT32_MAX
+#define SYM_NO_PARENT UINT32_MAX
 
-// Both return the new symbol's index.
+// All return the new symbol's index.
 SymId ctx_sym_add(Ctx* ctx, NameId name, const Module* module);
 SymId ctx_method_sym_add(Ctx* ctx, NameId receiver, NameId name, const Module* module);
+SymId ctx_nested_sym_add(Ctx* ctx, SymId parent, NameId name);
 
 // Line and column are 1-based. They're found by scanning from the start of the
 // buffer, so this is only suitable for the error path.

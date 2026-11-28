@@ -100,6 +100,7 @@ typedef enum LocalKind {
   // copy made at the definition, or as the variable itself.
   LK_CAPTURE_VALUE,
   LK_CAPTURE_REF,
+  LK_FUNC,  // a nested function's name
   // The kinds that need special handling when a name is used are last, so
   // that one comparison finds them.
   LK_CONST,
@@ -237,6 +238,7 @@ struct Local {
   union {
     SlotId slot;  // LK_VAR
     Ref ref;      // LK_PARAM
+    SymId sym;    // LK_FUNC
   };
 #endif
   // The Name's binding before this was declared. It's restored when the
@@ -290,6 +292,12 @@ struct Parser {
   // The image of the struct whose body is being parsed, and its relocations.
   VEC(u8) image;
   VEC(IlReloc) image_relocs;
+  // A top-level function's body is at depth 1, so nested functions' bodies
+  // start at depth 2. While a nested function at depth d is parsed,
+  // il_outer.items[d - 2] is the IlFunc of the function that encloses it.
+  // Otherwise it's a spare, whose buffers are reused by the next nested
+  // function at depth d.
+  VEC(IlFunc) il_outer;
 #endif
   // Each [N]T, by a hash of N and T. The slot's val is the TypeId.
   HashTable array_types;
@@ -4578,6 +4586,12 @@ static void emit_func_sym(Parser* p, GlobalFunc* gf, NameId name) {
 #endif
 }
 
+static void emit_nested_func_sym(Parser* p, Local* l) {
+#if EMIT
+  l->sym = ctx_nested_sym_add(p->ls.ctx, p->il.sym, l->name);
+#endif
+}
+
 static void emit_method_sym(Parser* p, Method* method) {
 #if EMIT
   Ctx* ctx = p->ls.ctx;
@@ -4732,7 +4746,9 @@ static u32 funcsig(Parser* p, bool is_method, NameId* func_name, SrcLoc* name_at
         const Name* n = name_of(p, name);
         error_at(p, at, "'%.*s' is already declared.", (int)n->len, (const char*)n->str);
       }
-      declare_local(p, name, at, LK_VAR)->type = ft;
+      Local* l = declare_local(p, name, at, LK_FUNC);
+      l->type = ft;
+      emit_nested_func_sym(p, l);
     }
   }
   if (T(p) == TK_LBRACE) {
@@ -4799,6 +4815,18 @@ static void foreign_decl(Parser* p, bool is_method) {
   end_of_stat(p);
 }
 
+#if EMIT
+static void emit_swap_il(Parser* p) {
+  u32 index = p->func_depth - 2;
+  if (index == p->il_outer.num) {
+    il_init(vec_push(p->ls.ctx, &p->il_outer), p->ls.ctx);
+  }
+  IlFunc tmp = p->il_outer.items[index];
+  p->il_outer.items[index] = p->il;
+  p->il = tmp;
+}
+#endif
+
 // Starts the function, after its signature, with its parameters as its only
 // locals.
 static void emit_func_begin(Parser* p, NameId name, bool is_method, SrcLoc name_at) {
@@ -4806,11 +4834,15 @@ static void emit_func_begin(Parser* p, NameId name, bool is_method, SrcLoc name_
   if (is_method && p->receiver.u == TY_UNKNOWN) {
     error_at(p, name_at, "Methods of generic and builtin types aren't supported yet.");
   }
-  if (p->func_depth > 1) {
-    error_at(p, name_at, "Nested functions aren't supported yet.");
-  }
   SymId sym;
-  if (is_method) {
+  if (p->func_depth > 1) {
+    // The nested function's name is declared right before its scope is
+    // opened.
+    const Local* l = &p->locals[p->func_base - 1];
+    ASSERT(l->name.u == name.u && (l->kind & ~LK_HIDDEN) == LK_FUNC);
+    sym = l->sym;
+    emit_swap_il(p);
+  } else if (is_method) {
     sym = method_find(p, p->receiver, name)->sym;
   } else {
     GlobalInfo info = module_global_info(p->mod, name);
@@ -4844,6 +4876,9 @@ static void emit_func_end(Parser* p, Flow flow) {
   Ctx* ctx = p->ls.ctx;
   if (ctx->on_func) {
     ctx->on_func(ctx, &p->il, p->mod->src.buf);
+  }
+  if (p->func_depth > 1) {
+    emit_swap_il(p);
   }
 #endif
 }
@@ -5735,6 +5770,10 @@ static void parse_end(Parser* p) {
   pop_locals(p, 0);
 #if EMIT
   il_free(&p->il);
+  for (u32 i = 0; i < p->il_outer.num; ++i) {
+    il_free(&p->il_outer.items[i]);
+  }
+  free(p->il_outer.items);
   free(p->image.items);
   free(p->image_relocs.items);
 #endif

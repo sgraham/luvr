@@ -260,12 +260,12 @@ static void il_dump_float(IlType ty, u64 bits, FILE* out) {
   fputs(buf, out);
 }
 
-// A function in an imported module is prefixed with the module's path, as in
-// @sub/util.helper, so that names from different modules can't clash. A
-// method is also prefixed with its receiver, as in @sub/util.Stuff.get.
-static void il_dump_sym(const Ctx* ctx, SymId sym, FILE* out) {
+static void il_dump_sym_name(const Ctx* ctx, SymId sym, FILE* out) {
   const Sym* s = &ctx->syms.items[sym.u];
-  fputc('@', out);
+  if (s->parent.u != SYM_NO_PARENT) {
+    il_dump_sym_name(ctx, s->parent, out);
+    fputc('$', out);
+  }
   if (s->module) {
     const Name* module = lex_name(ctx, s->module->name);
     fprintf(out, "%.*s.", (int)module->len, module->str);
@@ -276,6 +276,17 @@ static void il_dump_sym(const Ctx* ctx, SymId sym, FILE* out) {
   }
   const Name* name = lex_name(ctx, s->name);
   fprintf(out, "%.*s", (int)name->len, name->str);
+}
+
+// A function in an imported module is prefixed with the module's path, as in
+// @sub/util.helper, so that names from different modules can't clash. A
+// method is also prefixed with its receiver, as in @sub/util.Stuff.get. A
+// nested function is prefixed with its enclosing function and '$', as in
+// @main$inner. A '.' there could clash with a module's function, as for a
+// root module function prelude with a nested _range.
+static void il_dump_sym(const Ctx* ctx, SymId sym, FILE* out) {
+  fputc('@', out);
+  il_dump_sym_name(ctx, sym, out);
 }
 
 static void il_dump_ref(const IlFunc* f, Ref r, FILE* out) {
