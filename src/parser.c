@@ -4710,6 +4710,16 @@ static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
     Local* l = &p->locals[i];
     u32 capture_size = 8;
     u32 capture_align = 8;
+    if (l->kind == LK_FUNC) {
+      // The function itself is known statically, so only its capture block
+      // would be needed at run time.
+      if (l->shadowed->capture_block.u != CAPTURE_BLOCK_NONE) {
+        error_at(p, at, "This capture isn't supported yet.");
+      }
+      l->sym = l->shadowed->sym;
+      l->capture_block = (SlotId){CAPTURE_BLOCK_NONE};
+      continue;
+    }
     if (l->kind == LK_CAPTURE_VALUE) {
       if (!type_has_layout(p, l->type)) {
         error_at(p, at, "This capture isn't supported yet.");
@@ -4722,6 +4732,9 @@ static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
     size += capture_size;
     align = capture_align > align ? capture_align : align;
   }
+  if (size == 0) {
+    return;
+  }
   // The block is only ever passed by address, so it doesn't need the leaves
   // that classify it for passing by value.
   AggId agg = il_agg_add(p->ls.ctx, align_up(size, align), align, NULL, 0);
@@ -4730,6 +4743,9 @@ static void emit_capture_block(Parser* p, u32 first, SrcLoc at) {
   Ref block = il_slot_addr(&p->il, func->capture_block);
   for (u32 i = first; i < p->num_locals; ++i) {
     const Local* l = &p->locals[i];
+    if (l->kind == LK_FUNC) {
+      continue;
+    }
     // Each capture was declared with the same name as the enclosing
     // function's variable that it captures, which is l->shadowed.
     // It's read as a use of the name in the enclosing function would be: a
@@ -4792,8 +4808,13 @@ static NOINLINE void captures(Parser* p) {
     if (by_ref && outer->kind == LK_FUNC) {
       error_at(p, at, "Functions can't be captured with &.");
     }
-    TypeId t = outer->type;
-    declare_local(p, name, at, by_ref ? LK_CAPTURE_REF : LK_CAPTURE_VALUE)->type = t;
+    LocalKind kind = by_ref ? LK_CAPTURE_REF : LK_CAPTURE_VALUE;
+    // A function can't be assigned to, so a capture of one is the same as
+    // the enclosing function's name for it.
+    if (outer->kind == LK_FUNC) {
+      kind = LK_FUNC;
+    }
+    declare_local(p, name, at, kind)->type = outer->type;
     if (!optional(p, TK_COMMA)) {
       break;
     }
