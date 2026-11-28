@@ -4780,6 +4780,11 @@ static NOINLINE void captures(Parser* p) {
       error_at(p, at, "'%.*s' isn't a variable of an enclosing function.", (int)n->len,
                (const char*)n->str);
     }
+    // A & capture can be assigned to, so it has to refer to something that
+    // the enclosing function could assign to.
+    if (by_ref && (outer->kind == LK_PARAM || outer->kind == LK_CAPTURE_VALUE)) {
+      immutable_error(p, outer, at);
+    }
     TypeId t = outer->type;
     declare_local(p, name, at, by_ref ? LK_CAPTURE_REF : LK_CAPTURE_VALUE)->type = t;
     if (!optional(p, TK_COMMA)) {

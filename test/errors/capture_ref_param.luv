@@ -1,0 +1,13 @@
+# CRET: 1
+# CERR: {self}:7:22:    def bump() uses &n:
+# CERR: {ssss}                           ^ error: Function parameters are immutable.
+
+def int outer(int n):
+
+    def bump() uses &n:
+        n = 2
+    bump()
+    return n
+
+def int main():
+    return outer(1)
